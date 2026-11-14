@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Box2Box's per-machine files: last-opened save (a local path), window state and the error log
+box2box_settings.json
+fm_review_settings.json
+box2box_errors.log
+*.log
+*.tmp
+
+# Football Manager saves are large and personal; Box2Box only reads them from the game's folder
+*.fm
+
+# Editors and Windows
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# Claude Code: personal settings stay local (CLAUDE.md is shared)
+.claude/settings.local.json
+CLAUDE.local.md

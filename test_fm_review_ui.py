@@ -1,0 +1,188 @@
+"""Smoke test for the FM Review window with a small made-up dataset.
+
+Run:  .venv\\Scripts\\python -m unittest -v
+"""
+
+import tempfile
+import time
+import unittest
+from pathlib import Path
+from types import SimpleNamespace as NS
+from unittest import mock
+
+import customtkinter as ctk
+
+import fm_data as fd
+import fm_review
+from test_fm_data import LEAGUE, D, club, fx, info, row, team, unresolved_away
+
+
+def dataset() -> fd.Dataset:
+    fixtures = LEAGUE + [
+        fx(D(2027, 8, 7), 1, 2, season=2027, md=1),                          # next season, unplayed
+        fx(D(2026, 7, 20), 1, 5, 2, 2, comp=131, season=None),               # a friendly
+        fx(D(2026, 8, 10), 1, 4, 1, 0, comp=60, home_slot=1, away_slot=1),   # youth league
+        unresolved_away(fx(D(2026, 8, 9), 2, 3, 1, 0, comp=70, md=1)),       # a team the save can't resolve
+    ]
+    stored = NS(competition_id=8, rows=(row(1, 1, 2, 2, 0, 0, 5, 2, 6), row(4, 2), row(2, 3), row(3, 4)))
+    rules = [NS(competition_id=8, promotion_places=1, playoff_places=1, relegation_places=1, rounds=())]
+    return fd.build_dataset(info(), fixtures, clubs=[club(1, slots=(0, 1)), club(2), club(3), club(4), club(5)],
+                            competitions=[NS(id=8, database_id=12)], tables=[stored], rules=rules)
+
+
+class WindowTests(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        folder = Path(self.folder.name)
+        patches = [
+            mock.patch.object(fm_review, "SETTINGS_PATH", folder / "settings.json"),
+            mock.patch.object(fm_review, "NAMES_PATH", folder / "names.csv"),
+            mock.patch.object(fm_review, "ERROR_LOG", folder / "errors.log"),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        ctk.set_appearance_mode("dark")
+        self.app = fm_review.FMReviewApp()
+        self.app.geometry("1300x800+-4000+0")
+        self.app.report_callback_exception = lambda *exc: (_ for _ in ()).throw(exc[1])
+        self.app.update()
+
+    def tearDown(self):
+        # Let CustomTkinter's own short timers (window icons, scaling checks) run first.
+        stop = time.monotonic() + 0.5
+        while time.monotonic() < stop:
+            self.app.update()
+            time.sleep(0.02)
+        self.app.destroy()
+        self.folder.cleanup()
+
+    def test_every_view_renders_and_follows_the_team(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.update()
+        self.assertEqual(app.comp_id, 8)                    # managed club's league first
+        self.assertEqual(app.season, 2026)
+        self.assertEqual(app.team_box.get(), "Sheffield United")
+        for view in fm_review.VIEWS:
+            app.set_view(view)
+            for grouping in fm_review.GROUPINGS:
+                app._on_group(grouping)
+                app.update()
+        app.set_view("Table")
+        self.assertEqual(app.sheets["Table"].get_cell_data(0, 9), 6)   # the stored table's points
+        app.set_view("Results")
+        app.set_focus(None)
+        app._on_team_typed()
+        app.update()
+        self.assertEqual(app.team_box.get(), fm_review.ALL_TEAMS)
+        app.team_box.set("hull")
+        app._on_team_typed()
+        self.assertEqual(app.labels[app.focus], "Hull City")
+        self.assertEqual(list(app.season_by_label), ["2027", "2026"])     # newest first
+        app._on_season("2027")
+        app.update()
+        self.assertEqual(app.season, 2027)
+        self.assertEqual(app.labels[app.focus], "Sheffield United")   # Hull have no 2027 fixture yet
+        for comp in app.dataset.competitions:
+            app.select_competition(comp.id)
+            for view in fm_review.VIEWS:
+                app.set_view(view)
+                app.update()
+
+    def test_list_search_and_details(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.search_entry.insert(0, "derby")
+        app._fill_competition_list()
+        self.assertEqual([c for c in app.list_rows if c is not None], [8, 60])
+        app.search_entry.delete(0, "end")
+        app.search_entry.insert(0, "wrexham")
+        app._fill_competition_list()
+        self.assertEqual([c for c in app.list_rows if c is not None], [131])
+        app.show_details()
+        app.update()
+
+    def test_naming_a_competition_is_kept_in_the_names_file(self):
+        app = self.app
+        app.install_dataset(dataset())
+        with mock.patch.object(fm_review.ctk, "CTkInputDialog") as dialog:
+            dialog.return_value.get_input.return_value = "  Championship "
+            app.rename_competition()
+        self.assertEqual(app.title_label.cget("text"), "Championship")
+        self.assertEqual(fd.load_competition_names(fm_review.NAMES_PATH), {12: "Championship"})
+        self.assertIn("Championship", app.comp_list.get(0, "end")[1])
+        with mock.patch.object(fm_review.ctk, "CTkInputDialog") as dialog:
+            dialog.return_value.get_input.return_value = ""      # empty removes the name
+            app.rename_competition()
+        self.assertEqual(app.title_label.cget("text"), "Competition 8")
+        self.assertEqual(fd.load_competition_names(fm_review.NAMES_PATH), {})
+
+    def test_picking_a_competition_in_the_list_leaves_the_hub(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_view("Table")
+        app.set_view(fm_review.HUB)        # used to crash on the unresolved team in competition 70
+        app.update()
+        self.assertCountEqual(app.comp_row_ids, [8, 60, 131, 70])
+        self.assertEqual(app.season_menu.cget("state"), "disabled")
+        app.comp_list.selection_clear(0, "end")
+        app.comp_list.selection_set(app.list_rows.index(70))
+        app._on_list_select()
+        app.update()
+        self.assertEqual((app.view, app.comp_id, app.view_switch.get()), ("Table", 70, "Table"))
+        self.assertEqual(app.season_menu.cget("state"), "normal")
+
+    def test_hub_click_selects_in_place_and_double_click_opens(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_view("Grid")
+        app.set_view(fm_review.HUB)
+        app.update()
+        filled = app._hub_key
+        hub = app.sheets[fm_review.HUB]
+        hub.select_cell(app.comp_row_ids.index(60), 2, redraw=False, run_binding_func=False)
+        app._on_sheet_select(fm_review.HUB)
+        self.assertEqual((app.view, app.comp_id), (fm_review.HUB, 60))
+        self.assertEqual(app._hub_key, filled)             # not refilled, so it keeps its scroll position
+        self.assertEqual(app.list_rows[app.comp_list.curselection()[0]], 60)
+        self.assertIn("Selected:", app.detail_label.cget("text"))
+        hub.select_column(1, redraw=False, run_binding_func=False)      # a header click picks nothing
+        app._on_sheet_select(fm_review.HUB)
+        self.assertEqual(app.comp_id, 60)
+        hub.select_cell(app.comp_row_ids.index(60), 2, redraw=False, run_binding_func=False)
+        app._open_from_hub()
+        app.update()
+        self.assertEqual((app.view, app.comp_id), ("Grid", 60))
+
+    def test_table_shows_rule_zones_and_ignores_header_clicks(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_view("Table")
+        note = app.note_label.cget("text")
+        self.assertIn("game's rules", note)
+        self.assertIn("cyan = play-offs", note)
+        app.set_focus(team(3))
+        table = app.sheets["Table"]
+        table.select_column(3, redraw=False, run_binding_func=False)
+        app._on_sheet_select("Table")
+        self.assertEqual(app.focus, team(3))               # a header click used to follow the leaders
+        table.select_cell(1, 1, redraw=False, run_binding_func=False)
+        app._on_sheet_select("Table")
+        self.assertEqual(app.focus, team(4))               # Derby are second in the stored table
+        app._on_table_split(fd.SPLIT_HOME)
+        self.assertNotIn("Pos colours", app.note_label.cget("text"))
+
+    def test_failed_import_keeps_the_save_already_open(self):
+        app = self.app
+        first = dataset()
+        app.install_dataset(first)
+        with mock.patch.object(fm_review.messagebox, "showerror") as shown:
+            app.handle_event(("failed", "The save looks damaged."))
+        self.assertIs(app.dataset, first)
+        self.assertIn("still shown", shown.call_args.args[1])
+        self.assertEqual(app.comp_id, 8)
+
+
+if __name__ == "__main__":
+    unittest.main()

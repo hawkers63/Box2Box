@@ -1,0 +1,167 @@
+# Box2Box: Comprehensive Enhancement Proposal & Architectural Roadmap
+
+## Application: Box2Box (formerly FM Review)  
+**Target Game:** Football Manager 27 / Football Manager 26  
+**Core Engine:** fmsave (v0.12.5+) with Python 3.14  
+**Platform Profile:** Windows 11 (Hawkeye Workstation Profile)  
+
+### 1. Executive Summary & Brand Identity
+
+In light of the decision to rebrand the application from FM Review to Box2Box, this document serves to outline a structured design proposal and technical roadmap for the next major release.
+
+In football terminology, a box-to-box player traverses every inch of the pitch between both penalty areas—relentless, analytical, adaptable, and influential in both defence and attack. The Box2Box application embodies this philosophy by providing comprehensive end-to-end coverage of your Football Manager save, seamlessly connecting detailed single-match events to overarching league structures, fixture matrices, and predictive analytics.
+
+### 2. Feature Proposal Matrix
+
+Drawing upon your design notes in notes_01.txt and notes_02.txt, findings from fm27_probe_report.txt, and your requested enhancements, we present the following feature breakdown:
+
+| Module                | Current State (v0.1)                               | Proposed Box2Box Enhancement (v0.2+)                                                                 | Priority |
+|----------------------|----------------------------------------------------|-------------------------------------------------------------------------------------------------------|----------|
+| Identity & Branding   | Named FM Review, basic window title.              | Rebranded to Box2Box, modern football badge styling, dual .bat launchers, unified settings migration. | High     |
+| Fixture Grid          | Muted dark cells (#1e5631, #6b1f24), fixed home/away perspective. | Vibrant neon/jewel palette, Perspective Toggle (Absolute vs Followed Club performance), crosshair hover highlighting, rich cell tooltips. | High     |
+| League Standings      | Plain text table with basic P/W/D/L/Pts and ASCII form ("W W D L"). | Zone colour striping (Promotion, Playoffs, Relegation, UCL), circular visual form badges, Home/Away/Form split views, and PPG/GD metrics. | High     |
+| Competitions Viewer   | Simple text Listbox on sidebar ([8] Wolves, Bolton...). | Dedicated Competitions Hub & Stage Viewer: Cards for cup rounds, bracket progression, season completion progress bars, quick database naming. | High     |
+| Analytics & Stats     | Running points total for a single followed club.  | Comprehensive Analytics Engine: Head-to-Head (H2H) matrix, xG integration (team_match_stats), streak tracking, superlative records. | Medium   |
+| Export Pipeline        | Not yet implemented in UI.                        | Formatted Multi-Format Exporter: Styled Excel workbooks with conditional cell fills, standalone HTML reports, and Markdown for sharing. | Medium   |
+| Test Suite Clean-up    | Discovery error due to global test_probe.py monkeypatch. | Surgical isolation of FakeSave monkeypatching, achieving 100% clean test passes on standard unittest runs. | Immediate |
+
+### 3. Detailed Architectural Specifications
+
+#### 3.1. Vibrant Fixture Grid Enhancements
+
+**Visual Palette Modernisation**
+
+The current grid utilises dark forest greens (#1e5631) and muddy burgundies (#6b1f24), which may appear subdued against dark themes. Box2Box will introduce a calibrated high-contrast palette:
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│ Grid Cell Palette:                                                     │
+│  • Victory / Home Win:    #059669 (Emerald)     Text: #ffffff          │
+│  • Draw / Stalemate:      #d97706 (Warm Amber)  Text: #ffffff          │
+│  • Defeat / Away Win:     #dc2626 (Crimson)     Text: #ffffff          │
+│  • Mixed Outcomes:        #2563eb (Vibrant Blue)Text: #ffffff          │
+│  • Scheduled / Unplayed:  #1e293b (Slate Base)  Text: #94a3b8 (Date)   │
+│  • Unavailable Result:    #581c87 (Deep Purple) Text: #e9d5ff ("n/a")  │
+│  • Diagonal (Own Team):   #0f172a (Pitch Black)                        │
+└────────────────────────────────────────────────────────────────────────┘
+
+**Dual Perspective Toggle**
+
+- **Neutral / Ground Perspective (Absolute):** 
+  Traditional matrix representation: Green = Home team won, Red = Away team won.
+  
+- **Followed Club Perspective (Club Heatmap):** 
+  When a specific club is selected (e.g., Sheffield United), every cell involving that club reflects their performance, regardless of venue:
+  - Winning away at Leeds appears in green.
+  - Drawing at home against Derby is displayed in amber.
+  - Losing at home is indicated in red.
+  
+  Cells not involving the selected club will remain subtly dimmed, highlighting the club's campaign across the 24-team matrix.
+
+**Interactive Crosshair Highlighting**
+
+When hovering over or selecting any cell in a 24-team division, the intersecting row header (Home) and column header (Away) will dynamically illuminate, thereby reducing eye strain when navigating large matrices.
+
+#### 3.2. Enriched League Standings Engine
+
+**Qualification & Relegation Zone Styling**
+
+League tables will feature authentic broadcast-style visual indicators:
+
+- **Premier League / European Leagues:**
+  - Positions 1–4: Champions League (Deep Azure #2563eb left accent bar).
+  - Positions 5–6: Europa League / Conference (Orange #ea580c accent bar).
+  - Bottom 3: Relegation (Bright Red #ef4444 accent bar).
+  
+- **EFL Championship / Playoff Divisions:**
+  - Positions 1–2: Automatic Promotion (Emerald #10b981 accent bar).
+  - Positions 3–6: Promotion Playoffs (Cyan #06b6d4 accent bar).
+  - Bottom 3: Relegation (Crimson #dc2626 accent bar).
+
+**Rich Form Badges**
+
+Raw string outputs (W W D L W) will be replaced with styled badge representations:
+
+- [ W ] Pill: Emerald background (#059669), crisp white text.
+- [ D ] Pill: Amber background (#d97706), crisp white text.
+- [ L ] Pill: Crimson background (#dc2626), crisp white text.
+
+Tooltips will display the opponent, scoreline, and home/away venue upon hover.
+
+**Split Standings Toggles**
+
+Sub-filters will be added above the table view:
+
+- **Overall:** Standard 46-match / 38-match campaign.
+- **Home Standings:** Form and points accumulated solely in home fixtures.
+- **Away Standings:** Performance away from home.
+- **Form Guide (Last 6):** Rolling 6-game mini-table to identify surging or struggling teams.
+
+#### 3.3. Dedicated Competitions Viewer & Cup Hub
+
+In Football Manager saves, domestic cups (e.g., FA Cup, Carabao Cup) and continental tournaments (UEFA Champions League, Europa League) often encompass hundreds of fixtures across distinct knockout stages.
+
+The Competitions Hub will transform the left sidebar into a dedicated full-screen explorer:
+
+- **Competition Cards:** 
+  Display cards featuring: Competition Name, Database ID, Trophy/Reputation Tier, Total Teams, Matches Played, and a Season Completion percentage bar.
+
+- **Knockout Stage Tree / Round Explorer:** 
+  For cup competitions, allow filtering directly by round:
+  - Third Round, Fourth Round, Quarter-Final, Semi-Final, Final.
+  
+  Present two-legged ties with aggregate score calculations (e.g., First Leg: 1-0, Second Leg: 2-2 -> Agg: 3-2).
+
+- **One-Click Competition Naming:** 
+  An inline naming button on each card will immediately update competition_names.csv and auto-propagate across all views.
+
+#### 3.4. Analytics Suite & Match Statistics (xG Integration)
+
+Your probe report in fm27_probe_report.txt revealed that the save already contains 6,862 match reports with statistics. Box2Box will introduce a dedicated Analytics Tab:
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│ Box2Box Analytics Suite:                                               │
+│                                                                        │
+│ 1. Head-to-Head (H2H) Explorer                                         │
+│    Compare any two clubs across all seasons and competitions:           │
+│    • Historic record: Wins, Draws, Losses, Goals For, Goals Against    │
+│    • Highest-scoring clash, biggest victory, current streak            │
+│                                                                        │
+│ 2. Expected Goals (xG) & Match Performance                             │
+│    Where team_match_stats() are retained:                              │
+│    • Display xG scorelines (e.g., Sheffield Utd [1.82] 2 - 1 [0.45] Leeds) │
+│    • xG Over/Underperformance indicators                               │
+│    • Transparent coverage banner (e.g., "xG available for 28/34 games")│
+│                                                                        │
+│ 3. Milestones & Season Records                                         │
+│    • Clean sheet leaders                                               │
+│    • Longest unbeaten & winning streaks                                │
+│    • Most prolific attacks & tightest defences                         │
+└────────────────────────────────────────────────────────────────────────┘
+
+#### 3.5. Multi-Format Reporting & Export Pipeline
+
+Enable managers to archive, share, and publish their career data:
+
+- **Styled Excel Workbook (.xlsx):**
+  - Sheet 1 (Standings): Professional table with zone colours, goal difference formatting, and form string.
+  - Sheet 2 (Fixture Grid): Cross-table matrix with conditional colour formatting matching the in-app grid.
+  - Sheet 3 (Results Timeline): Chronological log with gameweek and cup round headers.
+
+- **Interactive HTML Dashboard:** 
+  A standalone .html file featuring embedded modern CSS and JavaScript filter tables—shareable on Discord, Reddit, or cloud storage without requiring Python on the viewer's machine.
+
+- **Markdown Formatter:** 
+  One-click copy option for SI Forums or Reddit r/footballmanagergames career updates.
+
+### 4. Implementation Phasing
+
+### 5. Architectural Quality & System Baseline Compliance
+
+All planned updates will strictly adhere to your established standards:
+
+- **Station Profile ("Hawkeye"):** All operations and dependencies will remain on D:\ or be isolated within .venv, preserving C:\ NVMe headroom.
+- **British English Standard:** There will be strict adherence in UI text, code docstrings, and documentation (optimise, prioritise, colour, programme, visualise).
+- **Asynchronous Worker Threading:** Heavy calculations (grid generation for 500+ competitions, export compilation) will be conducted on worker threads using queue.Queue dispatch, preventing Tkinter GUI freezes.
+- **Pure Data Separation:** fm_data.py will be devoid of UI code, ensuring 100% testability through headless unit tests.
