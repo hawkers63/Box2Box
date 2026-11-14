@@ -50,6 +50,7 @@ to every save and can be edited in Excel. fmsave reads the same format.
 | `fm27_probe.py` | The save coverage probe; report at `fm27_probe_report.txt` |
 | `competition_names.csv`, `box2box_settings.json` | Your custom names and last-opened save (created on use) |
 | `notes/` | Design notes and progress reports |
+| `ROADMAP.md` | What is done, what comes next, parked ideas and known limitations |
 | `CLAUDE.md` | Working notes for Claude Code: the session routine, roadmap and conventions |
 
 ## Setting up again

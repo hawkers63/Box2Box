@@ -15,10 +15,10 @@ in a few lines:
 3. **Error log**: read `box2box_errors.log` (not in git). The app appends a traceback whenever
    something fails; entries newer than the checkpoint under *Status* are bugs to look at first.
 4. **Tests**: `.venv\Scripts\python -m unittest`. Everything should pass.
-5. **Report**: the test result, any new errors or notes, and the next roadmap item with a short
-   plan. Ask before anything large or ambiguous; otherwise carry on.
+5. **Report**: the test result, any new errors or notes, and the next item in `ROADMAP.md` with a
+   short plan. Ask before anything large or ambiguous; otherwise carry on.
 
-Keep *Status* and *Roadmap* up to date as work is finished.
+Keep *Status* below and `ROADMAP.md` up to date as work is finished.
 
 ## Status
 
@@ -30,18 +30,11 @@ Keep *Status* and *Roadmap* up to date as work is finished.
   rules), the Competitions tab crash on teams the save cannot resolve, and picks in the left-hand
   list while the Competitions tab is open (they now open the competition).
 
-## Roadmap, in the user's order
+## Roadmap
 
-1. ~~Bugs: play-off zones, Competitions tab error, left-hand list errors~~. Done.
-2. **Exports**: Excel (.xlsx with fills matching the app), HTML and CSV for the selected
-   competition and season, including its coverage notes. pandas is installed; openpyxl is not yet.
-3. **Analysis**: form, and xG from `team_match_stats()`, which exists only for matches whose report
-   the save kept. Always show the coverage, e.g. "xG for 18 of 30 played matches".
-4. **History across saves**: keep results that later saves no longer hold. This needs a fixture
-   identity and a rescheduling policy, because fmsave gives fixtures no unique id.
-
-Parked ideas (notes_03): head-to-head explorer, cup rounds with aggregate scores, crosshair
-highlighting in the grid, form badges with tooltips, Markdown export.
+`ROADMAP.md` holds the plan, in the user's order: fixes (done), exports (next: Excel, HTML, CSV),
+analysis (form, xG), then history across saves. It also lists the parked ideas and known
+limitations, and has questions to settle with the user before exports start.
 
 ## Running and testing
 
