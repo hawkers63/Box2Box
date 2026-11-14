@@ -13,7 +13,7 @@ in a few lines:
 2. **Notes**: the user writes ideas and reports in `notes/notes_NN.txt`; the highest number is the
    newest. Read every note newer than the last one listed under *Status*.
 3. **Error log**: read `box2box_errors.log` (not in git). The app appends a traceback whenever
-   something fails, so entries dated after the last session are bugs to look at first.
+   something fails; entries newer than the checkpoint under *Status* are bugs to look at first.
 4. **Tests**: `.venv\Scripts\python -m unittest`. Everything should pass.
 5. **Report**: the test result, any new errors or notes, and the next roadmap item with a short
    plan. Ask before anything large or ambiguous; otherwise carry on.
@@ -24,6 +24,7 @@ Keep *Status* and *Roadmap* up to date as work is finished.
 
 - Last updated: 14 November 2026.
 - Notes read: notes_01 to notes_04.
+- Error log reviewed up to: 2026-11-14 21:43:56. All entries up to then are fixed.
 - Tests: 47 (test_fm_data, test_fm_review_ui, test_probe), all passing.
 - Last session fixed: Championship play-off places (3rd to 8th, now taken from the save's own
   rules), the Competitions tab crash on teams the save cannot resolve, and picks in the left-hand
