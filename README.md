@@ -32,6 +32,28 @@ From a terminal:
 - **Coverage Transparency**:
   - Transparent tracking of played matches, matches to play, and played matches with unrecovered scorelines ("n/a").
 
+## Exports
+
+**Export ▾** (next to *Name this competition…*) saves the competition and season you are looking at:
+
+- **Excel workbook (.xlsx)**, with these sheets:
+  - Table, with its zone colours.
+  - Grid, coloured as in the app.
+  - Results, grouped as on screen.
+  - Your followed team's results, with running points.
+  - About: where the data came from.
+- **Web page (.html)**: one file with the same sections and colours, plus a box to show one team's
+  matches. It opens in any browser and needs nothing else, so it can be shared as it is.
+- **CSV files (.csv)**: Results, Table, Grid and About, in a folder of their own, for your own
+  analysis. Scores are written with an en dash (2–1) so that Excel does not turn them into dates.
+
+Exports go to `Documents\Box2Box` (*Export ▾ → Open the export folder*), one per competition and
+season. Each is named after the competition, the season and the save's in-game date, e.g.
+`Championship 2026-27 (2026-07-16).xlsx`, so exporting the same save again replaces it while a
+later save gets a file of its own. Every export says which save it came from, how complete the data
+is, and whether the zones are the game's or estimated. If Excel has the workbook open, Box2Box
+leaves the old file alone and asks you to close it first.
+
 ## Competition names
 
 Saves don't store competition names, so a competition first appears by its id and best-known
@@ -46,7 +68,9 @@ to every save and can be edited in Excel. fmsave reads the same format.
 | `Box2Box.bat` | One-click launcher for the application |
 | `fm_review.py` | The main Box2Box desktop application (CustomTkinter + tksheet) |
 | `fm_data.py` | Pure data layer: parsing, grid matrices, standings, and competition summaries |
-| `test_fm_data.py`, `test_fm_review_ui.py`, `test_probe.py` | Full test suite (`.venv\Scripts\python -m unittest -v`) |
+| `fm_export.py` | Excel, web page and CSV exports of one competition and season |
+| `palette.py` | The app's colours, shared by the window and the exports |
+| `test_fm_data.py`, `test_fm_export.py`, `test_fm_review_ui.py`, `test_probe.py` | Full test suite (`.venv\Scripts\python -m unittest -v`) |
 | `fm27_probe.py` | The save coverage probe; report at `fm27_probe_report.txt` |
 | `competition_names.csv`, `box2box_settings.json` | Your custom names and last-opened save (created on use) |
 | `notes/` | Design notes and progress reports |

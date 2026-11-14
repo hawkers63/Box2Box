@@ -25,16 +25,18 @@ Keep *Status* below and `ROADMAP.md` up to date as work is finished.
 - Last updated: 14 November 2026.
 - Notes read: notes_01 to notes_04.
 - Error log reviewed up to: 2026-11-14 21:43:56. All entries up to then are fixed.
-- Tests: 47 (test_fm_data, test_fm_review_ui, test_probe), all passing.
-- Last session fixed: Championship play-off places (3rd to 8th, now taken from the save's own
-  rules), the Competitions tab crash on teams the save cannot resolve, and picks in the left-hand
-  list while the Competitions tab is open (they now open the competition).
+- Tests: 68 (test_fm_data, test_fm_export, test_fm_review_ui, test_probe), all passing.
+- Last session:
+  - Fixed the Championship play-off places (3rd to 8th, from the save's own rules), the
+    Competitions tab crash, and list picks while the Competitions tab is open.
+  - Built the exports: Excel, web page and CSV, one per competition and season, saved in
+    `Documents\Box2Box`.
+  - The exports have not yet been compared with the app by eye. Ask the user how they look.
 
 ## Roadmap
 
-`ROADMAP.md` holds the plan, in the user's order: fixes (done), exports (next: Excel, HTML, CSV),
-analysis (form, xG), then history across saves. It also lists the parked ideas and known
-limitations, and has questions to settle with the user before exports start.
+`ROADMAP.md` holds the plan, in the user's order: fixes and exports (done), analysis (next: form,
+xG), then history across saves. It also lists the parked ideas and known limitations.
 
 ## Running and testing
 
@@ -56,6 +58,10 @@ limitations, and has questions to settle with the user before exports start.
 - `fm_review.py`: the window (CustomTkinter and tksheet). A save loads on a background thread and
   the result comes back through a queue polled with `after()`. The views are Results, Grid, Table
   and Competitions (the hub, which covers every competition at once).
+- `fm_export.py`: exports one competition and season to Excel (openpyxl), a standalone web page or
+  CSV files in `Documents\Box2Box`. It is pure apart from the final writes, which go to a temporary
+  name and are then moved into place, so a file open in Excel is never half-written.
+- `palette.py`: the result, zone and heading colours, shared by the window and the exports.
 - `fm27_probe.py`: a standalone report on what a save holds; its output is `fm27_probe_report.txt`.
 - `competition_names.csv`: the user's competition names keyed on database id, shared by every save.
 

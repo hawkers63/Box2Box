@@ -173,6 +173,40 @@ class WindowTests(unittest.TestCase):
         app._on_table_split(fd.SPLIT_HOME)
         self.assertNotIn("Pos colours", app.note_label.cget("text"))
 
+    def wait_for_export(self):
+        stop = time.monotonic() + 30
+        while self.app._exporting and time.monotonic() < stop:
+            self.app.update()
+            time.sleep(0.02)
+        self.assertFalse(self.app._exporting, "the export did not finish")
+
+    def test_export_runs_in_the_background_and_offers_to_open_it(self):
+        app = self.app
+        app.install_dataset(dataset())
+        folder = Path(self.folder.name) / "Box2Box"
+        with mock.patch.object(fm_review, "export_folder", return_value=folder), \
+                mock.patch.object(fm_review.messagebox, "askyesno", return_value=False) as offered:
+            app.export(fm_review.fx.EXCEL)
+            self.assertEqual(app.export_button.cget("state"), "disabled")
+            app.export(fm_review.fx.HTML)          # ignored: one export at a time
+            self.wait_for_export()
+        files = sorted(p.name for p in folder.iterdir())
+        self.assertEqual(files, ["Competition 8 2026 (2026-09-01).xlsx"])
+        self.assertEqual(offered.call_count, 1)
+        self.assertIn("Saved the Excel workbook", app.detail_label.cget("text"))
+        self.assertEqual(app.export_button.cget("state"), "normal")
+
+    def test_failed_export_is_reported(self):
+        app = self.app
+        app.install_dataset(dataset())
+        with mock.patch.object(fm_review, "export_folder", return_value=Path(self.folder.name) / "Box2Box"), \
+                mock.patch.object(fm_review.fx, "export", side_effect=fm_review.fx.ExportFailed("It is open in Excel.")), \
+                mock.patch.object(fm_review.messagebox, "showerror") as shown:
+            app.export(fm_review.fx.CSV)
+            self.wait_for_export()
+        self.assertEqual(shown.call_args.args[1], "It is open in Excel.")
+        self.assertEqual(app.export_button.cget("state"), "normal")
+
     def test_failed_import_keeps_the_save_already_open(self):
         app = self.app
         first = dataset()

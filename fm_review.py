@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import json
+import os
 import queue
 import sys
 import threading
@@ -25,6 +26,8 @@ import customtkinter as ctk
 from tksheet import Sheet
 
 import fm_data as fd
+import fm_export as fx
+from palette import COLOURS, FOCUS, HEADING, ZONE_COLOURS, zone_legend
 
 APP_TITLE = "Box2Box"
 APP_DIR = Path(__file__).resolve().parent
@@ -34,6 +37,7 @@ LEGACY_SETTINGS_PATH = APP_DIR / "fm_review_settings.json"
 ERROR_LOG = APP_DIR / "box2box_errors.log"
 
 ALL_TEAMS = "All teams"
+EXPORT_LABEL = "Export ▾"
 HUB = "Competitions"
 VIEWS = ("Results", "Grid", "Table", HUB)
 GROUPINGS = (fd.GROUP_BY_WEEK, fd.GROUP_BY_MATCHDAY, fd.GROUP_BY_DATE)
@@ -44,42 +48,7 @@ LIST_BG, LIST_FG = "#1d1d1d", "#e3e3e3"
 SECTION_FG = "#d8b44a"
 TABLE_BG = "#1b1b1b"
 
-# Vibrant modern results palette
-WIN_BG = "#059669"       # Vibrant Emerald
-DRAW_BG = "#d97706"      # Warm Amber
-LOSS_BG = "#dc2626"      # Vibrant Crimson
-MIXED_BG = "#2563eb"     # Electric Blue
-NA_COLOURS = ("#4c1d95", "#e9d5ff")  # Vivid Purple
-COLOURS = {
-    fd.HOME_WIN: (WIN_BG, "#ffffff"),
-    fd.DRAW: (DRAW_BG, "#ffffff"),
-    fd.AWAY_WIN: (LOSS_BG, "#ffffff"),
-    fd.UNAVAILABLE: NA_COLOURS,
-    fd.MIXED: (MIXED_BG, "#ffffff"),
-    fd.SCHEDULED: ("#182230", "#94a3b8"),
-    "self": ("#0a0f18", None),
-    "W": (WIN_BG, "#ffffff"),
-    "D": (DRAW_BG, "#ffffff"),
-    "L": (LOSS_BG, "#ffffff"),
-    "?": NA_COLOURS,
-}
-ZONE_COLOURS = {
-    fd.ZONE_UCL: ("#1d4ed8", "#ffffff"),
-    fd.ZONE_PROMOTION: ("#059669", "#ffffff"),
-    fd.ZONE_PLAYOFF: ("#0284c7", "#ffffff"),
-    fd.ZONE_EUROPA: ("#ea580c", "#ffffff"),
-    fd.ZONE_RELEGATION: ("#dc2626", "#ffffff"),
-}
-# How the table's legend names each zone colour, in table order.
-ZONE_LEGEND = (
-    (fd.ZONE_PROMOTION, "green", "promotion"),
-    (fd.ZONE_UCL, "blue", "Champions League"),
-    (fd.ZONE_EUROPA, "orange", "Europa League"),
-    (fd.ZONE_PLAYOFF, "cyan", "play-offs"),
-    (fd.ZONE_RELEGATION, "red", "relegation"),
-)
-HEADING = ("#111e2e", "#38bdf8")
-FOCUS = ("#1e40af", "#ffffff")
+# Result, zone, heading and followed-team colours live in palette.py, shared with the exports.
 FOCUS_TEXT = "#60a5fa"
 WARNING_TEXT = "#fb923c"
 
@@ -94,6 +63,11 @@ def documents_folder() -> Path:
         if ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, buffer) == 0 and buffer.value:
             return Path(buffer.value)
     return Path.home() / "Documents"
+
+
+def export_folder() -> Path:
+    """Where exports are saved: Documents\\Box2Box."""
+    return documents_folder() / APP_TITLE
 
 
 def default_save_folder() -> Path:
@@ -117,6 +91,7 @@ class FMReviewApp(ctk.CTk):
         self.settings = self._read_settings()
         self.loading_since: float | None = None
         self.loading_step = ""
+        self._exporting = False
 
         self.comp_id: int | None = None
         self.season: int | None = None
@@ -215,6 +190,14 @@ class FMReviewApp(ctk.CTk):
         self.rename_button = ctk.CTkButton(header, text="Name this competition…", width=170,
                                            fg_color="gray30", hover_color="gray35", command=self.rename_competition)
         self.rename_button.grid(row=0, column=1, rowspan=2, sticky="e")
+        self.export_button = ctk.CTkButton(header, text=EXPORT_LABEL, width=100, command=self._show_export_menu)
+        self.export_button.grid(row=0, column=2, rowspan=2, padx=(8, 0), sticky="e")
+        self.export_menu = tk.Menu(self, tearoff=False)
+        for kind, label in ((fx.EXCEL, "Excel workbook (.xlsx)"), (fx.HTML, "Web page (.html)"),
+                            (fx.CSV, "CSV files (.csv)")):
+            self.export_menu.add_command(label=label, command=lambda k=kind: self.export(k))
+        self.export_menu.add_separator()
+        self.export_menu.add_command(label="Open the export folder", command=self.open_export_folder)
         self.hint_label = ctk.CTkLabel(header, text="", text_color="gray70", anchor="w")
         self.hint_label.grid(row=1, column=0, sticky="w")
 
@@ -357,6 +340,9 @@ class FMReviewApp(ctk.CTk):
         kind, payload = event
         if kind == "progress":
             self.loading_step = payload
+            return
+        if kind in ("exported", "export_failed"):
+            self._finish_export(kind, payload)
             return
         self.loading_since = None
         self.progress.stop()
@@ -617,6 +603,67 @@ class FMReviewApp(ctk.CTk):
         for widget in (self.season_menu, self.team_box, self.view_switch, self.group_switch,
                        self.split_switch, self.rename_button, self.details_button, self.search_entry):
             widget.configure(state=state)
+        self.export_button.configure(state="disabled" if self._exporting else state)
+
+    # ----------------------------------------------------------------- exports
+
+    def _show_export_menu(self) -> None:
+        button = self.export_button
+        try:
+            self.export_menu.tk_popup(button.winfo_rootx(), button.winfo_rooty() + button.winfo_height())
+        finally:
+            self.export_menu.grab_release()
+
+    def export(self, kind: str) -> None:
+        """Export the selected competition and season, as shown, on a background thread."""
+        if not self.dataset or self.comp_id is None or self._exporting:
+            return
+        request = fx.ExportRequest(self.dataset, self.comp_id, self.season, names=dict(self.names),
+                                   focus=self.focus, group_by=self.group_by)
+        self._exporting = True
+        self.export_button.configure(state="disabled", text="Exporting…")
+        self.detail_label.configure(text=f"Exporting the {fx.KINDS[kind]}…")
+        threading.Thread(target=self._export_worker, args=(kind, request, export_folder()), daemon=True).start()
+
+    def _export_worker(self, kind: str, request: fx.ExportRequest, folder: Path) -> None:
+        try:
+            self.events.put(("exported", (kind, fx.export(kind, request, folder))))
+        except fx.ExportFailed as exc:
+            self.events.put(("export_failed", str(exc)))
+        except Exception as exc:  # report anything unexpected rather than dying silently
+            self._log_error(traceback.format_exc())
+            self.events.put(("export_failed", f"Unexpected error while exporting:\n{type(exc).__name__}: {exc}"))
+
+    def _finish_export(self, kind: str, payload) -> None:
+        self._exporting = False
+        self.export_button.configure(state="normal" if self.dataset else "disabled", text=EXPORT_LABEL)
+        if kind == "export_failed":
+            self.detail_label.configure(text="")
+            messagebox.showerror("Could not export", payload, parent=self)
+            return
+        export_kind, path = payload
+        what = fx.KINDS[export_kind]
+        self.detail_label.configure(text=f"Saved the {what} {path.name} in {path.parent}")
+        if messagebox.askyesno("Export saved", f"Saved the {what}\n\n{path.name}\n\nin {path.parent}.\n\nOpen it now?",
+                               parent=self):
+            self._open_path(path)
+
+    def open_export_folder(self) -> None:
+        folder = export_folder()
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            messagebox.showerror("Could not open the export folder", f"{folder}\n\n{exc.strerror or exc}", parent=self)
+            return
+        self._open_path(folder)
+
+    def _open_path(self, path: Path) -> None:
+        """Open a file in its usual program, or a folder in Explorer."""
+        try:
+            os.startfile(path)
+        except (AttributeError, OSError) as exc:     # AttributeError: not on Windows
+            messagebox.showerror("Could not open it", f"{path}\n\n{getattr(exc, 'strerror', None) or exc}",
+                                 parent=self)
 
     # ----------------------------------------------------------------- rendering
 
@@ -811,11 +858,10 @@ class FMReviewApp(ctk.CTk):
             self._paint(sheet, row_idx, col_idx, colours)
         sheet.refresh()
         note = [result.note]
-        shown = {r.zone for _, rows in result.groups for r in rows}
-        legend = [f"{colour} = {label}" for zone, colour, label in ZONE_LEGEND if zone in shown]
+        legend = zone_legend({r.zone for _, rows in result.groups for r in rows})
         if legend:
             note.append(result.zones_note)
-            note.append("Pos colours: " + " · ".join(legend) + ".")
+            note.append(f"Pos colours: {legend}.")
         note.append("Click a team to follow it.")
         self.note_label.configure(text=" ".join(part for part in note if part))
 

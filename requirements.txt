@@ -3,5 +3,8 @@
 fmsave==0.12.5
 customtkinter==6.0.0
 tksheet==7.6.0
+# Excel exports (added 14 Nov 2026)
+openpyxl==3.1.5
+et-xmlfile==2.0.0
 # Also installed (via fmsave[pandas]) for the later analysis and export step, not used yet:
 # pandas==3.1.1

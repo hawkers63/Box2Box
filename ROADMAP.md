@@ -9,8 +9,8 @@ a real save as well as the made-up test data. Sources: `notes/notes_01.txt` to `
 | Phase | What | State |
 | --- | --- | --- |
 | 1 | Fixes: play-off zones, Competitions tab, left-hand list | Done, 14 Nov 2026 |
-| 2 | Exports: Excel, HTML, CSV | **Next** |
-| 3 | Analysis: form, xG | Planned |
+| 2 | Exports: Excel, HTML, CSV | Done, 14 Nov 2026 |
+| 3 | Analysis: form, xG | **Next** |
 | 4 | History across saves | Planned |
 
 ## Done so far
@@ -41,39 +41,32 @@ a real save as well as the made-up test data. Sources: `notes/notes_01.txt` to `
   double-click opens. Column-header clicks no longer change the followed team.
 - Git repository, `CLAUDE.md` and this roadmap. 47 tests.
 
-## Phase 2: Exports (next)
+**Phase 2: exports** (14 November 2026)
+- The user chose one export per competition and season, saved in `Documents\Box2Box`. Files are
+  named after the competition, season and in-game date, e.g.
+  `Championship 2026-27 (2026-07-16).xlsx`.
+- **Export ▾** menu: Excel workbook, web page, CSV files, and *Open the export folder*. Exports run
+  on a worker thread, one at a time.
+- **Excel**:
+  - Table, with zone fills and the followed team highlighted.
+  - Grid, coloured as in the app.
+  - Results, with week or round headings, real dates and kick-off times.
+  - The followed team's results with W/D/L and running points.
+  - About: save, build, coverage, table and zone notes, reader warnings.
+- **Web page**: one standalone dark page with the same sections, sticky headers, and a box to show
+  one team's matches. Nothing is fetched from elsewhere.
+- **CSV**: Results (one flat row per fixture), Table, Grid and About, in a folder named after the
+  export. Written as UTF-8 with a byte-order mark for Excel; scores use an en dash and unplayed
+  grid cells an ISO date, so Excel never turns them into dates.
+- Files are written under a temporary name and moved into place. A workbook open in Excel is left
+  alone and the user is told to close it.
+- `fm_export.py` (pure apart from the final writes), `palette.py` (colours shared with the window),
+  openpyxl 3.1.5. 68 tests. Checked on a real save: the Championship workbook takes 0.3 s and the
+  7,163-fixture friendlies competition 4.3 s.
+- Not done: comparing the exports with the app by eye. The browser extension was not connected,
+  and Excel cannot be driven from here. Worth a look when the user next opens one.
 
-Goal: get what is on screen out of the app in a form that can be shared, with its caveats attached.
-
-- **CSV**: results, table and grid for the selected competition and season. Write UTF-8 with a BOM
-  so Excel shows names such as Kroměříž correctly.
-- **Excel (.xlsx)**, as notes_03 planned:
-  - Standings, with zone fills and the form string.
-  - Fixture Grid, with cell fills matching the app.
-  - Results, with week or round headings.
-- **HTML**: one standalone file with its CSS (and a small filter script) built in. It should match
-  the app's colours and open anywhere without Python.
-- **Every export states**:
-  - the save, in-game date, competition and season;
-  - the coverage line, e.g. "552 fixtures · 0 played · 552 to play";
-  - whether the zones are the game's or estimated;
-  - the fmsave version, and the unverified-build warning when it applies.
-- **Exports what you are looking at**: the current competition, season, followed team, grouping
-  and table split.
-- **Responsive**: exports run on a worker thread, so the window never freezes.
-
-Done when:
-- The export data is shaped in pure code, in `fm_data.py` or a new `export.py`, and unit-tested
-  without a window.
-- A workbook opened in Excel shows the app's colours, and the CSVs open cleanly in Excel.
-- Exports from a real save have been compared with the app by eye.
-
-To settle first:
-- One workbook per competition and season, or one for the whole save?
-- The default export folder, e.g. `Documents\Box2Box`.
-- Add `openpyxl` (or XlsxWriter), pinned, to `requirements.txt`; pandas is already installed.
-
-## Phase 3: Analysis
+## Phase 3: Analysis (next)
 
 Goal: form and expected goals, never claiming more than the save holds.
 
@@ -127,6 +120,7 @@ From notes_03, not yet scheduled:
 - Grid: crosshair highlighting of the hovered row and column, and richer cell tooltips.
 - Form badges in the table, with tooltips for opponent and score.
 - Markdown export for the SI forums and Reddit.
+- Home, Away and Form tables as extra sheets in the workbook; a whole-save workbook.
 - A Streamlit web version (notes_01). Not planned while the desktop app covers the need.
 
 ## Known limitations
