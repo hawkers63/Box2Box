@@ -6,6 +6,8 @@ Run:  .venv\\Scripts\\python -m unittest -v
 """
 
 import ctypes
+import dataclasses
+import json
 import sys
 import tempfile
 import time
@@ -18,6 +20,7 @@ import customtkinter as ctk
 
 import fm_data as fd
 import fm_review
+import palette
 from test_fm_data import LEAGUE, D, club, fx, info, match_stats, row, team, unresolved_away
 
 HULL_LEEDS_XG = match_stats(LEAGUE[0], 1.82, 0.45)     # the report the save kept for Hull 2-1 Leeds
@@ -363,6 +366,47 @@ class WindowTests(unittest.TestCase):
     def test_a_missing_icon_is_not_an_error(self):
         with mock.patch.object(fm_review, "ICON_PATH", Path(self.folder.name) / "none.ico"):
             self.assertFalse(fm_review.apply_window_icon(self.app))
+
+    def test_switching_theme_repaints_in_place(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_view("Table")
+        app.set_focus(team(3))                      # Sheffield United, fourth in the stored table
+        before = (app.comp_id, app.season, app.focus, app.view)
+        odd = dataclasses.replace(palette.MIDNIGHT_EMERALD, name="Test", panel="#102030",
+                                  table=("#010203", "#fefefe"), switch_selected="#203040",
+                                  focus=("#0f1e2d", "#ffffff"))
+        app.apply_theme(odd)
+        app.update()
+        self.assertEqual((app.comp_id, app.season, app.focus, app.view), before)
+        self.assertEqual(app.status_bar.cget("fg_color"), "#102030")
+        self.assertEqual(app.split_switch.cget("selected_color"), "#203040")
+        table = app.sheets["Table"]
+        self.assertEqual(table.ops.table_bg, "#010203")
+        self.assertEqual(table.props(3, 1, "highlight").bg, "#0f1e2d")      # the view was redrawn
+
+    def test_the_theme_is_kept_in_the_settings(self):
+        self.app.set_theme("Midnight Emerald")
+        saved = json.loads(fm_review.SETTINGS_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(saved["theme"], "Midnight Emerald")
+        labels = [self.app.theme_menu.entrycget(i, "label") for i in range(len(palette.THEMES))]
+        self.assertEqual(labels, [t.name for t in palette.THEMES])
+
+    def test_a_theme_can_change_before_a_save_is_open_and_with_about_showing(self):
+        app = self.app
+        app.about_button.invoke()
+        app.update()
+        odd = dataclasses.replace(palette.MIDNIGHT_EMERALD, name="Test", heading=("#0a0b0c", "#ffffff"))
+        app.apply_theme(odd)
+        app.update()
+        self.assertEqual(app.about_window.band.cget("fg_color"), "#0a0b0c")
+
+    def test_odd_theme_settings_open_in_midnight_emerald(self):
+        self.app.destroy()
+        fm_review.SETTINGS_PATH.write_text('{"theme": 3}', encoding="utf-8")
+        self.app = fm_review.FMReviewApp()          # tearDown closes this one
+        self.app.geometry("1300x800+-4000+0")
+        self.assertIs(self.app.theme, palette.MIDNIGHT_EMERALD)
 
 
 class IconTests(unittest.TestCase):

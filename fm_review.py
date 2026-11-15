@@ -33,7 +33,8 @@ from tksheet import Sheet
 
 import fm_data as fd
 import fm_export as fx
-from palette import COLOURS, DRAW_BG, FOCUS, HEADING, LOSS_BG, WIN_BG, ZONE_COLOURS, zone_legend
+import palette
+from palette import zone_legend
 
 APP_TITLE = "Box2Box"
 VERSION = "1.2"
@@ -61,13 +62,9 @@ MAX_TEAM_CHOICES = 120
 RESULTS_XG_COLUMN = 4
 
 FONT = "Segoe UI"
-LIST_BG, LIST_FG = "#1d1d1d", "#e3e3e3"
-SECTION_FG = "#d8b44a"
-TABLE_BG = "#1b1b1b"
+THEME_LABEL = "Theme ▾"
 
-# Result, zone, heading and followed-team colours live in palette.py, shared with the exports.
-FOCUS_TEXT = "#60a5fa"
-WARNING_TEXT = "#fb923c"
+# Every colour belongs to a theme in palette.py, shared with the exports.
 
 GRID_LEGEND = ("Rows are home teams, columns away teams. Green: home win · amber: draw · "
                "red: away win · blue: mixed results · n/a: score unrecovered · grey date: still to play. "
@@ -155,7 +152,7 @@ def licence_text(path: Path) -> str:
 
 
 class AboutWindow(ctk.CTkToplevel):
-    """The name, version, copyright and licence: a band in the palette's heading colours over a
+    """The name, version, copyright and licence: a band in the theme's heading colours over a
     stripe of the win, draw and loss colours."""
 
     WIDTH, HEIGHT = 600, 600
@@ -168,17 +165,19 @@ class AboutWindow(ctk.CTkToplevel):
         self.title(f"About {APP_TITLE}")
         self.transient(master)
 
-        band = ctk.CTkFrame(self, fg_color=HEADING[0], corner_radius=0)
-        band.pack(fill="x")
-        ctk.CTkLabel(band, text=text.name, text_color=HEADING[1], font=ctk.CTkFont(FONT, 28, "bold"),
-                     anchor="w").pack(fill="x", padx=self.PAD, pady=(18, 0))
-        ctk.CTkLabel(band, text=text.version, text_color="gray75", font=ctk.CTkFont(FONT, 13),
-                     anchor="w").pack(fill="x", padx=self.PAD, pady=(0, 16))
+        self.band = ctk.CTkFrame(self, corner_radius=0)
+        self.band.pack(fill="x")
+        self.name_label = ctk.CTkLabel(self.band, text=text.name, font=ctk.CTkFont(FONT, 28, "bold"), anchor="w")
+        self.name_label.pack(fill="x", padx=self.PAD, pady=(18, 0))
+        self.version_label = ctk.CTkLabel(self.band, text=text.version, font=ctk.CTkFont(FONT, 13), anchor="w")
+        self.version_label.pack(fill="x", padx=self.PAD, pady=(0, 16))
         stripe = ctk.CTkFrame(self, fg_color="transparent", corner_radius=0, height=6)
         stripe.pack(fill="x")
-        for colour in (WIN_BG, DRAW_BG, LOSS_BG):
-            ctk.CTkFrame(stripe, fg_color=colour, corner_radius=0, width=1, height=6).pack(
-                side="left", fill="x", expand=True)
+        self.stripes = []
+        for _ in "WDL":
+            part = ctk.CTkFrame(stripe, corner_radius=0, width=1, height=6)
+            part.pack(side="left", fill="x", expand=True)
+            self.stripes.append(part)
 
         # Packed before the body so that a short screen squeezes the licence box, not the button.
         self.close_button = ctk.CTkButton(self, text="Close", width=100, command=self.destroy)
@@ -186,23 +185,40 @@ class AboutWindow(ctk.CTkToplevel):
 
         body = ctk.CTkFrame(self, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=self.PAD, pady=(18, 0))
-        for line, size, weight, colour in ((text.summary, 13, "normal", "gray80"),
-                                            (text.copyright, 13, "bold", "#ffffff"),
-                                            (text.notice, 12, "normal", "gray70")):
-            ctk.CTkLabel(body, text=line, text_color=colour, font=ctk.CTkFont(FONT, size, weight),
-                         wraplength=self.WIDTH - 2 * self.PAD, justify="left", anchor="w").pack(
-                fill="x", pady=(0, 12))
-        ctk.CTkLabel(body, text="LICENSE", text_color=HEADING[1], font=ctk.CTkFont(FONT, 11, "bold"),
-                     anchor="w").pack(fill="x")
-        self.licence_box = ctk.CTkTextbox(body, wrap="word", height=120, fg_color=TABLE_BG,
-                                          font=ctk.CTkFont(FONT, 12))
+        self.body_labels = []
+        for line, size, weight in ((text.summary, 13, "normal"), (text.copyright, 13, "bold"),
+                                   (text.notice, 12, "normal")):
+            label = ctk.CTkLabel(body, text=line, font=ctk.CTkFont(FONT, size, weight),
+                                 wraplength=self.WIDTH - 2 * self.PAD, justify="left", anchor="w")
+            label.pack(fill="x", pady=(0, 12))
+            self.body_labels.append(label)
+        self.licence_label = ctk.CTkLabel(body, text="LICENSE", font=ctk.CTkFont(FONT, 11, "bold"), anchor="w")
+        self.licence_label.pack(fill="x")
+        self.licence_box = ctk.CTkTextbox(body, wrap="word", height=120, font=ctk.CTkFont(FONT, 12))
         self.licence_box.pack(fill="both", expand=True, pady=(4, 0))
         self.licence_box.insert("1.0", licence_text(LICENCE_PATH))
         self.licence_box.configure(state="disabled")
+        self.apply_theme(master.theme)
 
         self.bind("<Escape>", lambda _e: self.destroy())
         self._place_over(master)
         self.after(100, self.bring_forward)
+
+    def apply_theme(self, theme: palette.Theme) -> None:
+        self.configure(fg_color=theme.window)
+        self.band.configure(fg_color=theme.heading[0])
+        self.name_label.configure(text_color=theme.heading[1])
+        self.version_label.configure(text_color=theme.muted)
+        for part, result in zip(self.stripes, "WDL"):
+            part.configure(fg_color=theme.colours[result][0])
+        summary, copyright_line, notice = self.body_labels
+        summary.configure(text_color=theme.text)
+        copyright_line.configure(text_color=theme.text)
+        notice.configure(text_color=theme.muted)
+        self.licence_label.configure(text_color=theme.heading[1])
+        self.licence_box.configure(fg_color=theme.table[0], text_color=theme.table[1])
+        self.close_button.configure(fg_color=theme.accent[0], hover_color=theme.accent_hover,
+                                    text_color=theme.accent[1])
 
     def _place_over(self, master: tk.Misc) -> None:
         """Centre the window over the main one, no taller than most of the screen."""
@@ -229,6 +245,10 @@ class FMReviewApp(ctk.CTk):
         self.dataset: fd.Dataset | None = None
         self.names: dict[int, str] = {}
         self.settings = self._read_settings()
+        self.theme = palette.theme_by_name(self.settings.get("theme"))
+        self.view_theme = self.theme              # the colours the views paint with
+        self._themed: list[tuple[str, object]] = []      # (role, widget), for apply_theme
+        self._shown: str | None = None            # the sheet on screen, if any
         self.loading_since: float | None = None
         self.loading_step = ""
         self._reading_xg = False          # the save is open and its expected goals are on their way
@@ -259,6 +279,7 @@ class FMReviewApp(ctk.CTk):
         self._dataset_serial = 0                  # bumped per installed save
         self._hub_key: tuple | None = None        # what the Competitions sheet was last filled from
         self._hub_summary = ""
+        self._hub_categories: list[str] = []      # the hub's category on each row, for painting
 
         self.scale = ctk.ScalingTracker.get_window_scaling(self)
         width = min(1560, int(self.winfo_screenwidth() / self.scale * 0.92))
@@ -280,46 +301,56 @@ class FMReviewApp(ctk.CTk):
 
     # ----------------------------------------------------------------- layout
 
+    def _role(self, role: str, widget):
+        """Remember a widget's part in the theme, so that apply_theme can re-colour it."""
+        self._themed.append((role, widget))
+        return widget
+
     def _build(self) -> None:
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(1, weight=1)
+        role = self._role
 
-        top = ctk.CTkFrame(self, corner_radius=0, height=56)
+        top = self.top_bar = role("panel", ctk.CTkFrame(self, corner_radius=0, height=56))
         top.grid(row=0, column=0, columnspan=2, sticky="ew")
         top.grid_columnconfigure(3, weight=1)
-        self.open_button = ctk.CTkButton(top, text="Open save…", width=120, command=self.choose_save)
+        self.open_button = role("button", ctk.CTkButton(top, text="Open save…", width=120, command=self.choose_save))
         self.open_button.grid(row=0, column=0, padx=(14, 10), pady=12)
-        self.save_label = ctk.CTkLabel(top, text="No save open", font=ctk.CTkFont(FONT, 15, "bold"))
+        self.save_label = role("text", ctk.CTkLabel(top, text="No save open", font=ctk.CTkFont(FONT, 15, "bold")))
         self.save_label.grid(row=0, column=1, padx=(0, 12), sticky="w")
-        self.meta_label = ctk.CTkLabel(top, text="", text_color="gray70")
+        self.meta_label = role("muted", ctk.CTkLabel(top, text=""))
         self.meta_label.grid(row=0, column=2, sticky="w")
-        self.verify_label = ctk.CTkLabel(top, text="", text_color=WARNING_TEXT, cursor="hand2")
+        self.verify_label = role("warning", ctk.CTkLabel(top, text="", cursor="hand2"))
         self.verify_label.grid(row=0, column=3, padx=12, sticky="w")
         self.verify_label.bind("<Button-1>", lambda _e: self.show_details())
-        self.progress = ctk.CTkProgressBar(top, mode="indeterminate", width=180)
+        self.progress = role("progress", ctk.CTkProgressBar(top, mode="indeterminate", width=180))
         self.progress.grid(row=0, column=4, padx=14)
         self.progress.grid_remove()
-        self.about_button = ctk.CTkButton(top, text="About", width=80, fg_color="gray30", hover_color="gray35",
-                                          command=self.show_about)
-        self.about_button.grid(row=0, column=5, padx=(0, 14), pady=12)
+        self.theme_button = role("quiet", ctk.CTkButton(top, text=THEME_LABEL, width=90,
+                                                        command=self._show_theme_menu))
+        self.theme_button.grid(row=0, column=5, padx=(0, 8), pady=12)
+        self.theme_name = tk.StringVar(self, value=self.theme.name)
+        self.theme_menu = tk.Menu(self, tearoff=False)
+        for theme in palette.THEMES:
+            self.theme_menu.add_radiobutton(label=theme.name, variable=self.theme_name, value=theme.name,
+                                            command=lambda name=theme.name: self.set_theme(name))
+        self.about_button = role("quiet", ctk.CTkButton(top, text="About", width=80, command=self.show_about))
+        self.about_button.grid(row=0, column=6, padx=(0, 14), pady=12)
 
-        side = ctk.CTkFrame(self, width=340, corner_radius=0)
+        side = role("panel", ctk.CTkFrame(self, width=340, corner_radius=0))
         side.grid(row=1, column=0, sticky="nsw")
         side.grid_propagate(False)
         side.grid_rowconfigure(2, weight=1)
         side.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(side, text="Competitions", font=ctk.CTkFont(FONT, 14, "bold")).grid(
+        role("text", ctk.CTkLabel(side, text="Competitions", font=ctk.CTkFont(FONT, 14, "bold"))).grid(
             row=0, column=0, padx=12, pady=(10, 4), sticky="w")
-        self.search_entry = ctk.CTkEntry(side, placeholder_text="Search competitions or clubs")
+        self.search_entry = role("entry", ctk.CTkEntry(side, placeholder_text="Search competitions or clubs"))
         self.search_entry.grid(row=1, column=0, columnspan=2, padx=12, pady=(0, 8), sticky="ew")
         self.search_entry.bind("<KeyRelease>", lambda _e: self._schedule_search())
-        self.comp_list = tk.Listbox(
-            side, activestyle="none", exportselection=False, bg=LIST_BG, fg=LIST_FG,
-            selectbackground="#1f538d", selectforeground="#ffffff", highlightthickness=0,
-            borderwidth=0, font=(FONT, 10),
-        )
+        self.comp_list = role("list", tk.Listbox(side, activestyle="none", exportselection=False,
+                                                 highlightthickness=0, borderwidth=0, font=(FONT, 10)))
         self.comp_list.grid(row=2, column=0, padx=(12, 0), pady=(0, 12), sticky="nsew")
-        list_scroll = ctk.CTkScrollbar(side, command=self.comp_list.yview)
+        list_scroll = ctk.CTkScrollbar(side, command=self.comp_list.yview)     # its greys suit every theme
         list_scroll.grid(row=2, column=1, padx=(0, 6), pady=(0, 12), sticky="ns")
         self.comp_list.configure(yscrollcommand=list_scroll.set)
         self.comp_list.bind("<<ListboxSelect>>", lambda _e: self._schedule_list_select())
@@ -332,12 +363,14 @@ class FMReviewApp(ctk.CTk):
         header = ctk.CTkFrame(main, fg_color="transparent")
         header.grid(row=0, column=0, sticky="ew")
         header.grid_columnconfigure(0, weight=1)
-        self.title_label = ctk.CTkLabel(header, text=APP_TITLE, font=ctk.CTkFont(FONT, 22, "bold"), anchor="w")
+        self.title_label = role("text", ctk.CTkLabel(header, text=APP_TITLE, font=ctk.CTkFont(FONT, 22, "bold"),
+                                                     anchor="w"))
         self.title_label.grid(row=0, column=0, sticky="w")
-        self.rename_button = ctk.CTkButton(header, text="Name this competition…", width=170,
-                                           fg_color="gray30", hover_color="gray35", command=self.rename_competition)
+        self.rename_button = role("quiet", ctk.CTkButton(header, text="Name this competition…", width=170,
+                                                         command=self.rename_competition))
         self.rename_button.grid(row=0, column=1, rowspan=2, sticky="e")
-        self.export_button = ctk.CTkButton(header, text=EXPORT_LABEL, width=100, command=self._show_export_menu)
+        self.export_button = role("button", ctk.CTkButton(header, text=EXPORT_LABEL, width=100,
+                                                          command=self._show_export_menu))
         self.export_button.grid(row=0, column=2, rowspan=2, padx=(8, 0), sticky="e")
         self.export_menu = tk.Menu(self, tearoff=False)
         for kind, label in ((fx.EXCEL, "Excel workbook (.xlsx)"), (fx.HTML, "Web page (.html)"),
@@ -345,41 +378,44 @@ class FMReviewApp(ctk.CTk):
             self.export_menu.add_command(label=label, command=lambda k=kind: self.export(k))
         self.export_menu.add_separator()
         self.export_menu.add_command(label="Open the export folder", command=self.open_export_folder)
-        self.hint_label = ctk.CTkLabel(header, text="", text_color="gray70", anchor="w")
+        self.hint_label = role("muted", ctk.CTkLabel(header, text="", anchor="w"))
         self.hint_label.grid(row=1, column=0, sticky="w")
 
         controls = ctk.CTkFrame(main, fg_color="transparent")
         controls.grid(row=1, column=0, sticky="ew", pady=(8, 4))
-        ctk.CTkLabel(controls, text="Season").pack(side="left", padx=(0, 6))
-        self.season_menu = ctk.CTkOptionMenu(controls, values=["–"], width=110, command=self._on_season)
+        role("text", ctk.CTkLabel(controls, text="Season")).pack(side="left", padx=(0, 6))
+        self.season_menu = role("option", ctk.CTkOptionMenu(controls, values=["–"], width=110,
+                                                            command=self._on_season))
         self.season_menu.pack(side="left", padx=(0, 16))
-        ctk.CTkLabel(controls, text="Team").pack(side="left", padx=(0, 6))
-        self.team_box = ctk.CTkComboBox(controls, values=[ALL_TEAMS], width=250, command=self._on_team)
+        role("text", ctk.CTkLabel(controls, text="Team")).pack(side="left", padx=(0, 6))
+        self.team_box = role("combo", ctk.CTkComboBox(controls, values=[ALL_TEAMS], width=250, command=self._on_team))
         self.team_box.pack(side="left", padx=(0, 16))
         self.team_box.bind("<Return>", self._on_team_typed)
-        self.view_switch = ctk.CTkSegmentedButton(controls, values=list(VIEWS), command=self.set_view)
+        self.view_switch = role("switch", ctk.CTkSegmentedButton(controls, values=list(VIEWS), command=self.set_view))
         self.view_switch.set(self.view)
         self.view_switch.pack(side="left", padx=(0, 16))
-        self.group_label = ctk.CTkLabel(controls, text="Group by")
+        self.group_label = role("text", ctk.CTkLabel(controls, text="Group by"))
         self.group_label.pack(side="left", padx=(0, 6))
-        self.group_switch = ctk.CTkSegmentedButton(controls, values=list(GROUPINGS), command=self._on_group)
+        self.group_switch = role("switch", ctk.CTkSegmentedButton(controls, values=list(GROUPINGS),
+                                                                  command=self._on_group))
         self.group_switch.set(self.group_by)
         self.group_switch.pack(side="left")
 
-        self.split_label = ctk.CTkLabel(controls, text="Standings")
-        self.split_switch = ctk.CTkSegmentedButton(controls, values=list(fd.SPLITS), command=self._on_table_split)
+        self.split_label = role("text", ctk.CTkLabel(controls, text="Standings"))
+        self.split_switch = role("switch", ctk.CTkSegmentedButton(controls, values=list(fd.SPLITS),
+                                                                  command=self._on_table_split))
         self.split_switch.set(self.table_split)
-        self.analysis_label = ctk.CTkLabel(controls, text="Show")
-        self.analysis_switch = ctk.CTkSegmentedButton(controls, values=list(ANALYSES), command=self._on_analysis)
+        self.analysis_label = role("text", ctk.CTkLabel(controls, text="Show"))
+        self.analysis_switch = role("switch", ctk.CTkSegmentedButton(controls, values=list(ANALYSES),
+                                                                     command=self._on_analysis))
         self.analysis_switch.set(self.analysis)
 
-        self.coverage_label = ctk.CTkLabel(main, text="", anchor="w", justify="left")
+        self.coverage_label = role("text", ctk.CTkLabel(main, text="", anchor="w", justify="left"))
         self.coverage_label.grid(row=2, column=0, sticky="ew")
-        self.note_label = ctk.CTkLabel(main, text="", anchor="w", justify="left", text_color="gray65",
-                                       wraplength=1100)
+        self.note_label = role("muted", ctk.CTkLabel(main, text="", anchor="w", justify="left", wraplength=1100))
         self.note_label.grid(row=3, column=0, sticky="ew", pady=(0, 6))
 
-        content = ctk.CTkFrame(main, fg_color=TABLE_BG, corner_radius=6)
+        content = role("content", ctk.CTkFrame(main, corner_radius=6))
         content.grid(row=4, column=0, sticky="nsew")
         content.grid_columnconfigure(0, weight=1)
         content.grid_rowconfigure(0, weight=1)
@@ -395,41 +431,116 @@ class FMReviewApp(ctk.CTk):
             sheet.bind("<<SheetSelect>>", lambda _e, n=name: self._on_sheet_select(n))
             sheet.grid_remove()
         self.sheets[HUB].bind("<Double-Button-1>", lambda _e: self._open_from_hub())
-        self.message = ctk.CTkFrame(content, fg_color=TABLE_BG)
+        self.message = role("content", ctk.CTkFrame(content))
         self.message.grid(row=0, column=0, sticky="nsew")
-        self.message_label = ctk.CTkLabel(self.message, text="", font=ctk.CTkFont(FONT, 15), wraplength=700)
+        self.message_label = role("text", ctk.CTkLabel(self.message, text="", font=ctk.CTkFont(FONT, 15),
+                                                       wraplength=700))
         self.message_label.pack(expand=True, pady=(0, 10))
-        self.reopen_button = ctk.CTkButton(self.message, text="", width=300, command=self._reopen_last)
+        self.reopen_button = role("button", ctk.CTkButton(self.message, text="", width=300, command=self._reopen_last))
 
-        self.detail_label = ctk.CTkLabel(main, text="", anchor="w", text_color="gray75")
+        self.detail_label = role("muted", ctk.CTkLabel(main, text="", anchor="w"))
         self.detail_label.grid(row=5, column=0, sticky="ew", pady=(4, 0))
 
-        status = ctk.CTkFrame(self, corner_radius=0, height=30)
+        status = self.status_bar = role("panel", ctk.CTkFrame(self, corner_radius=0, height=30))
         status.grid(row=2, column=0, columnspan=2, sticky="ew")
         status.grid_columnconfigure(0, weight=1)
-        self.status_label = ctk.CTkLabel(status, text="", anchor="w", text_color="gray70")
+        self.status_label = role("muted", ctk.CTkLabel(status, text="", anchor="w"))
         self.status_label.grid(row=0, column=0, padx=14, sticky="ew")
-        self.details_button = ctk.CTkButton(status, text="Save details & warnings", width=170, height=24,
-                                            fg_color="gray30", hover_color="gray35", command=self.show_details)
+        self.details_button = role("quiet", ctk.CTkButton(status, text="Save details & warnings", width=170,
+                                                          height=24, command=self.show_details))
         self.details_button.grid(row=0, column=1, padx=10, pady=3)
 
+        self._recolour()
         self._set_controls_state("disabled")
         self._show_welcome()
         self._refresh_status()
 
     def _make_sheet(self, parent, **options) -> Sheet:
+        """A sheet in the shared style; its colours come from the theme (see _recolour)."""
         with_index = options.get("show_row_index", True)
         sheet = Sheet(
             parent, theme="dark blue", show_top_left=with_index, row_index_align="w",
             table_wrap="", index_wrap="", header_wrap="", allow_cell_overflow=True,
             font=(FONT, 10, "normal"), header_font=(FONT, 10, "bold"), index_font=(FONT, 10, "normal"),
-            frame_bg=TABLE_BG, table_bg=TABLE_BG, index_bg="#151515", header_bg="#151515",
-            top_left_bg="#151515", table_grid_fg="#2b2b2b", outline_thickness=0,
-            default_row_height=self.px(24), **options,
+            outline_thickness=0, default_row_height=self.px(24), **options,
         )
         sheet.enable_bindings("single_select", "row_select", "column_select", "column_width_resize",
                               "arrowkeys", "copy", "right_click_popup_menu", "rc_select")
         return sheet
+
+    # ----------------------------------------------------------------- themes
+
+    def _recolour(self) -> None:
+        """Paint every widget in the current theme's colours."""
+        t = self.theme
+        styles = {
+            "panel": dict(fg_color=t.panel),
+            "content": dict(fg_color=t.table[0]),
+            "text": dict(text_color=t.text),
+            "muted": dict(text_color=t.muted),
+            "warning": dict(text_color=t.warning),
+            "button": dict(fg_color=t.accent[0], hover_color=t.accent_hover, text_color=t.accent[1]),
+            "quiet": dict(fg_color=t.quiet[0], hover_color=t.quiet_hover, text_color=t.quiet[1]),
+            "switch": dict(fg_color=t.switch[0], unselected_color=t.switch[0], unselected_hover_color=t.switch_hover,
+                           selected_color=t.switch_selected, selected_hover_color=t.switch_selected_hover,
+                           text_color=t.switch[1]),
+            "option": dict(fg_color=t.accent[0], button_color=t.accent_hover, text_color=t.accent[1]),
+            "combo": dict(fg_color=t.field[0], border_color=t.field[1], button_color=t.field[1], text_color=t.text),
+            "entry": dict(fg_color=t.field[0], border_color=t.field[1], text_color=t.text),
+            "progress": dict(progress_color=t.accent[0]),
+            "list": dict(bg=t.competition_list[0], fg=t.competition_list[1], selectbackground=t.list_selected[0],
+                         selectforeground=t.list_selected[1]),
+        }
+        self.configure(fg_color=t.window)
+        for role, widget in self._themed:
+            widget.configure(**styles[role])
+        selected = t.selection[0]
+        border = t.selection[1]
+        for sheet in self.sheets.values():
+            sheet.set_options(
+                frame_bg=t.table[0], table_bg=t.table[0], table_fg=t.table[1], table_grid_fg=t.grid_line,
+                header_bg=t.sheet_heading[0], header_fg=t.sheet_heading[1], index_bg=t.sheet_heading[0],
+                index_fg=t.sheet_heading[1], top_left_bg=t.sheet_heading[0],
+                table_selected_cells_bg=selected, table_selected_cells_border_fg=border,
+                table_selected_rows_bg=selected, table_selected_rows_border_fg=border,
+                table_selected_columns_bg=selected, table_selected_columns_border_fg=border,
+            )
+
+    def apply_theme(self, theme: palette.Theme) -> None:
+        """Re-colour the window in a theme and redraw what is on screen where it stands: nothing is
+        reloaded, and the competition, season, followed team, view and scroll position stay."""
+        self.theme = theme
+        self.view_theme = theme
+        self.theme_name.set(theme.name)
+        self._recolour()
+        self._fill_competition_list()
+        if self.about_window is not None and self.about_window.winfo_exists():
+            self.about_window.apply_theme(theme)
+        shown = self.sheets.get(self._shown) if self._shown else None
+        where = (shown.get_xview()[0], shown.get_yview()[0]) if shown is not None else None
+        if self._hub_key is not None:
+            self._paint_hub()
+        self.render()
+        if shown is not None and self.sheets.get(self._shown) is shown:
+            shown.set_xview(where[0])
+            shown.set_yview(where[1])
+
+    def set_theme(self, name: str) -> None:
+        """Switch to the named theme and remember it for next time."""
+        self.apply_theme(palette.theme_by_name(name))
+        self.settings["theme"] = self.theme.name
+        self._write_settings()
+
+    def _show_theme_menu(self) -> None:
+        self._popup(self.theme_menu, self.theme_button)
+
+    @staticmethod
+    def _popup(menu: tk.Menu, button: ctk.CTkButton) -> None:
+        """Open a menu under its button."""
+        try:
+            menu.tk_popup(button.winfo_rootx(), button.winfo_rooty() + button.winfo_height())
+        finally:
+            menu.grab_release()
 
     def px(self, value: float) -> int:
         return int(round(value * self.scale))
@@ -606,7 +717,8 @@ class FMReviewApp(ctk.CTk):
 
         def heading(text: str) -> None:
             box.insert("end", text)
-            box.itemconfig("end", fg=SECTION_FG, selectbackground=LIST_BG, selectforeground=SECTION_FG)
+            section = self.theme.section
+            box.itemconfig("end", fg=section, selectbackground=self.theme.competition_list[0], selectforeground=section)
             self.list_rows.append(None)
 
         def entry(comp: fd.CompetitionInfo) -> None:
@@ -814,11 +926,7 @@ class FMReviewApp(ctk.CTk):
     # ----------------------------------------------------------------- exports
 
     def _show_export_menu(self) -> None:
-        button = self.export_button
-        try:
-            self.export_menu.tk_popup(button.winfo_rootx(), button.winfo_rooty() + button.winfo_height())
-        finally:
-            self.export_menu.grab_release()
+        self._popup(self.export_menu, self.export_button)
 
     def export(self, kind: str) -> None:
         """Export the selected competition and season, as shown, on a background thread."""
@@ -896,6 +1004,7 @@ class FMReviewApp(ctk.CTk):
 
     def _show_sheet(self, name: str) -> Sheet:
         self.message.grid_remove()
+        self._shown = name
         for key, sheet in self.sheets.items():
             if key == name:
                 sheet.grid()
@@ -904,6 +1013,7 @@ class FMReviewApp(ctk.CTk):
         return self.sheets[name]
 
     def _show_message(self, text: str) -> None:
+        self._shown = None
         for sheet in self.sheets.values():
             sheet.grid_remove()
         self.message_label.configure(text=text)
@@ -947,20 +1057,21 @@ class FMReviewApp(ctk.CTk):
         sheet.set_column_widths(widths[:len(headers)])
         sheet.align_columns([1, 3, 4, 6, 7, 8][: 4 if focus is None else 6], align="center", align_header=True,
                             redraw=False)
+        theme = self.view_theme
         first_unplayed = None
         for i, r in enumerate(rows):
             if r.is_heading:
-                sheet.highlight_rows(i, bg=HEADING[0], fg=HEADING[1], redraw=False, end_of_screen=True)
+                sheet.highlight_rows(i, bg=theme.heading[0], fg=theme.heading[1], redraw=False, end_of_screen=True)
                 continue
             if first_unplayed is None and r.kind == fd.SCHEDULED:
                 first_unplayed = i
             if focus is not None and r.result:
-                self._paint(sheet, i, 3, COLOURS[r.result])
-                self._paint(sheet, i, 7, COLOURS[r.result])
+                self._paint(sheet, i, 3, theme.colours[r.result])
+                self._paint(sheet, i, 7, theme.colours[r.result])
             elif r.kind in (fd.UNAVAILABLE, fd.SCHEDULED):
-                self._paint(sheet, i, 3, COLOURS[r.kind])
+                self._paint(sheet, i, 3, theme.colours[r.kind])
             if focus is not None:
-                self._paint(sheet, i, 2 if r.home_id == focus else 5, (None, FOCUS_TEXT))
+                self._paint(sheet, i, 2 if r.home_id == focus else 5, (None, theme.link))
         self._fill_results_xg(sheet)
         sheet.refresh()
         # Open on the most recent results: just before the first match still to play.
@@ -981,7 +1092,7 @@ class FMReviewApp(ctk.CTk):
                 home = r.home_id == self.focus
                 tint = fd.xg_tint((f.home_goals - xg.home) if home else (f.away_goals - xg.away))
                 if tint:
-                    self._paint(sheet, i, RESULTS_XG_COLUMN, COLOURS["W" if tint == fd.XG_ABOVE else "L"])
+                    self._paint(sheet, i, RESULTS_XG_COLUMN, self.view_theme.colours["W" if tint == fd.XG_ABOVE else "L"])
 
     def _results_note(self) -> str:
         note = []
@@ -1017,37 +1128,39 @@ class FMReviewApp(ctk.CTk):
         sheet.set_column_widths(widths)
 
         focus_idx = grid.team_ids.index(self.focus) if self.focus in grid.team_ids else None
+        colours, focus_colours = self.view_theme.colours, self.view_theme.focus
 
         for r, row in enumerate(grid.cells):
             for c, cell in enumerate(row):
                 if cell.kind == "self":
-                    self._paint(sheet, r, c, COLOURS["self"])
+                    self._paint(sheet, r, c, colours["self"])
                 elif focus_idx is not None and r == focus_idx:
                     # Followed team at home: Home Win is a win (W), Away Win is a loss (L)
                     if cell.kind == fd.HOME_WIN:
-                        self._paint(sheet, r, c, COLOURS["W"])
+                        self._paint(sheet, r, c, colours["W"])
                     elif cell.kind == fd.DRAW:
-                        self._paint(sheet, r, c, COLOURS["D"])
+                        self._paint(sheet, r, c, colours["D"])
                     elif cell.kind == fd.AWAY_WIN:
-                        self._paint(sheet, r, c, COLOURS["L"])
-                    elif cell.kind in COLOURS:
-                        self._paint(sheet, r, c, COLOURS[cell.kind])
+                        self._paint(sheet, r, c, colours["L"])
+                    elif cell.kind in colours:
+                        self._paint(sheet, r, c, colours[cell.kind])
                 elif focus_idx is not None and c == focus_idx:
                     # Followed team away: Away Win is a win (W), Home Win is a loss (L)
                     if cell.kind == fd.AWAY_WIN:
-                        self._paint(sheet, r, c, COLOURS["W"])
+                        self._paint(sheet, r, c, colours["W"])
                     elif cell.kind == fd.DRAW:
-                        self._paint(sheet, r, c, COLOURS["D"])
+                        self._paint(sheet, r, c, colours["D"])
                     elif cell.kind == fd.HOME_WIN:
-                        self._paint(sheet, r, c, COLOURS["L"])
-                    elif cell.kind in COLOURS:
-                        self._paint(sheet, r, c, COLOURS[cell.kind])
-                elif cell.kind in COLOURS:
-                    self._paint(sheet, r, c, COLOURS[cell.kind])
+                        self._paint(sheet, r, c, colours["L"])
+                    elif cell.kind in colours:
+                        self._paint(sheet, r, c, colours[cell.kind])
+                elif cell.kind in colours:
+                    self._paint(sheet, r, c, colours[cell.kind])
 
         if focus_idx is not None:
-            self._paint(sheet, focus_idx, 0, FOCUS, canvas="index")
-            sheet.highlight_cells(column=focus_idx, canvas="header", bg=FOCUS[0], fg=FOCUS[1], redraw=False)
+            self._paint(sheet, focus_idx, 0, focus_colours, canvas="index")
+            sheet.highlight_cells(column=focus_idx, canvas="header", bg=focus_colours[0], fg=focus_colours[1],
+                                  redraw=False)
             team_name = self.labels.get(self.focus, "Followed team")
             self.note_label.configure(
                 text=f"Followed team perspective ({team_name}): row & column show results from their viewpoint "
@@ -1059,6 +1172,7 @@ class FMReviewApp(ctk.CTk):
 
     def _render_table(self) -> None:
         result = fd.standings(self.dataset, self.comp_id, self.season, self.fixtures, self.labels, split=self.table_split)
+        theme = self.view_theme
         headers = ["Pos", "Team", "P", "W", "D", "L", "GF", "GA", "GD", "Pts", "Form"]
         data, self.table_rows, headings, focus_rows, zone_cells = [], [], [], [], []
         for title, rows in result.groups:
@@ -1070,8 +1184,8 @@ class FMReviewApp(ctk.CTk):
                 row_idx = len(data)
                 if r.team_id == self.focus:
                     focus_rows.append(row_idx)
-                if r.zone and r.zone in ZONE_COLOURS:
-                    zone_cells.append((row_idx, 0, ZONE_COLOURS[r.zone]))
+                if r.zone and r.zone in theme.zones:
+                    zone_cells.append((row_idx, 0, theme.zones[r.zone]))
                 gd = r.goal_difference
                 data.append([r.position, r.team, r.played, r.won, r.drawn, r.lost, r.goals_for, r.goals_against,
                              f"{gd:+d}" if gd else "0", r.points, "  ".join(r.form)])
@@ -1084,9 +1198,9 @@ class FMReviewApp(ctk.CTk):
         sheet.set_column_widths([self.px(46), team_width] + [self.px(44)] * 7 + [self.px(50), self.px(130)])
         sheet.align_columns([0] + list(range(2, 11)), align="center", align_header=True, redraw=False)
         for i in headings:
-            sheet.highlight_rows(i, bg=HEADING[0], fg=HEADING[1], redraw=False, end_of_screen=True)
+            sheet.highlight_rows(i, bg=theme.heading[0], fg=theme.heading[1], redraw=False, end_of_screen=True)
         for i in focus_rows:
-            sheet.highlight_rows(i, bg=FOCUS[0], fg=FOCUS[1], redraw=False, end_of_screen=False)
+            sheet.highlight_rows(i, bg=theme.focus[0], fg=theme.focus[1], redraw=False, end_of_screen=False)
         for row_idx, col_idx, colours in zone_cells:
             self._paint(sheet, row_idx, col_idx, colours)
         sheet.refresh()
@@ -1134,12 +1248,13 @@ class FMReviewApp(ctk.CTk):
                   + [self._text_width([row[run] for row in data], minimum=120), self.px(54)] + [self.px(40)] * 8
                   + [self.px(66)] * 4)
         sheet = self._fill_analysis(headers, data, widths, [c for c in range(1, len(headers)) if c != run])
+        theme = self.view_theme
         for i, r in enumerate(guide.rows):
             if r.team_id == self.focus:
-                sheet.highlight_rows(i, bg=FOCUS[0], fg=FOCUS[1], redraw=False, end_of_screen=False)
+                sheet.highlight_rows(i, bg=theme.focus[0], fg=theme.focus[1], redraw=False, end_of_screen=False)
             for column, letter in enumerate(data[i][1:run], start=1):
                 if letter:
-                    self._paint(sheet, i, column, COLOURS[letter])
+                    self._paint(sheet, i, column, theme.colours[letter])
         sheet.refresh()
         note = [guide.describe(),
                 "Form: the last five matches, oldest first. PPG: points per game. CS: clean sheets. FTS: failed to "
@@ -1168,6 +1283,7 @@ class FMReviewApp(ctk.CTk):
                                "This competition has no matchdays (it is a cup or a set of friendlies), so "
                                "there are no league positions to chart.")
             return
+        theme = self.view_theme
         headers = ["Team"] + [str(matchday) for matchday in chart.matchdays]
         blank = [""] * len(chart.matchdays)
         data, self.analysis_rows, headings, followed, zone_cells = [], [], [], [], []
@@ -1182,16 +1298,16 @@ class FMReviewApp(ctk.CTk):
                     followed.append(row_idx)
                 for column, position in enumerate(track.positions, start=1):
                     zone = group.zones[position - 1] if position <= len(group.zones) else ""
-                    if zone in ZONE_COLOURS:
-                        zone_cells.append((row_idx, column, ZONE_COLOURS[zone]))
+                    if zone in theme.zones:
+                        zone_cells.append((row_idx, column, theme.zones[zone]))
                 data.append([track.team, *track.positions])
                 self.analysis_rows.append(track.team_id)
         widths = [self._text_width([row[0] for row in data], minimum=180)] + [self.px(34)] * len(chart.matchdays)
         sheet = self._fill_analysis(headers, data, widths, list(range(1, len(headers))))
         for i in headings:
-            sheet.highlight_rows(i, bg=HEADING[0], fg=HEADING[1], redraw=False, end_of_screen=True)
+            sheet.highlight_rows(i, bg=theme.heading[0], fg=theme.heading[1], redraw=False, end_of_screen=True)
         for i in followed:
-            sheet.highlight_rows(i, bg=FOCUS[0], fg=FOCUS[1], redraw=False, end_of_screen=False)
+            sheet.highlight_rows(i, bg=theme.focus[0], fg=theme.focus[1], redraw=False, end_of_screen=False)
         for row_idx, column, colours in zone_cells:
             self._paint(sheet, row_idx, column, colours)
         sheet.refresh()
@@ -1222,13 +1338,14 @@ class FMReviewApp(ctk.CTk):
         widths = [self._text_width([row[0] for row in data], minimum=180), self.px(70)] + [self.px(60)] * 5 \
             + [self.px(90)] * 2
         sheet = self._fill_analysis(headers, data, widths, list(range(1, len(headers))))
+        theme = self.view_theme
         for i, r in enumerate(rows):
             if r.team_id == self.focus:
-                sheet.highlight_rows(i, bg=FOCUS[0], fg=FOCUS[1], redraw=False, end_of_screen=False)
+                sheet.highlight_rows(i, bg=theme.focus[0], fg=theme.focus[1], redraw=False, end_of_screen=False)
             for column, value in ((7, r.finishing), (8, r.prevention)):
                 tint = fd.xg_tint(value, matches=r.covered) if value is not None else ""
                 if tint:
-                    self._paint(sheet, i, column, COLOURS["W" if tint == fd.XG_ABOVE else "L"])
+                    self._paint(sheet, i, column, theme.colours["W" if tint == fd.XG_ABOVE else "L"])
         sheet.refresh()
         self.note_label.configure(text=(
             f"{cov.describe()} xG and goals here come from the same matches: those with a match report and a "
@@ -1269,16 +1386,18 @@ class FMReviewApp(ctk.CTk):
             self.px(65), self.px(75), self.px(65), self.px(300)
         ])
         sheet.align_columns([1, 3, 4, 5, 6, 7], align="center", align_header=True, redraw=False)
-        for i, s in enumerate(summaries):
-            if s.category == fd.COMP_CAT_YOURS:
-                sheet.highlight_rows(i, bg="#132338", fg="#93c5fd", redraw=False, end_of_screen=False)
-                self._paint(sheet, i, 0, ("#1e3a8a", "#dbeafe"))
-            elif s.category == fd.COMP_CAT_CUP:
-                self._paint(sheet, i, 0, ("#312e81", "#e0e7ff"))
-            elif s.category == fd.COMP_CAT_YOUTH:
-                self._paint(sheet, i, 0, ("#1f2937", "#9ca3af"))
-            elif s.category == fd.COMP_CAT_LEAGUE:
-                self._paint(sheet, i, 0, ("#064e3b", "#a7f3d0"))
+        self._hub_categories = [s.category for s in summaries]
+        self._paint_hub()
+
+    def _paint_hub(self) -> None:
+        """Colour the hub's category cells and your club's rows; a new theme repaints them in place."""
+        sheet, theme = self.sheets[HUB], self.view_theme
+        sheet.dehighlight_all(redraw=False)
+        for i, category in enumerate(self._hub_categories):
+            if category == fd.COMP_CAT_YOURS:
+                sheet.highlight_rows(i, bg=theme.yours_row[0], fg=theme.yours_row[1], redraw=False, end_of_screen=False)
+            if category in theme.categories:
+                self._paint(sheet, i, 0, theme.categories[category])
         sheet.refresh()
 
     def _mark_current_in_hub(self) -> None:
