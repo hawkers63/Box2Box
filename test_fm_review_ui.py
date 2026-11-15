@@ -1,3 +1,5 @@
+# Copyright (c) 2026 onwards Mark Hawksworth (hawkers63). All rights reserved.
+# Not to be copied or altered without express permission. See LICENSE.
 """Smoke test for the FM Review window with a small made-up dataset.
 
 Run:  .venv\\Scripts\\python -m unittest -v

@@ -1,4 +1,8 @@
+# Copyright (c) 2026 onwards Mark Hawksworth (hawkers63). All rights reserved.
+# Not to be copied or altered without express permission. See LICENSE.
 """Box2Box: browse the fixtures, results, grids, and league tables in a Football Manager 26/27 save.
+
+Copyright (c) 2026 onwards Mark Hawksworth (hawkers63). All rights reserved.
 
     .venv\\Scripts\\python fm_review.py ["path\\to\\save.fm"]
 

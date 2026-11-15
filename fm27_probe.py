@@ -1,3 +1,5 @@
+# Copyright (c) 2026 onwards Mark Hawksworth (hawkers63). All rights reserved.
+# Not to be copied or altered without express permission. See LICENSE.
 """FM27 fixture probe.
 
 Reads a Football Manager save with fmsave and reports how much fixture and

@@ -1,3 +1,5 @@
+# Copyright (c) 2026 onwards Mark Hawksworth (hawkers63). All rights reserved.
+# Not to be copied or altered without express permission. See LICENSE.
 """Data layer for Box2Box.
 
 Reads a Football Manager 26/27 save with fmsave and derives everything the viewer shows: the

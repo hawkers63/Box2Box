@@ -1,3 +1,5 @@
+# Copyright (c) 2026 onwards Mark Hawksworth (hawkers63). All rights reserved.
+# Not to be copied or altered without express permission. See LICENSE.
 """Smoke test for fm27_probe.py using fake records in place of a real save."""
 import datetime as dt
 import sys

@@ -1,3 +1,5 @@
+# Copyright (c) 2026 onwards Mark Hawksworth (hawkers63). All rights reserved.
+# Not to be copied or altered without express permission. See LICENSE.
 """Box2Box's colours, shared by the window and the exports so that both look the same.
 
 Each entry is a (background, text) pair of hex colours; None means "leave as it is".

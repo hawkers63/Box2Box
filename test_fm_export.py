@@ -1,3 +1,5 @@
+# Copyright (c) 2026 onwards Mark Hawksworth (hawkers63). All rights reserved.
+# Not to be copied or altered without express permission. See LICENSE.
 """Tests for fm_export: what each export holds, how it looks, and how it fails.
 
 Run:  .venv\\Scripts\\python -m unittest -v

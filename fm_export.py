@@ -1,3 +1,5 @@
+# Copyright (c) 2026 onwards Mark Hawksworth (hawkers63). All rights reserved.
+# Not to be copied or altered without express permission. See LICENSE.
 """Exports for Box2Box: one competition and season to an Excel workbook, a web page or CSV files.
 
 The user chose one export per competition and season, saved in Documents\\Box2Box (14 Nov 2026).
