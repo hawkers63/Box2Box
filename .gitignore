@@ -20,6 +20,15 @@ box2box_errors.log
 Thumbs.db
 desktop.ini
 
-# Claude Code: personal settings stay local (CLAUDE.md is shared)
-.claude/settings.local.json
+# Private local notes, plans, backups, profiles and editor working files
+notes/
+CLAUDE.md
+memory.md
+roadmap.md
+ROADMAP.md
+backups/
+*.bak-*
+profiles/
+state/
+.claude/
 CLAUDE.local.md
