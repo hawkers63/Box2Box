@@ -34,6 +34,7 @@ import fm_export as fx
 from palette import COLOURS, FOCUS, HEADING, ZONE_COLOURS, zone_legend
 
 APP_TITLE = "Box2Box"
+VERSION = "1.0"
 APP_DIR = Path(__file__).resolve().parent
 NAMES_PATH = APP_DIR / "competition_names.csv"
 SETTINGS_PATH = APP_DIR / "box2box_settings.json"
@@ -88,7 +89,7 @@ class FMReviewApp(ctk.CTk):
 
     def __init__(self) -> None:
         super().__init__()
-        self.title(APP_TITLE)
+        self.title(f"{APP_TITLE} {VERSION}")
         self.events: queue.Queue = queue.Queue()
         self.dataset: fd.Dataset | None = None
         self.names: dict[int, str] = {}

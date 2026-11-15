@@ -1,5 +1,9 @@
 # Box2Box
 
+**Release:** 1.0  
+**Status:** Current version on `main`  
+**Application on disk:** `fm_review.py` (VERSION 1.0), launched with `Box2Box.bat`
+
 A Windows desktop database and analytical viewer for the fixtures, results, matrices, and league tables
 stored in a Football Manager 27 (or 26) save. It reads saves using [fmsave](https://rhiever.github.io/fmsave/)
 and never modifies them.
