@@ -32,3 +32,6 @@ profiles/
 state/
 .claude/
 CLAUDE.local.md
+# Private local tools / probe output
+fm27_probe.py
+fm27_probe_report.txt
