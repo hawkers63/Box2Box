@@ -76,8 +76,6 @@ Exports go to `Documents\Box2Box` (*Export ▾ → Open the export folder*), one
 | `fm_export.py` | Excel, web page and CSV exports of one competition and season |
 | `palette.py` | The app's colours, shared by the window and the exports |
 | `test_fm_data.py`, `test_fm_export.py`, `test_fm_review_ui.py`, `test_probe.py` | Test suite |
-| `fm27_probe.py` | Save coverage probe |
-| `fm27_probe_report.txt` | Probe report kept with the repository |
 | `requirements.txt` | Pinned Python dependencies |
 | `LICENSE` | Proprietary All Rights Reserved licence |
 | `CHANGELOG.md` | Release history |
@@ -99,7 +97,7 @@ The same discovery command is:
 python -m unittest discover -s . -p "test_*.py" -v
 ```
 
-The tests write only to temporary directories and do not need a real Football Manager save.
+The tests write only to temporary directories and do not need a real Football Manager save. They do not reflect a private save. The probe smoke test in `test_probe.py` is skipped when the private local tool `fm27_probe.py` is not present, so a fresh clone still passes.
 
 ## Licence and copyright
 
