@@ -11,8 +11,9 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace as NS
+from unittest import mock
 
-from fmsave import CodedValue, CompetitionRound, Fixture
+from fmsave import CodedValue, CompetitionRound, Fixture, TeamMatchStats
 
 import fm_data as fd
 
@@ -95,6 +96,28 @@ LEAGUE = [
     fx(D(2026, 9, 26), 1, 3, md=3),                            # still to play
     fx(D(2026, 8, 22), 4, 2, md=3),                            # still to play
 ]
+
+HULL_SCORES = {"W": (1, 0), "D": (1, 1), "L": (0, 1), "?": (None, None)}
+
+
+def hull_season(letters, *, start=D(2026, 8, 1)):
+    """Hull City's played matches, a week apart, at home first and then alternately away, against
+    Leeds, Sheffield United, Derby and Wrexham in turn. W is won 1-0, D drawn 1-1, L lost 0-1, and
+    ? played with no recoverable score."""
+    fixtures = []
+    for i, letter in enumerate(letters):
+        opponent = (2, 3, 4, 5)[i % 4]
+        hull, other = HULL_SCORES[letter]
+        if i % 2 == 0:
+            fixtures.append(fx(start + dt.timedelta(weeks=i), 1, opponent, hull, other, played=True, md=i + 1))
+        else:
+            fixtures.append(fx(start + dt.timedelta(weeks=i), opponent, 1, other, hull, played=True, md=i + 1))
+    return fixtures
+
+
+def hull_steps(letters):
+    fixtures = hull_season(letters)
+    return fd.team_steps(fixtures, team(1), fd.team_labels(fixtures))
 
 
 class SeasonTests(unittest.TestCase):
@@ -275,6 +298,536 @@ class TableTests(unittest.TestCase):
         form = fd.standings(ds, 101, 2026, fxs, labels, split=fd.SPLIT_FORM)
         self.assertIn("Form guide", form.note)
         self.assertEqual(len(form.groups[0][1]), 4)
+
+
+class FormStepTests(unittest.TestCase):
+    def test_played_matches_from_one_side_oldest_first(self):
+        steps = fd.team_steps(LEAGUE, team(2), fd.team_labels(LEAGUE))
+        self.assertEqual([(s.opponent, s.venue, s.score, s.outcome) for s in steps],
+                         [("Hull City", "A", "1-2", "L"), ("Sheffield United", "H", "n/a", "?")])
+        self.assertEqual([s.date for s in steps], [D(2026, 8, 8), D(2026, 8, 15)])
+
+    def test_points_and_goals_are_none_when_the_save_holds_no_score(self):
+        lost, unknown = fd.team_steps(LEAGUE, team(2), fd.team_labels(LEAGUE))
+        self.assertEqual((lost.points, lost.goals_for, lost.goals_against), (0, 1, 2))
+        self.assertEqual((unknown.points, unknown.goals_for, unknown.goals_against), (None, None, None))
+
+    def test_an_away_win_reads_from_the_teams_side(self):
+        (win,) = [s for s in fd.team_steps(LEAGUE, team(1), fd.team_labels(LEAGUE)) if s.venue == "A"]
+        self.assertEqual((win.opponent, win.score, win.outcome, win.points), ("Derby County", "3-1", "W", 3))
+
+    def test_neutral_ground_is_its_own_venue_but_keeps_the_side(self):
+        final = dataclasses.replace(fx(D(2027, 5, 20), 1, 2, 1, 0), is_neutral_venue=True)
+        (step,) = fd.team_steps([final], team(2), fd.team_labels([final]))
+        self.assertEqual((step.venue, step.home, step.outcome), ("N", False, "L"))
+
+
+class FormStripTests(unittest.TestCase):
+    def test_strip_is_the_last_five_played_oldest_first(self):
+        self.assertEqual(fd.form_strip(hull_steps("WWLDW?W")).letters, "LDW?W")
+
+    def test_points_per_game_leave_out_the_match_with_no_score(self):
+        totals = fd.form_strip(hull_steps("WWLDW?W")).totals
+        self.assertEqual((totals.points, totals.scored, totals.unavailable), (7, 4, 1))
+        self.assertEqual(totals.ppg, 1.75)
+        self.assertTrue(totals.incomplete)
+
+    def test_caption_names_the_matches_behind_the_figure(self):
+        self.assertEqual(fd.form_strip(hull_steps("WWLDW?W")).describe(), "PPG 1.75 from 4 scored (1 n/a)")
+        self.assertEqual(fd.form_strip(hull_steps("WDL")).describe(), "PPG 1.33 from 3 scored")
+
+    def test_no_points_per_game_without_a_scored_match(self):
+        self.assertIsNone(fd.form_strip(hull_steps("??")).totals.ppg)
+        self.assertIsNone(fd.form_strip(()).totals.ppg)
+        self.assertEqual(fd.form_strip(()).letters, "")
+
+
+class TotalsTests(unittest.TestCase):
+    def test_a_match_with_no_score_counts_as_played_and_nothing_else(self):
+        totals = fd.team_totals(hull_steps("WD?LW"))
+        self.assertEqual((totals.played, totals.scored, totals.unavailable), (5, 4, 1))
+        self.assertEqual((totals.won, totals.drawn, totals.lost, totals.points), (2, 1, 1, 7))
+        self.assertEqual((totals.goals_for, totals.goals_against, totals.goal_difference), (3, 2, 1))
+        self.assertEqual((totals.clean_sheets, totals.failed_to_score), (2, 1))
+        self.assertTrue(totals.incomplete)
+
+    def test_home_and_away(self):
+        steps = hull_steps("WD?LW")      # home, away, home, away, home
+        home = fd.team_totals(s for s in steps if s.home)
+        away = fd.team_totals(s for s in steps if not s.home)
+        self.assertEqual((home.played, home.scored, home.points, home.incomplete), (3, 2, 6, True))
+        self.assertEqual((away.played, away.scored, away.points, away.incomplete), (2, 2, 1, False))
+
+
+class StreakTests(unittest.TestCase):
+    def runs(self, letters):
+        return fd.streaks(hull_steps(letters))
+
+    def lengths(self, runs):
+        return {kind: (run.length, run.incomplete) for kind, run in runs.items()}
+
+    def test_current_runs_count_back_from_the_latest_match(self):
+        self.assertEqual(self.lengths(self.runs("WWDWW").current), {
+            fd.STREAK_WINNING: (2, False), fd.STREAK_UNBEATEN: (5, False),
+            fd.STREAK_WINLESS: (0, False), fd.STREAK_LOSING: (0, False)})
+
+    def test_a_match_with_no_score_stops_the_current_run_and_marks_it_incomplete(self):
+        winning = self.runs("L?WW").current[fd.STREAK_WINNING]
+        self.assertEqual((winning.length, winning.incomplete, winning.ceiling), (2, True, 3))
+        self.assertEqual(winning.describe(), "Won at least 2 in a row")
+
+    def test_longest_runs_either_side_of_a_match_with_no_score(self):
+        self.assertEqual(self.lengths(self.runs("WW?WWWDL").longest), {
+            fd.STREAK_WINNING: (3, True),     # six in a row if the ? was a win
+            fd.STREAK_UNBEATEN: (4, True),
+            fd.STREAK_WINLESS: (2, False),    # the ? sits between wins: it cannot beat D L
+            fd.STREAK_LOSING: (1, False)})
+        self.assertEqual(self.runs("WW?WWWDL").longest[fd.STREAK_WINNING].ceiling, 6)
+
+    def test_a_gap_is_incomplete_only_where_it_could_beat_the_longest_run(self):
+        longest = self.runs("WWWWL?L").longest
+        self.assertEqual((longest[fd.STREAK_WINNING].length, longest[fd.STREAK_WINNING].incomplete), (4, False))
+        self.assertEqual((longest[fd.STREAK_LOSING].length, longest[fd.STREAK_LOSING].incomplete), (1, True))
+        tie = self.runs("?LWLL").longest[fd.STREAK_LOSING]     # "?L" could only equal "LL"
+        self.assertEqual((tie.length, tie.incomplete), (2, False))
+
+    def test_a_run_knows_its_first_and_last_match(self):
+        winning = self.runs("LWWWD").longest[fd.STREAK_WINNING]
+        self.assertEqual((winning.first, winning.last), (D(2026, 8, 8), D(2026, 8, 22)))
+
+    def test_headline_is_the_longest_current_run_and_a_strict_run_wins_a_tie(self):
+        self.assertEqual(self.runs("DWW").headline.describe(), "Unbeaten in 3")
+        self.assertEqual(self.runs("LWW").headline.describe(), "Won 2 in a row")
+        self.assertEqual(self.runs("WDL").headline.describe(), "Without a win in 2")
+        self.assertEqual(self.runs("WLL").headline.describe(), "Lost 2 in a row")
+
+    def test_headline_when_the_latest_match_has_no_score(self):
+        headline = self.runs("WW?").headline
+        self.assertEqual((headline.length, headline.incomplete), (0, True))
+        self.assertIn("no recoverable score", headline.describe())
+
+    def test_no_matches_no_headline(self):
+        self.assertIsNone(fd.streaks(()).headline)
+        self.assertEqual(fd.streaks(()).longest[fd.STREAK_UNBEATEN].length, 0)
+
+    def test_current_form_in_words(self):
+        self.assertEqual(self.runs("LW").describe_current(), "Won the last match")
+        self.assertEqual(self.runs("D").describe_current(), "Drew the last match")
+        self.assertEqual(self.runs("LD").describe_current(), "Without a win in 2")
+        self.assertEqual(self.runs("WWL").describe_current(), "Lost the last match")
+        self.assertEqual(self.runs("DWW").describe_current(), "Unbeaten in 3")
+        self.assertIn("no recoverable score", self.runs("W?").describe_current())
+        self.assertEqual(fd.streaks(()).describe_current(), "No matches played")
+
+
+class DisplayTextTests(unittest.TestCase):
+    def test_a_match_from_one_side_in_words(self):
+        steps = fd.team_steps(LEAGUE, team(2), fd.team_labels(LEAGUE))
+        self.assertEqual([s.describe() for s in steps], ["L 1-2 at Hull City", "? n/a v Sheffield United"])
+        final = dataclasses.replace(fx(D(2027, 5, 20), 1, 2, 1, 0), is_neutral_venue=True)
+        (step,) = fd.team_steps([final], team(1), fd.team_labels([final]))
+        self.assertEqual(step.describe(), "W 1-0 v Leeds United (neutral ground)")
+
+    def test_run_lengths_for_a_table_cell(self):
+        runs = fd.streaks(hull_steps("WW?WWWDL")).longest
+        self.assertEqual([runs[kind].short() for kind in fd.STREAK_KINDS], ["3+", "4+", "2", "1"])
+        self.assertEqual(fd.streaks(hull_steps("DDD")).longest[fd.STREAK_WINNING].short(), "")    # never won
+        self.assertEqual(fd.streaks(hull_steps("??")).longest[fd.STREAK_WINNING].short(), "?")
+
+    def test_points_per_game_for_a_table_cell(self):
+        self.assertEqual(fd.team_totals(hull_steps("WDL")).ppg_text(), "1.33")
+        self.assertEqual(fd.team_totals(hull_steps("WD?")).ppg_text(), "2.00*")
+        self.assertEqual(fd.team_totals(()).ppg_text(), "")
+
+    def test_table_order_uses_the_table_holding_every_team(self):
+        fixtures = [fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 8), 3, 4, 2, 0, md=1)]
+        east = NS(competition_id=101, rows=(row(2, 1), row(1, 2)))
+        west = NS(competition_id=101, rows=(row(3, 1), row(4, 2)))
+        overall = NS(competition_id=101, rows=(row(3, 1), row(1, 2), row(2, 3), row(4, 4)))
+
+        def order(tables):
+            ds = fd.build_dataset(info(), fixtures, tables=tables)
+            return fd.standings(ds, 101, 2026, fixtures, fd.team_labels(fixtures)).order
+
+        self.assertEqual(order([east, west]), (team(2), team(1), team(3), team(4)))      # each in turn
+        self.assertEqual(order([east, west, overall]), (team(3), team(1), team(2), team(4)))
+
+
+class FormGuideTests(unittest.TestCase):
+    def guide(self, fixtures, **options):
+        return fd.form_guide(fixtures, fd.team_labels(fixtures), **options)
+
+    def test_every_team_in_calculated_table_order(self):
+        rows = self.guide(LEAGUE).rows
+        self.assertEqual([r.team for r in rows], ["Hull City", "Sheffield United", "Derby County", "Leeds United"])
+        self.assertEqual([r.strip.letters for r in rows], ["WW", "D?", "DL", "L?"])
+
+    def test_a_given_order_comes_first(self):
+        rows = self.guide(LEAGUE, order=[team(4), team(1)]).rows
+        self.assertEqual([r.team for r in rows], ["Derby County", "Hull City", "Sheffield United", "Leeds United"])
+
+    def test_each_row_carries_totals_splits_and_runs(self):
+        leeds = self.guide(LEAGUE).rows[-1]
+        self.assertEqual((leeds.totals.played, leeds.totals.scored, leeds.totals.incomplete), (2, 1, True))
+        self.assertEqual((leeds.home.played, leeds.away.played), (1, 1))
+        self.assertEqual(leeds.streaks.headline.describe(), "Not known (no recoverable score)")
+
+    def test_a_team_yet_to_play_is_still_listed(self):
+        fixtures = [fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 15), 3, 4, md=2)]
+        rows = {r.team: r for r in self.guide(fixtures).rows}
+        self.assertEqual(len(rows), 4)
+        self.assertEqual((rows["Derby County"].totals.played, rows["Derby County"].strip.letters), (0, ""))
+        self.assertIsNone(rows["Derby County"].streaks.headline)
+
+    def test_coverage_sentence(self):
+        text = self.guide(LEAGUE).describe()
+        self.assertIn("from 3 scored matches", text)
+        self.assertIn("1 played match has no recoverable score", text)
+        self.assertNotIn("no recoverable score", self.guide(LEAGUE[:2]).describe())
+        self.assertIn("No matches played yet", self.guide(LEAGUE[4:]).describe())
+
+
+class SeasonRecordTests(unittest.TestCase):
+    MINI = [
+        fx(D(2026, 8, 8), 1, 2, 3, 0, md=1),     # Hull 3-0 Leeds
+        fx(D(2026, 8, 8), 3, 4, 2, 2, md=1),     # Sheffield United 2-2 Derby
+        fx(D(2026, 8, 15), 2, 3, 0, 1, md=2),    # Leeds 0-1 Sheffield United
+        fx(D(2026, 8, 15), 4, 1, 0, 0, md=2),    # Derby 0-0 Hull
+    ]
+
+    def records(self, fixtures):
+        found = fd.season_records(fd.form_guide(fixtures, fd.team_labels(fixtures)))
+        return {r.title: r for r in found}
+
+    def test_holders_and_shared_records(self):
+        records = self.records(self.MINI)
+        self.assertEqual((records["Most goals"].teams, records["Most goals"].value),
+                         (("Hull City", "Sheffield United"), "3"))
+        self.assertEqual((records["Fewest conceded"].teams, records["Fewest conceded"].value), (("Hull City",), "0"))
+        self.assertEqual(records["Most clean sheets"].teams, ("Hull City",))
+        self.assertEqual(records["Best points per game"].value, "2.00")
+        self.assertEqual((records["Longest losing run"].teams, records["Longest losing run"].value),
+                         (("Leeds United",), "2"))
+        self.assertFalse(any(r.incomplete for r in records.values()))
+
+    def test_a_record_nobody_has_set_is_left_out(self):
+        no_clean_sheets = [fx(D(2026, 8, 8), 1, 2, 1, 1, md=1), fx(D(2026, 8, 15), 2, 1, 2, 1, md=2)]
+        records = self.records(no_clean_sheets)
+        self.assertNotIn("Most clean sheets", records)
+        self.assertIn("Most goals", records)
+
+    def test_a_missing_score_marks_the_records_it_could_change(self):
+        gap = [
+            fx(D(2026, 8, 8), 1, 2, 1, 0, md=1),                       # Hull 1-0 Leeds
+            fx(D(2026, 8, 8), 3, 4, 1, 0, md=1),                       # Sheffield United 1-0 Derby
+            fx(D(2026, 8, 15), 1, 3, 2, 0, md=2),                      # Hull 2-0 Sheffield United
+            fx(D(2026, 8, 15), 2, 4, None, None, played=True, md=2),   # Leeds v Derby, no score
+        ]
+        records = self.records(gap)
+        self.assertTrue(records["Most goals"].incomplete)              # Leeds or Derby may have scored
+        self.assertTrue(records["Longest losing run"].incomplete)      # either may have lost twice
+        self.assertEqual(records["Longest winning run"].teams, ("Hull City",))
+        self.assertFalse(records["Longest winning run"].incomplete)    # a win there makes only one
+
+    def test_no_records_before_a_match_is_scored(self):
+        self.assertEqual(self.records(LEAGUE[4:]), {})
+
+
+TIE_BREAK_SEASON = [
+    fx(D(2026, 8, 8), 1, 3, 1, 0, md=1),      # Hull beat Sheffield United...
+    fx(D(2026, 8, 8), 2, 5, 1, 1, md=1),      # ...while Leeds draw
+    fx(D(2026, 8, 15), 1, 4, 0, 4, md=2),     # Hull lose heavily: 3 points, one win, GD -3
+    fx(D(2026, 8, 15), 2, 3, 2, 2, md=2),
+    fx(D(2026, 8, 22), 2, 4, 0, 0, md=3),     # Leeds: 3 points from three draws, GD 0
+]
+
+
+def rules_listing(*codes, comp=101):
+    """A rules block the save links to a competition, listing tie-break codes in order."""
+    return NS(competition_id=comp, promotion_places=0, playoff_places=0, relegation_places=0, rounds=(),
+              unknown={f"tie_break_{i:02d}": code for i, code in enumerate(codes)})
+
+
+class TieBreakTests(unittest.TestCase):
+    def order(self, rows):
+        return [r.team for r in rows]
+
+    def test_level_teams_go_by_goal_difference_by_default(self):
+        rows = fd.calculate_standings(TIE_BREAK_SEASON, fd.team_labels(TIE_BREAK_SEASON))
+        self.assertEqual(self.order(rows)[:3], ["Derby County", "Leeds United", "Hull City"])
+
+    def test_wins_first_when_the_rules_list_wins_first(self):
+        rows = fd.calculate_standings(TIE_BREAK_SEASON, fd.team_labels(TIE_BREAK_SEASON), tie_breaks=(2, 0, 1))
+        self.assertEqual(self.order(rows)[:3], ["Derby County", "Hull City", "Leeds United"])
+
+    def test_each_competition_gets_the_tie_breaks_its_rules_list(self):
+        ds = fd.build_dataset(info(), TIE_BREAK_SEASON, rules=[rules_listing(2, 0, 1, 3, 10)])
+        self.assertEqual(ds.tie_breaks[101], (2, 0, 1, 3, 10))
+        disagree = fd.build_dataset(info(), TIE_BREAK_SEASON, rules=[rules_listing(2, 0, 1), rules_listing(0, 1)])
+        self.assertNotIn(101, disagree.tie_breaks)
+
+    def test_table_and_positions_follow_the_competitions_tie_breaks(self):
+        ds = fd.build_dataset(info(), TIE_BREAK_SEASON, rules=[rules_listing(2, 0, 1, 3)])
+        fixtures, labels = fd.season_fixtures(ds, 101, 2026), fd.team_labels(TIE_BREAK_SEASON)
+        table = fd.standings(ds, 101, 2026, fixtures, labels)
+        self.assertEqual(self.order(table.groups[0][1])[:3], ["Derby County", "Hull City", "Leeds United"])
+        self.assertIn("wins, then goal difference, then goals scored", table.note)
+        chart = fd.positions_by_matchday(ds, 101, 2026, fixtures, labels)
+        final = {t.team: t.positions[-1] for t in chart.groups[0].tracks}
+        self.assertEqual((final["Hull City"], final["Leeds United"]), (2, 3))
+        self.assertIn("wins, then goal difference, then goals scored", chart.describe())
+
+    def test_a_first_tie_break_that_cannot_be_worked_out_is_said_so(self):
+        ds = fd.build_dataset(info(), TIE_BREAK_SEASON, rules=[rules_listing(3, 0, 1)])
+        fixtures, labels = fd.season_fixtures(ds, 101, 2026), fd.team_labels(TIE_BREAK_SEASON)
+        table = fd.standings(ds, 101, 2026, fixtures, labels)
+        self.assertEqual(self.order(table.groups[0][1])[:3], ["Derby County", "Leeds United", "Hull City"])
+        self.assertIn("cannot follow", table.note)
+
+
+class PositionTests(unittest.TestCase):
+    def chart(self, fixtures, **build):
+        ds = fd.build_dataset(info(), fixtures, **build)
+        season = fd.season_fixtures(ds, 101, 2026)
+        return fd.positions_by_matchday(ds, 101, 2026, season, fd.team_labels(season))
+
+    def tracks(self, chart, group=0):
+        return {t.team: t.positions for t in chart.groups[group].tracks}
+
+    def test_position_after_each_played_matchday(self):
+        chart = self.chart(LEAGUE)
+        self.assertEqual(chart.matchdays, (1, 2))
+        # After matchday 1 Derby and Sheffield United are level on everything: name order decides.
+        self.assertEqual(self.tracks(chart), {"Hull City": (1, 1), "Derby County": (2, 3),
+                                              "Sheffield United": (3, 2), "Leeds United": (4, 4)})
+        self.assertEqual([t.team for t in chart.groups[0].tracks][0], "Hull City")   # final order
+        hull = chart.groups[0].tracks[0]
+        self.assertEqual((hull.points, hull.played), ((3, 6), (1, 2)))
+
+    def test_matches_with_no_score_are_left_out_and_counted(self):
+        chart = self.chart(LEAGUE)
+        self.assertEqual(chart.unscored, 1)
+        self.assertIn("1 played match with no recoverable score", chart.describe())
+
+    def test_a_match_played_late_counts_towards_its_own_matchday(self):
+        fixtures = [
+            fx(D(2026, 8, 8), 1, 2, 0, 1, md=1),      # Leeds win
+            fx(D(2026, 8, 29), 3, 4, 5, 0, md=1),     # matchday 1, played three weeks late
+            fx(D(2026, 8, 15), 1, 3, 1, 1, md=2),
+            fx(D(2026, 8, 15), 2, 4, 1, 1, md=2),
+        ]
+        tracks = self.tracks(self.chart(fixtures))
+        self.assertEqual(tracks["Sheffield United"][0], 1)    # 5-0 counts after matchday 1
+        self.assertEqual(tracks["Derby County"][0], 4)
+
+    def test_teams_whose_every_match_lacks_a_score_are_skipped(self):
+        fixtures = [fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 8), 3, 4, None, None, played=True, md=1)]
+        chart = self.chart(fixtures)
+        self.assertEqual(set(self.tracks(chart)), {"Hull City", "Leeds United"})
+        self.assertEqual(chart.skipped, ("Derby County", "Sheffield United"))
+        self.assertIn("2 clubs", chart.describe())
+
+    def test_groups_follow_the_stored_tables_and_are_checked_against_them(self):
+        fixtures = [fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 8), 3, 4, 2, 0, md=1),
+                    fx(D(2026, 8, 15), 1, 3, md=2)]
+        east = NS(competition_id=101, rows=(row(2, 1), row(1, 2)))     # the game has Leeds top
+        west = NS(competition_id=101, rows=(row(3, 1), row(4, 2)))
+        chart = self.chart(fixtures, tables=[east, west])
+        self.assertEqual([g.title for g in chart.groups], ["Table 1 of 2", "Table 2 of 2"])
+        self.assertEqual(self.tracks(chart, 0), {"Hull City": (1,), "Leeds United": (2,)})
+        self.assertEqual(self.tracks(chart, 1), {"Sheffield United": (1,), "Derby County": (2,)})
+        self.assertEqual((chart.agreeing, chart.compared), (2, 4))
+        self.assertIn("2 of 4", chart.describe())
+
+    def test_zones_follow_the_rules(self):
+        rules = [NS(competition_id=101, promotion_places=1, playoff_places=1, relegation_places=1, rounds=())]
+        self.assertEqual(self.chart(LEAGUE, rules=rules).groups[0].zones,
+                         (fd.ZONE_PROMOTION, fd.ZONE_PLAYOFF, fd.ZONE_NONE, fd.ZONE_RELEGATION))
+
+    def test_nothing_played_yet(self):
+        chart = self.chart(LEAGUE[4:])
+        self.assertEqual(chart.matchdays, ())
+        self.assertIn("No matchday has been played", chart.describe())
+
+    def test_a_cup_has_no_matchdays(self):
+        final = fx(D(2027, 5, 20), 1, 2, 1, 0, rnd=CodedValue(CompetitionRound.FINAL, 19))
+        self.assertIsNone(self.chart([final]))
+
+
+def stats_row(f, home, xg, npxg=None, **changes):
+    """One side's statistics for a match, as fmsave reads them: a real TeamMatchStats record whose
+    figures other than expected goals are made up."""
+    row = TeamMatchStats(
+        competition_id=f.competition_id, home_team_id=f.home_team_id, away_team_id=f.away_team_id,
+        date=f.date, kick_off_time=f.kick_off_time, team_id=f.home_team_id if home else f.away_team_id,
+        is_home=home, detailed_report=False, players=16, shots=10, shots_on_target=4, blocked_shots=2,
+        shots_outside_box=3, clear_cut_chances=1, woodwork=0, fouls_made=11, offsides=2, yellow_cards=1,
+        red_cards=0, crosses_attempted=12, crosses_completed=3, tackles_attempted=20, tackles_completed=14,
+        aerial_challenges_attempted=30, headers_won=15, distance_km=110.5, expected_goals=xg,
+        non_penalty_expected_goals=xg if npxg is None else npxg, corners=5, passes_attempted=400,
+        passes_completed=330, final_third_passes=60, progressive_passes=None, possession_percent=50,
+        ball_distribution_percent=50)
+    return dataclasses.replace(row, **changes)
+
+
+def match_stats(f, home_xg, away_xg):
+    return [stats_row(f, True, home_xg), stats_row(f, False, away_xg)]
+
+
+XG_SEASON = [
+    fx(D(2026, 8, 8), 1, 2, 2, 1, md=1),      # Hull 2-1 Leeds, xG 1.82-0.45
+    fx(D(2026, 8, 8), 3, 4, 0, 0, md=1),      # Sheffield United 0-0 Derby: the save kept no report
+    fx(D(2026, 8, 15), 2, 3, 3, 0, md=2),     # Leeds 3-0 Sheffield United, xG 1.10-0.90
+    fx(D(2026, 8, 22), 4, 1, md=3),           # still to play
+]
+XG_STATS = match_stats(XG_SEASON[0], 1.82, 0.45) + match_stats(XG_SEASON[2], 1.10, 0.90)
+
+
+class ExpectedGoalsTests(unittest.TestCase):
+    def dataset(self, fixtures=XG_SEASON, stats=XG_STATS):
+        return fd.build_dataset(info(), fixtures, match_stats=stats)
+
+    def test_a_match_report_gives_each_side_its_expected_goals(self):
+        ds = self.dataset()
+        xg = fd.xg_for(ds, XG_SEASON[0])
+        self.assertEqual((xg.home, xg.away), (1.82, 0.45))
+        self.assertEqual(xg.describe(), "1.82-0.45")
+        report = ds.xg_report
+        self.assertEqual((report.rows, report.matches, report.joined, report.unmatched, report.rejected), (4, 2, 2, 0, 0))
+
+    def test_non_penalty_expected_goals_are_kept_too(self):
+        stats = [stats_row(XG_SEASON[0], True, 1.82, 1.06), stats_row(XG_SEASON[0], False, 0.45)]
+        xg = fd.xg_for(self.dataset(stats=stats), XG_SEASON[0])
+        self.assertEqual((xg.home_non_penalty, xg.away_non_penalty), (1.06, 0.45))
+
+    def test_no_report_means_no_expected_goals_never_zero(self):
+        ds = self.dataset()
+        self.assertIsNone(fd.xg_for(ds, XG_SEASON[1]))
+        self.assertIsNone(fd.xg_for(ds, XG_SEASON[3]))
+
+    def test_coverage_counts_played_matches_only(self):
+        text = fd.xg_coverage(self.dataset(), XG_SEASON).describe()
+        self.assertIn("Expected goals for 2 of 3 played matches", text)
+        self.assertIn("No matches played yet", fd.xg_coverage(self.dataset(), XG_SEASON[3:]).describe())
+
+    def test_scoreline(self):
+        ds = self.dataset()
+        self.assertEqual(fd.xg_scoreline(XG_SEASON[0], fd.xg_for(ds, XG_SEASON[0]), fd.team_labels(XG_SEASON)),
+                         "Hull City [1.82] 2-1 [0.45] Leeds United")
+
+    def test_team_figures_cover_only_the_matches_with_a_report(self):
+        ds = self.dataset()
+        rows = {r.team: r for r in fd.xg_table(ds, XG_SEASON, fd.team_labels(XG_SEASON))}
+        sheffield = rows["Sheffield United"]
+        self.assertEqual((sheffield.played, sheffield.covered, sheffield.goals_for, sheffield.goals_against), (2, 1, 0, 3))
+        self.assertAlmostEqual(sheffield.xg_for, 0.90)
+        self.assertAlmostEqual(sheffield.prevention, -1.90)      # conceded 3 from 1.10 expected
+        leeds = rows["Leeds United"]
+        self.assertAlmostEqual(leeds.xg_for, 1.55)
+        self.assertAlmostEqual(leeds.finishing, 2.45)           # 4 goals from 1.55 expected
+        derby = rows["Derby County"]
+        self.assertEqual((derby.played, derby.covered), (1, 0))
+        self.assertEqual((derby.xg_for, derby.xg_against, derby.goals_for, derby.finishing, derby.prevention),
+                         (None, None, None, None, None))       # nothing to show, so nothing, not 0.00
+        # Best xG difference first (Hull +1.37, Sheffield -0.20, Leeds -1.17); no reports, last.
+        self.assertEqual(list(rows), ["Hull City", "Sheffield United", "Leeds United", "Derby County"])
+
+    def test_rows_that_are_not_one_home_and_one_away_row_are_rejected(self):
+        extra = XG_STATS + [stats_row(XG_SEASON[0], True, 0.70)]          # a second home row
+        ds = self.dataset(stats=extra)
+        self.assertIsNone(fd.xg_for(ds, XG_SEASON[0]))
+        self.assertEqual((ds.xg_report.joined, ds.xg_report.rejected), (1, 1))
+        lonely = self.dataset(stats=XG_STATS[:1])
+        self.assertEqual((lonely.xg_report.joined, lonely.xg_report.rejected), (0, 1))
+
+    def test_unreadable_values_are_rejected(self):
+        ds = self.dataset(stats=match_stats(XG_SEASON[0], float("nan"), 0.45))
+        self.assertIsNone(fd.xg_for(ds, XG_SEASON[0]))
+        self.assertEqual(ds.xg_report.rejected, 1)
+
+    def test_a_key_that_fits_two_fixtures_is_rejected(self):
+        twin = dataclasses.replace(XG_SEASON[0], kick_off_time=dt.time(19, 45))   # same teams, same day
+        ds = self.dataset(fixtures=XG_SEASON + [twin])
+        self.assertIsNone(fd.xg_for(ds, XG_SEASON[0]))
+        self.assertEqual(ds.xg_report.rejected, 1)
+
+    def test_reports_for_matches_the_fixtures_do_not_hold_are_counted(self):
+        elsewhere = fx(D(2026, 8, 8), 1, 2, 2, 1, comp=55)
+        stats = XG_STATS + match_stats(elsewhere, 1.0, 1.0) + match_stats(XG_SEASON[3], 0.5, 0.5)
+        ds = self.dataset(stats=stats)
+        self.assertEqual((ds.xg_report.joined, ds.xg_report.unmatched), (2, 2))
+        self.assertIsNone(fd.xg_for(ds, XG_SEASON[3]))                   # never joined to an unplayed match
+
+    def test_not_read_yet_and_could_not_be_read(self):
+        pending = fd.build_dataset(info(), XG_SEASON)
+        self.assertIsNone(pending.xg_report)
+        self.assertIn("not been read yet", fd.xg_coverage(pending, XG_SEASON).describe())
+        failed = fd.with_expected_goals(pending, None, "UnsupportedGameError: no match reports")
+        self.assertIn("no match reports", failed.xg_report.failed)
+        self.assertIn("could not be read", fd.xg_coverage(failed, XG_SEASON).describe())
+
+    def test_over_and_under_performance_beyond_a_dead_zone(self):
+        self.assertEqual([fd.xg_tint(v) for v in (0.3, 0.25, -0.25, -0.3)], [fd.XG_ABOVE, "", "", fd.XG_BELOW])
+
+
+class FakeSave:
+    """Stands in for an open fmsave Save: the readers load_dataset calls, serving real fixture and
+    match statistics records, and a log of which were read."""
+
+    def __init__(self, fixtures, stats=(), stats_error=None):
+        self.info = NS(game="FM27", build="27.0.1+1", known_build=False, game_date=D(2026, 9, 1))
+        self._fixtures, self._stats, self._stats_error = fixtures, stats, stats_error
+        self.read = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def managed_clubs(self):
+        return []
+
+    def clubs(self):
+        return []
+
+    def competitions(self):
+        return []
+
+    def fixtures(self):
+        self.read.append("fixtures")
+        return iter(self._fixtures)
+
+    def league_tables(self):
+        return []
+
+    def competition_rules(self):
+        return []
+
+    def team_match_stats(self):
+        self.read.append("stats")
+        if self._stats_error:
+            raise self._stats_error
+        return iter(self._stats)
+
+
+class StagedLoadTests(unittest.TestCase):
+    def test_the_save_is_ready_before_its_expected_goals_are_read(self):
+        save = FakeSave(XG_SEASON, XG_STATS)
+        seen = []
+        with mock.patch.object(fd.fmsave, "open", return_value=save):
+            final = fd.load_dataset("career.fm", ready=lambda ds: seen.append((ds.xg_report, list(save.read))))
+        self.assertEqual(seen, [(None, ["fixtures"])])      # handed over before the stats were read
+        self.assertEqual(final.xg_report.joined, 2)
+        self.assertEqual(final.fixture_total, 4)
+
+    def test_a_failure_to_read_expected_goals_keeps_everything_else(self):
+        save = FakeSave(XG_SEASON, stats_error=RuntimeError("the report index does not walk"))
+        with mock.patch.object(fd.fmsave, "open", return_value=save):
+            final = fd.load_dataset("career.fm")
+        self.assertEqual(final.fixture_total, 4)
+        self.assertIn("the report index does not walk", final.xg_report.failed)
+        self.assertTrue(any(w.startswith("Match statistics (xG) could not be read") for w in final.info.warnings))
 
 
 class ZoneTests(unittest.TestCase):
