@@ -6,7 +6,7 @@ and never modifies them.
 
 ## Running it
 
-Double-click **Box2Box.bat** (or **FM Review.bat**), then **Open save…**. Saves live in
+Double-click **Box2Box.bat**, then **Open save…**. Saves live in
 `Documents\Sports Interactive\Football Manager 27\games`. Reading one takes around half a minute.
 You can also drag a `.fm` save file onto the `.bat` launcher to open it straight away.
 
