@@ -56,5 +56,54 @@ class ThemeTests(unittest.TestCase):
         self.assertEqual(palette.contrast_ratio("#123456", "#abcdef"), palette.contrast_ratio("#abcdef", "#123456"))
 
 
+class TintTests(unittest.TestCase):
+    RED = ("#ee2737", "#ffffff")
+
+    def test_the_tint_changes_the_focus_and_nothing_that_carries_meaning(self):
+        me = palette.MIDNIGHT_EMERALD
+        themed = palette.with_club(me, palette.club_tint(me, self.RED))
+        self.assertEqual((themed.colours, themed.zones, themed.heading), (me.colours, me.zones, me.heading))
+        self.assertNotEqual(themed.focus, me.focus)
+        self.assertGreaterEqual(palette.contrast_ratio(themed.focus[0], palette.LOSS_BG), 1.5)   # not a defeat
+
+    def test_the_more_colourful_colour_is_shown(self):
+        me = palette.MIDNIGHT_EMERALD
+        self.assertEqual(palette.club_tint(me, ("#ffffff", "#1d428a")).shown, "#1d428a")
+        self.assertEqual(palette.club_tint(me, ("#f5a12d", "#000000")).shown, "#f5a12d")
+
+    def test_a_black_and_white_club_shows_the_colour_that_stands_out(self):
+        # On a dark theme black would vanish into the table, so white is shown.
+        self.assertEqual(palette.club_tint(palette.MIDNIGHT_EMERALD, ("#000000", "#ffffff")).shown, "#ffffff")
+        self.assertEqual(palette.club_tint(palette.CYBER_PITCH, ("#241f20", "#ffffff")).shown, "#ffffff")
+
+    def test_the_tint_stands_apart_from_what_surrounds_it(self):
+        for theme in palette.THEMES[:3]:
+            for colours in (("#001d5e", "#ffffff"), ("#000000", "#ffffff"), ("#132257", "#ffffff"), self.RED):
+                t = palette.club_tint(theme, colours)
+                for tinted, surface in ((t.focus[0], theme.table[0]), (t.band[0], theme.panel),
+                                        (t.selected[0], theme.switch[0])):
+                    self.assertGreaterEqual(palette.contrast_ratio(tinted, surface), 1.4, (theme.name, colours))
+
+    def test_every_tinted_pair_reads_at_4_5(self):
+        for theme in palette.THEMES[:3]:
+            for colours in (self.RED, ("#f5a12d", "#000000"), ("#ffffff", "#1d428a"), ("#fde100", "#000000")):
+                t = palette.club_tint(theme, colours)
+                for background, text in (t.band, (t.band[0], t.band_muted), (t.band[0], t.band_warning),
+                                         (t.selected[0], theme.switch[1]), t.focus, (theme.table[0], t.link)):
+                    self.assertGreaterEqual(palette.contrast_ratio(background, text), 4.5, (theme.name, colours))
+
+    def test_high_contrast_and_no_colours_give_no_tint(self):
+        self.assertIsNone(palette.club_tint(palette.HIGH_CONTRAST, self.RED))
+        self.assertIsNone(palette.club_tint(palette.MIDNIGHT_EMERALD, None))
+        self.assertIs(palette.with_club(palette.MIDNIGHT_EMERALD, None), palette.MIDNIGHT_EMERALD)
+
+    def test_blend_and_readable_text(self):
+        self.assertEqual(palette.blend("#000000", "#ffffff", 0), "#000000")
+        self.assertEqual(palette.blend("#000000", "#ffffff", 1), "#ffffff")
+        self.assertEqual(palette.blend("#000000", "#ff8000", 0.5), "#804000")
+        self.assertEqual(palette.readable_text("#ffff00"), "#000000")
+        self.assertEqual(palette.readable_text("#1b1b1b"), "#ffffff")
+
+
 if __name__ == "__main__":
     unittest.main()

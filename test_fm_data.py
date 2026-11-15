@@ -163,6 +163,11 @@ class LabelTests(unittest.TestCase):
     def test_short_labels(self):
         self.assertEqual(fd.team_labels(LEAGUE, short=True)[team(1)], "Hull")
 
+    def test_club_names_cover_reserve_sides_and_skip_unresolved_teams(self):
+        names = fd.team_club_names([fx(D(2026, 7, 1), 1, 1, away_slot=1),
+                                    unresolved_away(fx(D(2026, 7, 2), 2, 3))])
+        self.assertEqual(names, {team(1): "Hull City", team(1, 1): "Hull City", team(2): "Leeds United"})
+
 
 class TimelineTests(unittest.TestCase):
     def setUp(self):

@@ -788,6 +788,17 @@ def team_labels(fixtures: Iterable[Fixture], *, short: bool = False) -> dict[int
     return {tid: (f"{label} #{tid}" if repeated[label] > 1 else label) for tid, label in labels.items()}
 
 
+def team_club_names(fixtures: Iterable[Fixture]) -> dict[int, str]:
+    """Each team's club name as the save spells it, so that a club's reserve and youth sides share
+    it. Teams the save cannot resolve have no club name and are left out."""
+    names: dict[int, str] = {}
+    for f in fixtures:
+        for team_id, name in ((f.home_team_id, f.home_club_name), (f.away_team_id, f.away_club_name)):
+            if name and team_id not in names:
+                names[team_id] = name
+    return names
+
+
 def describe_fixture(f: Fixture, labels: Mapping[int, str]) -> str:
     """One line about a match, for a details bar."""
     home = labels.get(f.home_team_id, f"Team {f.home_team_id}")

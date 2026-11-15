@@ -10,7 +10,7 @@ are its own. No UI code here, so the exports can use it without loading a window
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import fm_data as fd
 
@@ -233,3 +233,87 @@ def contrast_ratio(a: str, b: str) -> float:
     """WCAG 2 contrast ratio of two colours, from 1 (none) to 21 (black on white). Text needs 4.5."""
     lighter, darker = sorted((luminance(a), luminance(b)), reverse=True)
     return (lighter + 0.05) / (darker + 0.05)
+
+
+def blend(a: str, b: str, amount: float) -> str:
+    """A colour `amount` of the way from a to b: 0 gives a, 1 gives b."""
+    channels = (round(int(a[i:i + 2], 16) + (int(b[i:i + 2], 16) - int(a[i:i + 2], 16)) * amount) for i in (1, 3, 5))
+    return "#" + "".join(f"{value:02x}" for value in channels)
+
+
+def readable_text(background: str) -> str:
+    """Black or white, whichever reads better on the background."""
+    return "#000000" if contrast_ratio(background, "#000000") >= contrast_ratio(background, "#ffffff") else "#ffffff"
+
+
+def _nearest(colour: str, *rules: tuple[str, float]) -> str:
+    """The colour itself, or the least lightened or darkened version of it (in steps of 5%) that has
+    at least each rule's contrast with each rule's colour: (other colour, minimum ratio)."""
+    for step in range(21):
+        for target in ("#000000", "#ffffff"):
+            candidate = blend(colour, target, step / 20)
+            if all(contrast_ratio(candidate, other) >= minimum for other, minimum in rules):
+                return candidate
+    return colour
+
+
+READABLE = 4.5      # text on its background, WCAG AA
+DISTINCT = 1.4      # a tinted surface against what surrounds it
+
+
+# --------------------------------------------------------------------------- club colours
+
+
+@dataclass(frozen=True, slots=True)
+class ClubTint:
+    """What the followed club's colours change in the window. Never a result, zone or heading colour."""
+
+    colours: tuple[str, str]       # the club's main and second colours, as given
+    shown: str                     # the one the window shows
+    band: tuple[str, str]          # the title band: (background, text)
+    band_muted: str                # the band's secondary text
+    band_warning: str              # the unverified-build warning on the band
+    selected: tuple[str, str]      # the view switch's selected button: (colour, hover)
+    focus: tuple[str, str]         # the followed team's highlight
+    link: str                      # the followed team's name in Results
+
+
+def _chroma(colour: str) -> int:
+    channels = [int(colour[i:i + 2], 16) for i in (1, 3, 5)]
+    return max(channels) - min(channels)
+
+
+def club_tint(theme: Theme, colours: tuple[str, str] | None) -> ClubTint | None:
+    """The followed club's colours worked into a theme: every text readable at 4.5:1, and every tinted
+    surface standing apart from what surrounds it. None for a club without colours, or a theme that
+    takes none (High-Contrast)."""
+    if colours is None or not theme.club_colours:
+        return None
+    main, second = colours
+    table = theme.table[0]
+    if _chroma(main) < 40 and _chroma(second) < 40:
+        # Black and white, say: show the one that stands out from the table, as black would vanish
+        # into a dark theme.
+        shown = main if contrast_ratio(main, table) >= contrast_ratio(second, table) else second
+    else:                                                    # a white-shirted club shows its colour
+        shown = main if _chroma(main) >= _chroma(second) else second
+    band = _nearest(blend(theme.panel, shown, 0.45), (theme.panel, DISTINCT))
+    band_text = readable_text(band)
+    muted = blend(band_text, band, 0.25)
+    selected = _nearest(shown, (theme.switch[1], READABLE), (theme.switch[0], DISTINCT))
+    focus = _nearest(blend(table, shown, 0.5), (table, DISTINCT))
+    return ClubTint(
+        colours=(main, second),
+        shown=shown,
+        band=(band, band_text),
+        band_muted=muted if contrast_ratio(muted, band) >= READABLE else band_text,
+        band_warning=theme.warning if contrast_ratio(theme.warning, band) >= READABLE else band_text,
+        selected=(selected, blend(selected, "#000000", 0.2)),
+        focus=(focus, readable_text(focus)),
+        link=_nearest(shown, (table, READABLE)),
+    )
+
+
+def with_club(theme: Theme, tint: ClubTint | None) -> Theme:
+    """The theme with the followed team's highlight in the club's colours; the theme itself without."""
+    return theme if tint is None else replace(theme, focus=tint.focus, link=tint.link)

@@ -24,13 +24,14 @@ import time
 import tkinter as tk
 import traceback
 from pathlib import Path
-from tkinter import filedialog, messagebox
+from tkinter import colorchooser, filedialog, messagebox
 from tkinter import font as tkfont
 from typing import NamedTuple
 
 import customtkinter as ctk
 from tksheet import Sheet
 
+import club_colours
 import fm_data as fd
 import fm_export as fx
 import palette
@@ -234,6 +235,102 @@ class AboutWindow(ctk.CTkToplevel):
         self.focus_force()
 
 
+class ClubColoursDialog(ctk.CTkToplevel):
+    """The followed club's two colours: a preview of the title band they make, a swatch for each that
+    opens Windows' colour picker, and Save, Use the built-in colours, No club colours and Cancel."""
+
+    def __init__(self, master: FMReviewApp, club: str, colours: tuple[str, str] | None) -> None:
+        super().__init__(master)
+        apply_window_icon(self)
+        self.app, self.club = master, club
+        builtin = club_colours.builtin_colours(club)
+        self.colours: tuple[str, str] = colours or builtin or (master.theme.switch_selected, "#ffffff")
+        theme = master.theme
+        self.title(f"Club colours: {club}")
+        self.transient(master)
+        self.resizable(False, False)
+        self.configure(fg_color=theme.window)
+
+        self.preview = ctk.CTkFrame(self, corner_radius=0)
+        self.preview.pack(fill="x")
+        self.preview_label = ctk.CTkLabel(self.preview, text=club, font=ctk.CTkFont(FONT, 18, "bold"), anchor="w")
+        self.preview_label.pack(fill="x", padx=24, pady=(16, 14))
+        stripe = ctk.CTkFrame(self, corner_radius=0, height=4, fg_color="transparent")
+        stripe.pack(fill="x")
+        self.preview_stripe = [ctk.CTkFrame(stripe, corner_radius=0, width=1, height=4) for _ in range(12)]
+        for part in self.preview_stripe:
+            part.pack(side="left", fill="x", expand=True)
+
+        body = ctk.CTkFrame(self, fg_color="transparent")
+        body.pack(fill="x", padx=24, pady=(16, 8))
+        self.swatches = []
+        for row, label in enumerate(("Main colour", "Second colour")):
+            ctk.CTkLabel(body, text=label, text_color=theme.text).grid(row=row, column=0, sticky="w", pady=4)
+            swatch = ctk.CTkButton(body, text="", width=90, height=28, border_width=1, border_color=theme.muted,
+                                   command=lambda index=row: self._pick(index))
+            swatch.grid(row=row, column=1, padx=(16, 0), pady=4, sticky="w")
+            self.swatches.append(swatch)
+        self.main_swatch, self.second_swatch = self.swatches
+        note = ("They colour the title band, the selected view and the followed team's highlight. Results, "
+                "zones and headings keep their own colours.")
+        if not theme.club_colours:
+            note += f" {theme.name} shows no club colours."
+        ctk.CTkLabel(body, text=note, text_color=theme.muted, wraplength=400, justify="left").grid(
+            row=2, column=0, columnspan=2, sticky="w", pady=(10, 0))
+
+        buttons = ctk.CTkFrame(self, fg_color="transparent")
+        buttons.pack(fill="x", padx=24, pady=(8, 18))
+        accent = dict(fg_color=theme.accent[0], hover_color=theme.accent_hover, text_color=theme.accent[1])
+        quiet = dict(fg_color=theme.quiet[0], hover_color=theme.quiet_hover, text_color=theme.quiet[1])
+        self.save_button = ctk.CTkButton(buttons, text="Save", width=80, command=self._save, **accent)
+        self.builtin_button = ctk.CTkButton(buttons, text="Use the built-in colours", width=170,
+                                            command=self._builtin, state="normal" if builtin else "disabled", **quiet)
+        self.none_button = ctk.CTkButton(buttons, text="No club colours", width=120, command=self._none, **quiet)
+        self.cancel_button = ctk.CTkButton(buttons, text="Cancel", width=80, command=self.destroy, **quiet)
+        for button in (self.cancel_button, self.save_button):
+            button.pack(side="right", padx=(8, 0))
+        for button in (self.builtin_button, self.none_button):
+            button.pack(side="left", padx=(0, 8))
+
+        self._show()
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.geometry(f"+{master.winfo_rootx() + 160}+{master.winfo_rooty() + 90}")
+        self.after(100, self.lift)
+
+    def _show(self) -> None:
+        """Paint the swatches and preview the band the colours make (in Midnight Emerald's way when
+        the theme takes no club colours)."""
+        theme = self.app.theme if self.app.theme.club_colours else palette.MIDNIGHT_EMERALD
+        tint = palette.club_tint(theme, self.colours)
+        self.preview.configure(fg_color=tint.band[0])
+        self.preview_label.configure(text_color=tint.band[1])
+        for i, part in enumerate(self.preview_stripe):
+            part.configure(fg_color=self.colours[i % 2])
+        for swatch, colour in zip(self.swatches, self.colours):
+            swatch.configure(fg_color=colour, hover_color=colour)
+
+    def _pick(self, index: int) -> None:
+        chosen = colorchooser.askcolor(color=self.colours[index], parent=self,
+                                       title=("Main colour" if index == 0 else "Second colour") + f": {self.club}")
+        if chosen and chosen[1]:
+            colours = list(self.colours)
+            colours[index] = chosen[1].lower()
+            self.colours = (colours[0], colours[1])
+            self._show()
+
+    def _save(self) -> None:
+        self.app.save_club_colours(self.club, self.colours)
+        self.destroy()
+
+    def _builtin(self) -> None:
+        self.app.reset_club_colours(self.club)
+        self.destroy()
+
+    def _none(self) -> None:
+        self.app.save_club_colours(self.club, None)
+        self.destroy()
+
+
 class FMReviewApp(ctk.CTk):
     """The main window: competitions on the left, the selected season's views on the right."""
 
@@ -246,7 +343,10 @@ class FMReviewApp(ctk.CTk):
         self.names: dict[int, str] = {}
         self.settings = self._read_settings()
         self.theme = palette.theme_by_name(self.settings.get("theme"))
-        self.view_theme = self.theme              # the colours the views paint with
+        self.view_theme = self.theme              # the colours the views paint with: theme and club
+        self.club_tint: palette.ClubTint | None = None
+        self.club_names: dict[int, str] = {}      # each team's club, for its colours
+        self.club_dialog: ClubColoursDialog | None = None
         self._themed: list[tuple[str, object]] = []      # (role, widget), for apply_theme
         self._shown: str | None = None            # the sheet on screen, if any
         self.loading_since: float | None = None
@@ -334,6 +434,14 @@ class FMReviewApp(ctk.CTk):
         for theme in palette.THEMES:
             self.theme_menu.add_radiobutton(label=theme.name, variable=self.theme_name, value=theme.name,
                                             command=lambda name=theme.name: self.set_theme(name))
+        self.theme_menu.add_separator()
+        self.theme_menu.add_command(label="Club colours…", command=self.show_club_colours)
+        self._club_menu_item = self.theme_menu.index("end")
+        # The followed club's two colours along the foot of the title band, shown while it has some.
+        self.stripe = ctk.CTkFrame(top, corner_radius=0, height=4, fg_color="transparent")
+        self.stripe_parts = [ctk.CTkFrame(self.stripe, corner_radius=0, width=1, height=4) for _ in range(12)]
+        for part in self.stripe_parts:
+            part.pack(side="left", fill="x", expand=True)
         self.about_button = role("quiet", ctk.CTkButton(top, text="About", width=80, command=self.show_about))
         self.about_button.grid(row=0, column=6, padx=(0, 14), pady=12)
 
@@ -451,6 +559,7 @@ class FMReviewApp(ctk.CTk):
         self.details_button.grid(row=0, column=1, padx=10, pady=3)
 
         self._recolour()
+        self._update_club_tint()
         self._set_controls_state("disabled")
         self._show_welcome()
         self._refresh_status()
@@ -510,9 +619,9 @@ class FMReviewApp(ctk.CTk):
         """Re-colour the window in a theme and redraw what is on screen where it stands: nothing is
         reloaded, and the competition, season, followed team, view and scroll position stay."""
         self.theme = theme
-        self.view_theme = theme
         self.theme_name.set(theme.name)
         self._recolour()
+        self._update_club_tint()
         self._fill_competition_list()
         if self.about_window is not None and self.about_window.winfo_exists():
             self.about_window.apply_theme(theme)
@@ -530,6 +639,69 @@ class FMReviewApp(ctk.CTk):
         self.apply_theme(palette.theme_by_name(name))
         self.settings["theme"] = self.theme.name
         self._write_settings()
+
+    # ----------------------------------------------------------------- club colours
+
+    def _followed_club(self) -> str | None:
+        return self.club_names.get(self.focus) if self.focus is not None else None
+
+    def _update_club_tint(self) -> None:
+        """Work the followed club's colours into the window: the title band, the view switch's
+        selected button and the followed team's highlight. Results, zones and headings keep theirs."""
+        colours = club_colours.colours_for(self._followed_club(), self.settings.get("club_colours"))
+        self.club_tint = palette.club_tint(self.theme, colours)
+        self.view_theme = palette.with_club(self.theme, self.club_tint)
+        t, tint = self.theme, self.club_tint
+        if tint is None:
+            band, text, muted, warning = t.panel, t.text, t.muted, t.warning
+            selected, hover = t.switch_selected, t.switch_selected_hover
+            self.stripe.place_forget()
+        else:
+            (band, text), muted, warning = tint.band, tint.band_muted, tint.band_warning
+            selected, hover = tint.selected
+            for i, part in enumerate(self.stripe_parts):
+                part.configure(fg_color=tint.colours[i % 2])
+            self.stripe.place(relx=0, rely=1.0, relwidth=1.0, anchor="sw")
+        self.top_bar.configure(fg_color=band)
+        self.save_label.configure(text_color=text)
+        self.meta_label.configure(text_color=muted)
+        self.verify_label.configure(text_color=warning)
+        self.view_switch.configure(selected_color=selected, selected_hover_color=hover)
+        self.theme_menu.entryconfigure(self._club_menu_item,
+                                       state="normal" if self._followed_club() else "disabled")
+
+    def _club_edits_without(self, club: str) -> dict:
+        """Mark's colour edits, less any for this club under any spelling."""
+        edits = self.settings.get("club_colours")
+        key = club_colours.normalise(club)
+        return {name: value for name, value in (edits.items() if isinstance(edits, dict) else ())
+                if not (isinstance(name, str) and club_colours.normalise(name) == key)}
+
+    def save_club_colours(self, club: str, colours: tuple[str, str] | None) -> None:
+        """Keep a club's colours in the settings, or None for no club colours, and show them."""
+        edits = self._club_edits_without(club)
+        edits[club] = list(colours) if colours is not None else None
+        self.settings["club_colours"] = edits
+        self._write_settings()
+        self._update_club_tint()
+        self.render()
+
+    def reset_club_colours(self, club: str) -> None:
+        """Forget Mark's edit for a club, so that the built-in colours apply again."""
+        self.settings["club_colours"] = self._club_edits_without(club)
+        self._write_settings()
+        self._update_club_tint()
+        self.render()
+
+    def show_club_colours(self) -> None:
+        """Open the colours dialog for the followed team's club."""
+        club = self._followed_club()
+        if club is None:
+            return
+        if self.club_dialog is not None and self.club_dialog.winfo_exists():
+            self.club_dialog.destroy()
+        colours = club_colours.colours_for(club, self.settings.get("club_colours"))
+        self.club_dialog = ClubColoursDialog(self, club, colours)
 
     def _show_theme_menu(self) -> None:
         self._popup(self.theme_menu, self.theme_button)
@@ -784,6 +956,7 @@ class FMReviewApp(ctk.CTk):
         self.fixtures = fd.season_fixtures(ds, self.comp_id, season)
         self.labels = fd.team_labels(self.fixtures)
         self.short_labels = fd.team_labels(self.fixtures, short=True)
+        self.club_names = fd.team_club_names(self.fixtures)
         ordered = sorted(self.labels.items(), key=lambda item: item[1].casefold())
         self.team_by_label = {label: team_id for team_id, label in ordered}
         if len(ordered) <= MAX_TEAM_CHOICES:
@@ -795,6 +968,7 @@ class FMReviewApp(ctk.CTk):
             mine = [t for t in ds.managed_team_ids if t in self.labels]
             self.focus = ds.first_team_id if ds.first_team_id in self.labels else (mine[0] if mine else None)
         self._show_followed_team()
+        self._update_club_tint()
         self._update_header()
         self.render()
 
@@ -865,6 +1039,7 @@ class FMReviewApp(ctk.CTk):
     def set_focus(self, team_id: int | None) -> None:
         self.focus = team_id if team_id in self.labels else None
         self._show_followed_team()
+        self._update_club_tint()
         self.render()
 
     def _show_followed_team(self) -> None:

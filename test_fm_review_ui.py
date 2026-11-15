@@ -18,6 +18,7 @@ from unittest import mock
 
 import customtkinter as ctk
 
+import club_colours
 import fm_data as fd
 import fm_review
 import palette
@@ -375,7 +376,7 @@ class WindowTests(unittest.TestCase):
         before = (app.comp_id, app.season, app.focus, app.view)
         odd = dataclasses.replace(palette.MIDNIGHT_EMERALD, name="Test", panel="#102030",
                                   table=("#010203", "#fefefe"), switch_selected="#203040",
-                                  focus=("#0f1e2d", "#ffffff"))
+                                  focus=("#0f1e2d", "#ffffff"), club_colours=False)
         app.apply_theme(odd)
         app.update()
         self.assertEqual((app.comp_id, app.season, app.focus, app.view), before)
@@ -413,6 +414,76 @@ class WindowTests(unittest.TestCase):
                 app.update()
             self.assertEqual(app.sheets["Table"].ops.table_bg, theme.table[0])
             self.assertEqual(app.settings["theme"], theme.name)
+
+    def test_the_followed_club_tints_the_band_switch_and_highlight(self):
+        app = self.app
+        app.install_dataset(dataset())                       # Hull City followed
+        tint = palette.club_tint(app.theme, club_colours.builtin_colours("Hull City"))
+        self.assertEqual(app.top_bar.cget("fg_color"), tint.band[0])
+        self.assertEqual(app.view_switch.cget("selected_color"), tint.selected[0])
+        self.assertEqual(app.view_theme.focus, tint.focus)
+        self.assertEqual(app.view_theme.colours, app.theme.colours)          # results keep their colours
+        app.set_focus(None)
+        self.assertEqual(app.top_bar.cget("fg_color"), app.theme.panel)
+        self.assertEqual(app.view_switch.cget("selected_color"), app.theme.switch_selected)
+
+    def test_club_colour_edits_are_saved_and_win(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.save_club_colours("Hull City", ("#123456", "#fedcba"))
+        saved = json.loads(fm_review.SETTINGS_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(saved["club_colours"], {"Hull City": ["#123456", "#fedcba"]})
+        self.assertEqual(app.club_tint.colours, ("#123456", "#fedcba"))
+        app.save_club_colours("Hull City", None)
+        self.assertIsNone(app.club_tint)
+        app.reset_club_colours("Hull City")
+        self.assertEqual(app.club_tint.colours, club_colours.builtin_colours("Hull City"))
+
+    def test_reserve_sides_wear_the_parent_clubs_colours_and_unknown_clubs_none(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.select_competition(60)                           # the youth league: Hull City's second team
+        self.assertEqual(app.focus, team(1, 1))
+        self.assertEqual(app.club_tint.colours, club_colours.builtin_colours("Hull City"))
+        app.select_competition(70)
+        app.set_focus(999)                                   # a team the save cannot resolve
+        self.assertIsNone(app.club_tint)
+
+    def test_high_contrast_shows_no_club_colours(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_theme("High-Contrast")
+        self.assertIsNone(app.club_tint)
+        self.assertEqual(app.top_bar.cget("fg_color"), palette.HIGH_CONTRAST.panel)
+        self.assertEqual(app.view_theme.focus, palette.HIGH_CONTRAST.focus)
+
+    def test_the_club_colours_dialog_saves_and_resets(self):
+        app = self.app
+        app.install_dataset(dataset())
+        with mock.patch.object(fm_review.colorchooser, "askcolor", return_value=((1, 2, 3), "#010203")):
+            app.show_club_colours()
+            app.club_dialog.main_swatch.invoke()
+            app.club_dialog.save_button.invoke()
+        self.assertEqual(app.club_tint.colours[0], "#010203")
+        app.show_club_colours()
+        app.club_dialog.builtin_button.invoke()
+        self.assertEqual(app.club_tint.colours, club_colours.builtin_colours("Hull City"))
+
+    def test_club_colours_menu_item_needs_a_followed_team(self):
+        app = self.app
+        app.install_dataset(dataset())
+        item = app.theme_menu.index("Club colours…")
+        self.assertEqual(app.theme_menu.entrycget(item, "state"), "normal")
+        app.set_focus(None)
+        self.assertEqual(app.theme_menu.entrycget(item, "state"), "disabled")
+
+    def test_malformed_club_colour_settings_are_ignored(self):
+        self.app.destroy()
+        fm_review.SETTINGS_PATH.write_text('{"club_colours": "red"}', encoding="utf-8")
+        self.app = fm_review.FMReviewApp()          # tearDown closes this one
+        self.app.geometry("1300x800+-4000+0")
+        self.app.install_dataset(dataset())
+        self.assertEqual(self.app.club_tint.colours, club_colours.builtin_colours("Hull City"))
 
     def test_odd_theme_settings_open_in_midnight_emerald(self):
         self.app.destroy()
