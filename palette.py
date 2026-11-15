@@ -127,7 +127,88 @@ MIDNIGHT_EMERALD = Theme(
     page_muted="#a3a3a3", page_field=("#262626", "#3f3f3f"),
 )
 
-THEMES: tuple[Theme, ...] = (MIDNIGHT_EMERALD,)
+# A cooler night pitch: near-black surfaces, electric cyan, the same result colours.
+CYBER_PITCH = Theme(
+    name="Cyber Pitch",
+    window="#05080d", panel="#0a1018", table=("#070b11", "#e2f3ff"), sheet_heading=("#0b1622", "#67e8f9"),
+    grid_line="#13202d", selection=("#0e3a4a", "#22d3ee"), text="#d6f3ff", muted="#8aa4b8",
+    competition_list=("#080d14", "#d6f3ff"), list_selected=("#0e7490", "#ffffff"), section="#22d3ee",
+    link="#22d3ee", warning="#fb923c",
+    accent=("#0e7490", "#ffffff"), accent_hover="#155e75", quiet=("#16222f", "#d6f3ff"), quiet_hover="#1f3142",
+    field=("#0c141e", "#1f3a4d"), switch=("#111c28", "#d6f3ff"), switch_hover="#1b2a3a",
+    switch_selected="#0e7490", switch_selected_hover="#155e75",
+    colours={**COLOURS, fd.SCHEDULED: ("#0c1520", "#7d93a8"), "self": ("#03060a", None)},
+    zones=ZONE_COLOURS, heading=("#062330", "#22d3ee"), focus=("#0b4f61", "#ecfeff"),
+    categories={
+        fd.COMP_CAT_YOURS: ("#0c3b4d", "#cffafe"),
+        fd.COMP_CAT_CUP: ("#2a2560", "#e0e7ff"),
+        fd.COMP_CAT_YOUTH: ("#141c26", "#94a3b8"),
+        fd.COMP_CAT_LEAGUE: ("#053d33", "#a7f3d0"),
+    },
+    yours_row=("#08202b", "#67e8f9"),
+    page_muted="#8aa4b8", page_field=("#0c141e", "#1f3a4d"),
+)
+
+# Broadcast slate: slate surfaces, gold headings and controls, the same result colours.
+DEEP_SLATE_GOLD = Theme(
+    name="Deep Slate & Gold",
+    window="#0b1220", panel="#141d2e", table=("#101826", "#e2e8f0"), sheet_heading=("#0c1422", "#d8b44a"),
+    grid_line="#1f2a3c", selection=("#2a3550", "#d8b44a"), text="#e2e8f0", muted="#94a3b8",
+    competition_list=("#0f1727", "#e2e8f0"), list_selected=("#7a5f14", "#ffffff"), section="#d8b44a",
+    link="#e7c66b", warning="#fb923c",
+    accent=("#d8b44a", "#1a1405"), accent_hover="#c29d36", quiet=("#24324a", "#e2e8f0"), quiet_hover="#2e3e5a",
+    field=("#0f1726", "#33415a"), switch=("#1e293b", "#e2e8f0"), switch_hover="#2b3a52",
+    switch_selected="#7a5f14", switch_selected_hover="#8c6d18",
+    colours={**COLOURS, fd.SCHEDULED: ("#1a2436", "#94a3b8"), "self": ("#0a101b", None)},
+    zones=ZONE_COLOURS, heading=("#1b2537", "#d8b44a"), focus=("#5a4712", "#fff7dc"),
+    categories={
+        fd.COMP_CAT_YOURS: ("#4a3a10", "#fde68a"),
+        fd.COMP_CAT_CUP: ("#2e2a5c", "#e0e7ff"),
+        fd.COMP_CAT_YOUTH: ("#1c2433", "#9ca3af"),
+        fd.COMP_CAT_LEAGUE: ("#073b30", "#a7f3d0"),
+    },
+    yours_row=("#1d2533", "#e7c66b"),
+    page_muted="#94a3b8", page_field=("#0f1726", "#33415a"),
+)
+
+# White on black with yellow accents. Result, zone and category colours are a step lighter with black
+# text, so every coloured cell reads at 4.5:1 or better; club colours are left out.
+_HC_WIN, _HC_DRAW, _HC_LOSS, _HC_NA = ("#34d399", "#000000"), ("#fbbf24", "#000000"), ("#f87171", "#000000"), \
+    ("#c4b5fd", "#000000")
+HIGH_CONTRAST = Theme(
+    name="High-Contrast",
+    window="#000000", panel="#000000", table=("#000000", "#ffffff"), sheet_heading=("#1a1a1a", "#ffff00"),
+    grid_line="#808080", selection=("#003a70", "#00ffff"), text="#ffffff", muted="#e0e0e0",
+    competition_list=("#000000", "#ffffff"), list_selected=("#ffff00", "#000000"), section="#ffff00",
+    link="#7dd3fc", warning="#ffb000",
+    accent=("#ffff00", "#000000"), accent_hover="#e0e000", quiet=("#ffffff", "#000000"), quiet_hover="#d9d9d9",
+    field=("#000000", "#ffffff"), switch=("#d9d9d9", "#000000"), switch_hover="#bfbfbf",
+    switch_selected="#ffff00", switch_selected_hover="#e0e000",
+    colours={
+        fd.HOME_WIN: _HC_WIN, fd.DRAW: _HC_DRAW, fd.AWAY_WIN: _HC_LOSS, fd.UNAVAILABLE: _HC_NA,
+        fd.MIXED: ("#60a5fa", "#000000"), fd.SCHEDULED: ("#262626", "#ffffff"), "self": ("#404040", None),
+        "W": _HC_WIN, "D": _HC_DRAW, "L": _HC_LOSS, "?": _HC_NA,
+    },
+    zones={
+        fd.ZONE_UCL: ("#93c5fd", "#000000"),
+        fd.ZONE_PROMOTION: ("#34d399", "#000000"),
+        fd.ZONE_PLAYOFF: ("#67e8f9", "#000000"),
+        fd.ZONE_EUROPA: ("#fdba74", "#000000"),
+        fd.ZONE_RELEGATION: ("#f87171", "#000000"),
+    },
+    heading=("#262626", "#ffff00"), focus=("#ffffff", "#000000"),
+    categories={
+        fd.COMP_CAT_YOURS: ("#ffff00", "#000000"),
+        fd.COMP_CAT_CUP: ("#c4b5fd", "#000000"),
+        fd.COMP_CAT_YOUTH: ("#404040", "#ffffff"),
+        fd.COMP_CAT_LEAGUE: ("#34d399", "#000000"),
+    },
+    yours_row=("#000000", "#ffff00"),
+    page_muted="#e0e0e0", page_field=("#000000", "#ffffff"),
+    club_colours=False,
+)
+
+THEMES: tuple[Theme, ...] = (MIDNIGHT_EMERALD, CYBER_PITCH, DEEP_SLATE_GOLD, HIGH_CONTRAST)
 
 
 def theme_by_name(name: object) -> Theme:

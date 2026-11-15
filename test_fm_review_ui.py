@@ -401,6 +401,19 @@ class WindowTests(unittest.TestCase):
         app.update()
         self.assertEqual(app.about_window.band.cget("fg_color"), "#0a0b0c")
 
+    def test_every_view_renders_in_every_theme(self):
+        app = self.app
+        app.install_dataset(dataset())
+        for theme in palette.THEMES:
+            app.set_theme(theme.name)
+            for view in fm_review.VIEWS:
+                app.set_view(view)
+                for analysis in fm_review.ANALYSES if view == fm_review.ANALYSIS else ():
+                    app._on_analysis(analysis)
+                app.update()
+            self.assertEqual(app.sheets["Table"].ops.table_bg, theme.table[0])
+            self.assertEqual(app.settings["theme"], theme.name)
+
     def test_odd_theme_settings_open_in_midnight_emerald(self):
         self.app.destroy()
         fm_review.SETTINGS_PATH.write_text('{"theme": 3}', encoding="utf-8")

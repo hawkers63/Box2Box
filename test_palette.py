@@ -23,6 +23,33 @@ class ThemeTests(unittest.TestCase):
             self.assertIs(palette.theme_by_name(name), palette.MIDNIGHT_EMERALD)
         self.assertIs(palette.theme_by_name("Midnight Emerald"), palette.MIDNIGHT_EMERALD)
 
+    def test_every_theme_covers_every_result_and_zone(self):
+        for theme in palette.THEMES:
+            self.assertEqual(set(theme.colours), set(palette.COLOURS), theme.name)
+            self.assertEqual(set(theme.zones), set(palette.ZONE_COLOURS), theme.name)
+            self.assertEqual(set(theme.categories), set(palette.MIDNIGHT_EMERALD.categories), theme.name)
+
+    def test_the_four_themes_in_order(self):
+        self.assertEqual([t.name for t in palette.THEMES],
+                         ["Midnight Emerald", "Cyber Pitch", "Deep Slate & Gold", "High-Contrast"])
+        self.assertIs(palette.theme_by_name("High-Contrast"), palette.HIGH_CONTRAST)
+
+    def test_high_contrast_pairs_all_read_at_4_5(self):
+        hc = palette.HIGH_CONTRAST
+        pairs = [p for p in hc.colours.values() if p[1]] + list(hc.zones.values()) + list(hc.categories.values())
+        pairs += [hc.heading, hc.focus, hc.yours_row, hc.table, hc.sheet_heading, hc.accent, hc.quiet,
+                  hc.competition_list, hc.list_selected, (hc.switch[0], hc.switch[1]),
+                  (hc.switch_selected, hc.switch[1]), (hc.table[0], hc.link), (hc.panel, hc.text),
+                  (hc.panel, hc.muted), (hc.panel, hc.warning), (hc.competition_list[0], hc.section)]
+        for background, text in pairs:
+            self.assertGreaterEqual(palette.contrast_ratio(background, text), 4.5, (background, text))
+        self.assertFalse(hc.club_colours)
+
+    def test_controls_read_at_4_5_in_the_new_themes(self):
+        for theme in (palette.CYBER_PITCH, palette.DEEP_SLATE_GOLD, palette.HIGH_CONTRAST):
+            for background, text in (theme.accent, theme.quiet, theme.switch, (theme.switch_selected, theme.switch[1])):
+                self.assertGreaterEqual(palette.contrast_ratio(background, text), 4.5, (theme.name, background))
+
     def test_contrast_follows_wcag(self):
         self.assertAlmostEqual(palette.contrast_ratio("#000000", "#ffffff"), 21.0, places=2)
         self.assertAlmostEqual(palette.contrast_ratio("#777777", "#ffffff"), 4.48, places=2)
