@@ -22,6 +22,7 @@ import club_colours
 import fm_data as fd
 import fm_review
 import palette
+import test_fm_data
 from test_fm_data import LEAGUE, D, club, fx, info, match_stats, row, team, unresolved_away
 
 HULL_LEEDS_XG = match_stats(LEAGUE[0], 1.82, 0.45)     # the report the save kept for Hull 2-1 Leeds
@@ -265,7 +266,7 @@ class WindowTests(unittest.TestCase):
         app.set_view("Table")
         note = app.note_label.cget("text")
         self.assertIn("game's rules", note)
-        self.assertIn("cyan = play-offs", note)
+        self.assertIn("Play-offs", app.zone_key_meanings)        # the colour key, under the sheet
         app.set_focus(team(3))
         table = app.sheets["Table"]
         table.select_column(3, redraw=False, run_binding_func=False)
@@ -275,7 +276,93 @@ class WindowTests(unittest.TestCase):
         app._on_sheet_select("Table")
         self.assertEqual(app.focus, team(4))               # Derby are second in the stored table
         app._on_table_split(fd.SPLIT_HOME)
+        self.assertEqual(app.zone_key_meanings, [])             # zones belong to the overall table
+
+    def overlay_texts(self, name):
+        canvas = self.app.sheets[name].MT
+        return [canvas.itemcget(i, "text") for i in canvas.find_withtag(fm_review.SheetOverlay.TAG)
+                if canvas.type(i) == "text"]
+
+    def test_form_is_drawn_as_pills_and_the_cells_keep_their_letters(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_view("Table")
+        app.update()
+        form = [app.sheets["Table"].get_cell_data(r, 10) for r in range(len(app.table_rows))]
+        self.assertTrue("".join(form).strip())                   # there is some form to draw
+        self.assertEqual(sorted(self.overlay_texts("Table")), sorted("".join(form).replace(" ", "")))
+        app.set_view(fm_review.ANALYSIS)
+        app.update()
+        sheet = app.sheets[fm_review.ANALYSIS]
+        letters = [sheet.get_cell_data(r, c) for r in range(len(app.analysis_rows)) for c in range(1, 6)]
+        self.assertEqual(sorted(self.overlay_texts(fm_review.ANALYSIS)), sorted(x for x in letters if x))
+        app._on_analysis("Positions")
+        app.update()
+        self.assertEqual(self.overlay_texts(fm_review.ANALYSIS), [])
+
+    def test_zone_edges_and_the_colour_key(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_view("Table")
+        app.update()
+        self.assertEqual(app.zone_edges, {0: app.view_theme.zones[fd.ZONE_PROMOTION][0],
+                                          1: app.view_theme.zones[fd.ZONE_PLAYOFF][0],
+                                          3: app.view_theme.zones[fd.ZONE_RELEGATION][0]})
+        self.assertEqual(app.zone_key_meanings, ["Promotion", "Play-offs", "Relegation"])
         self.assertNotIn("Pos colours", app.note_label.cget("text"))
+        app.set_view("Results")
+        self.assertEqual(app.zone_key_meanings, [])
+
+    def test_goal_difference_bars(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_view("Table")
+        app.update()
+        self.assertEqual(app.overlays["Table"].bars, {(0, 8): 0.3})     # Hull +3 on a scale of 10; 0 has none
+        canvas = app.sheets["Table"].MT
+        kinds = [canvas.type(i) for i in canvas.find_withtag(fm_review.SheetOverlay.TAG)]
+        self.assertIn("rectangle", kinds)
+
+    def wait_until(self, condition, seconds=3.0) -> bool:
+        """Run the window's event loop until the condition holds: tksheet redraws on a short timer."""
+        stop = time.monotonic() + seconds
+        while not condition() and time.monotonic() < stop:
+            self.app.update()
+            time.sleep(0.01)
+        return condition()
+
+    def open_long_league(self):
+        """A 46-team league, so that its table scrolls: odd-numbered clubs win at home, the rest lose."""
+        with mock.patch.dict(test_fm_data.CLUBS, {n: (f"Club {n}", f"C{n}") for n in range(6, 47)}):
+            fixtures = [fx(D(2026, 8, 1), n, n + 1, 1, 0, comp=102, md=1) for n in range(1, 47, 2)]
+            self.app.install_dataset(fd.build_dataset(info(), fixtures, clubs=[club(n) for n in range(1, 47)]))
+        self.app.set_view("Table")
+        self.app.update()
+        return self.app.sheets["Table"], self.app.overlays["Table"], len(self.app.table_rows) - 1
+
+    def test_pills_follow_the_rows_on_screen_after_scrolling(self):
+        sheet, overlay, last = self.open_long_league()
+        self.assertNotIn(last, overlay.drawn_rows)               # the foot of the table starts off screen
+        sheet.see(row=last, column=0)
+        self.assertTrue(self.wait_until(lambda: last in overlay.drawn_rows), "the pills did not follow the scroll")
+        start, end = sheet.visible_rows
+        self.assertTrue(all(start <= r <= end for r in overlay.drawn_rows))
+        self.assertNotIn(0, overlay.drawn_rows)                  # and the top is now off screen
+
+    def test_a_theme_switch_keeps_the_scroll_position_and_repaints_the_pills(self):
+        app = self.app
+        sheet, overlay, last = self.open_long_league()
+        sheet.see(row=last, column=0)
+        self.assertTrue(self.wait_until(lambda: last in overlay.drawn_rows))
+        where = sheet.get_yview()[0]
+        self.assertGreater(where, 0.3)                           # it really is scrolled
+        app.set_theme("High-Contrast")
+        self.assertTrue(self.wait_until(lambda: last in overlay.drawn_rows), "the pills were not redrawn")
+        self.assertAlmostEqual(sheet.get_yview()[0], where, places=3)
+        canvas = sheet.MT
+        fills = {canvas.itemcget(i, "fill") for i in canvas.find_withtag(fm_review.SheetOverlay.TAG)
+                 if canvas.type(i) == "polygon"}
+        self.assertEqual(fills, {"#f87171"})     # only losers are on screen at the foot: High-Contrast's loss red
 
     def wait_for_export(self):
         stop = time.monotonic() + 30

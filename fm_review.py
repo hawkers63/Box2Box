@@ -23,19 +23,20 @@ import threading
 import time
 import tkinter as tk
 import traceback
+from collections import defaultdict
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox
 from tkinter import font as tkfont
 from typing import NamedTuple
 
 import customtkinter as ctk
-from tksheet import Sheet
+from tksheet import Sheet, rounded_box_coords
 
 import club_colours
 import fm_data as fd
 import fm_export as fx
 import palette
-from palette import zone_legend
 
 APP_TITLE = "Box2Box"
 VERSION = "1.2"
@@ -61,6 +62,7 @@ ANALYSES = ("Form", "Positions", "xG")
 GROUPINGS = (fd.GROUP_BY_WEEK, fd.GROUP_BY_MATCHDAY, fd.GROUP_BY_DATE)
 MAX_TEAM_CHOICES = 120
 RESULTS_XG_COLUMN = 4
+GD_COLUMN, FORM_COLUMN = 8, 10            # in the Table view
 
 FONT = "Segoe UI"
 THEME_LABEL = "Theme ▾"
@@ -233,6 +235,83 @@ class AboutWindow(ctk.CTkToplevel):
     def bring_forward(self) -> None:
         self.lift()
         self.focus_force()
+
+
+class SheetOverlay:
+    """Rounded form pills and goal-difference bars painted over a sheet's cells. tksheet redraws only
+    what is on screen, so after each of its redraws the overlay paints the rows on screen too, which
+    keeps even a 5,000-team sheet quick. The cells keep their own text underneath, for copying."""
+
+    TAG = "b2b-overlay"
+
+    def __init__(self, sheet: Sheet, px: Callable[[float], int]) -> None:
+        self.sheet, self.px = sheet, px
+        self.pills: dict[tuple[int, int], str] = {}
+        self.bars: dict[tuple[int, int], float] = {}
+        self.drawn_rows: set[int] = set()        # the rows the last draw painted
+        self._by_row: dict[int, list[tuple[int, str | float]]] = {}
+        self._colours: Mapping[str, tuple[str | None, str | None]] = {}
+        self._bar_colours = ("", "")
+        self._font = (FONT, 9, "bold")
+        sheet.bind("<<SheetRedrawn>>", self.draw, add=True)
+
+    def show(self, pills: Mapping[tuple[int, int], str], bars: Mapping[tuple[int, int], float],
+             colours: Mapping[str, tuple[str | None, str | None]], bar_colours: tuple[str, str]) -> None:
+        """Pills: (row, column) → its letters, oldest first. Bars: (row, column) → a value from -1 to 1,
+        drawn right in bar_colours[0] when positive and left in bar_colours[1] when negative."""
+        self.pills, self.bars = dict(pills), dict(bars)
+        self._colours, self._bar_colours = colours, bar_colours
+        by_row: dict[int, list[tuple[int, str | float]]] = defaultdict(list)
+        for (row, column), value in [*self.pills.items(), *self.bars.items()]:
+            by_row[row].append((column, value))
+        self._by_row = by_row
+        self.draw()
+
+    def clear(self) -> None:
+        self.show({}, {}, self._colours, self._bar_colours)
+
+    def draw(self, _event=None) -> None:
+        canvas = self.sheet.MT
+        canvas.delete(self.TAG)
+        self.drawn_rows = set()
+        if not self._by_row:
+            return
+        start, end = self.sheet.visible_rows
+        # Cell boxes from the positions themselves: get_cell_coords gives 0 for row or column 0.
+        rows, columns = canvas.row_positions, canvas.col_positions
+        for row in range(start, min(end + 1, len(rows) - 1)):
+            for column, value in self._by_row.get(row, ()):
+                if column + 1 >= len(columns):
+                    continue
+                box = (columns[column], rows[row], columns[column + 1], rows[row + 1])
+                if isinstance(value, str):
+                    self._pills(canvas, box, value)
+                else:
+                    self._bar(canvas, box, value)
+                self.drawn_rows.add(row)
+        canvas.tag_raise(self.TAG)
+
+    def _pills(self, canvas: tk.Canvas, box: tuple[float, ...], letters: str) -> None:
+        x1, y1, x2, y2 = box
+        width, height, gap = self.px(18), self.px(16), self.px(4)
+        left = x1 + ((x2 - x1) - (len(letters) * (width + gap) - gap)) / 2
+        top = (y1 + y2 - height) / 2
+        for letter in letters:
+            background, text = self._colours.get(letter, (None, None))
+            canvas.create_polygon(rounded_box_coords(left, top, left + width, top + height, radius=height // 2),
+                                  smooth=True, fill=background or "", outline="", tags=self.TAG)
+            canvas.create_text(left + width / 2, top + height / 2, text=letter, fill=text or "#ffffff",
+                               font=self._font, tags=self.TAG)
+            left += width + gap
+
+    def _bar(self, canvas: tk.Canvas, box: tuple[float, ...], value: float) -> None:
+        x1, _y1, x2, y2 = box
+        middle = (x1 + x2) / 2
+        reach = ((x2 - x1) / 2 - self.px(4)) * min(abs(value), 1.0)
+        bottom = y2 - 2
+        left, right = (middle, middle + reach) if value > 0 else (middle - reach, middle)
+        colour = self._bar_colours[0] if value > 0 else self._bar_colours[1]
+        canvas.create_rectangle(left, bottom - self.px(3), right, bottom, fill=colour, outline="", tags=self.TAG)
 
 
 class ClubColoursDialog(ctk.CTkToplevel):
@@ -530,7 +609,9 @@ class FMReviewApp(ctk.CTk):
         self.sheets = {
             "Results": self._make_sheet(content, show_row_index=False),
             "Grid": self._make_sheet(content, align="center"),
-            "Table": self._make_sheet(content, show_row_index=False),
+            # A row index a few pixels wide, coloured with each row's zone: the zone edge.
+            "Table": self._make_sheet(content, show_row_index=True, show_default_index_for_empty=False,
+                                      default_row_index=None),
             ANALYSIS: self._make_sheet(content, show_row_index=False),
             HUB: self._make_sheet(content, show_row_index=False),
         }
@@ -539,6 +620,7 @@ class FMReviewApp(ctk.CTk):
             sheet.bind("<<SheetSelect>>", lambda _e, n=name: self._on_sheet_select(n))
             sheet.grid_remove()
         self.sheets[HUB].bind("<Double-Button-1>", lambda _e: self._open_from_hub())
+        self.overlays = {name: SheetOverlay(self.sheets[name], self.px) for name in ("Table", ANALYSIS)}
         self.message = role("content", ctk.CTkFrame(content))
         self.message.grid(row=0, column=0, sticky="nsew")
         self.message_label = role("text", ctk.CTkLabel(self.message, text="", font=ctk.CTkFont(FONT, 15),
@@ -546,8 +628,15 @@ class FMReviewApp(ctk.CTk):
         self.message_label.pack(expand=True, pady=(0, 10))
         self.reopen_button = role("button", ctk.CTkButton(self.message, text="", width=300, command=self._reopen_last))
 
+        # The colour key: a chip and a meaning for each zone the Table or Positions view shows.
+        self.zone_key = ctk.CTkFrame(main, fg_color="transparent")
+        self.zone_key.grid(row=5, column=0, sticky="w", pady=(6, 0))
+        self.zone_key.grid_remove()
+        self.zone_key_meanings: list[str] = []
+        self.zone_edges: dict[int, str] = {}         # the Table's row → its zone colour
+
         self.detail_label = role("muted", ctk.CTkLabel(main, text="", anchor="w"))
-        self.detail_label.grid(row=5, column=0, sticky="ew", pady=(4, 0))
+        self.detail_label.grid(row=6, column=0, sticky="ew", pady=(4, 0))
 
         status = self.status_bar = role("panel", ctk.CTkFrame(self, corner_radius=0, height=30))
         status.grid(row=2, column=0, columnspan=2, sticky="ew")
@@ -605,10 +694,12 @@ class FMReviewApp(ctk.CTk):
             widget.configure(**styles[role])
         selected = t.selection[0]
         border = t.selection[1]
-        for sheet in self.sheets.values():
+        for name, sheet in self.sheets.items():
             sheet.set_options(
                 frame_bg=t.table[0], table_bg=t.table[0], table_fg=t.table[1], table_grid_fg=t.grid_line,
-                header_bg=t.sheet_heading[0], header_fg=t.sheet_heading[1], index_bg=t.sheet_heading[0],
+                header_bg=t.sheet_heading[0], header_fg=t.sheet_heading[1],
+                # The Table's index is its zone edge, so it sits in the table's own colour.
+                index_bg=t.table[0] if name == "Table" else t.sheet_heading[0],
                 index_fg=t.sheet_heading[1], top_left_bg=t.sheet_heading[0],
                 table_selected_cells_bg=selected, table_selected_cells_border_fg=border,
                 table_selected_rows_bg=selected, table_selected_rows_border_fg=border,
@@ -1157,6 +1248,7 @@ class FMReviewApp(ctk.CTk):
     # ----------------------------------------------------------------- rendering
 
     def render(self) -> None:
+        self._show_zone_key()                  # the Table and Positions views put it back
         if not self.dataset:
             return
         if self.view == HUB:
@@ -1203,6 +1295,24 @@ class FMReviewApp(ctk.CTk):
         if last and Path(last).is_file():
             self.reopen_button.configure(text=f"Open {Path(last).name}")
             self.reopen_button.pack(pady=(0, 40))
+
+    def _show_zone_key(self, zones: Iterable[str] = ()) -> None:
+        """The colour key under the sheet: a chip and its meaning for each zone shown, or nothing."""
+        for child in self.zone_key.winfo_children():
+            child.destroy()
+        theme, shown = self.view_theme, set(zones)
+        self.zone_key_meanings = []
+        for zone, _word, meaning in palette.ZONE_LEGEND:
+            if zone in shown and zone in theme.zones:
+                chip = ctk.CTkFrame(self.zone_key, width=14, height=14, corner_radius=3, fg_color=theme.zones[zone][0])
+                chip.pack(side="left", padx=(14 if self.zone_key_meanings else 0, 6))
+                label = meaning[0].upper() + meaning[1:]
+                ctk.CTkLabel(self.zone_key, text=label, text_color=theme.text).pack(side="left")
+                self.zone_key_meanings.append(label)
+        if self.zone_key_meanings:
+            self.zone_key.grid()
+        else:
+            self.zone_key.grid_remove()
 
     @staticmethod
     def _paint(sheet: Sheet, row: int, column: int, colours, canvas: str = "table") -> None:
@@ -1350,6 +1460,8 @@ class FMReviewApp(ctk.CTk):
         theme = self.view_theme
         headers = ["Pos", "Team", "P", "W", "D", "L", "GF", "GA", "GD", "Pts", "Form"]
         data, self.table_rows, headings, focus_rows, zone_cells = [], [], [], [], []
+        pills: dict[tuple[int, int], str] = {}
+        differences: dict[int, int] = {}              # row → goal difference
         for title, rows in result.groups:
             if title:
                 headings.append(len(data))
@@ -1365,29 +1477,47 @@ class FMReviewApp(ctk.CTk):
                 data.append([r.position, r.team, r.played, r.won, r.drawn, r.lost, r.goals_for, r.goals_against,
                              f"{gd:+d}" if gd else "0", r.points, "  ".join(r.form)])
                 self.table_rows.append(r.team_id)
+                differences[row_idx] = gd
+                if r.form:
+                    pills[(row_idx, FORM_COLUMN)] = r.form
         sheet = self._show_sheet("Table")
         sheet.set_sheet_data(data, reset_col_positions=True, reset_row_positions=True, redraw=False,
                              reset_highlights=True)
         sheet.headers(headers, redraw=False)
+        sheet.row_index([""] * len(data), redraw=False)
+        sheet.set_index_width(self.px(5), redraw=False)
         team_width = self._text_width([row[1] for row in data], minimum=200)
         sheet.set_column_widths([self.px(46), team_width] + [self.px(44)] * 7 + [self.px(50), self.px(130)])
         sheet.align_columns([0] + list(range(2, 11)), align="center", align_header=True, redraw=False)
         for i in headings:
             sheet.highlight_rows(i, bg=theme.heading[0], fg=theme.heading[1], redraw=False, end_of_screen=True)
         for i in focus_rows:
-            sheet.highlight_rows(i, bg=theme.focus[0], fg=theme.focus[1], redraw=False, end_of_screen=False)
+            sheet.highlight_rows(i, bg=theme.focus[0], fg=theme.focus[1], highlight_index=False, redraw=False,
+                                 end_of_screen=False)
+        self.zone_edges = {}
         for row_idx, col_idx, colours in zone_cells:
             self._paint(sheet, row_idx, col_idx, colours)
+            self.zone_edges[row_idx] = colours[0]
+            sheet.highlight_cells(row=row_idx, canvas="index", bg=colours[0], redraw=False)
+        # The form letters stay in their cells for copying, written in the cell's own colour, under the pills.
+        for row_idx, _column in pills:
+            hidden = theme.focus[0] if row_idx in focus_rows else theme.table[0]
+            sheet.highlight_cells(row=row_idx, column=FORM_COLUMN, bg=hidden if row_idx in focus_rows else None,
+                                  fg=hidden, redraw=False)
+        scale = max([10, *(abs(gd) for gd in differences.values())])
+        bars = {(row_idx, GD_COLUMN): gd / scale for row_idx, gd in differences.items() if gd}
+        self.overlays["Table"].show(pills, bars, theme.colours, (theme.colours["W"][0], theme.colours["L"][0]))
         sheet.refresh()
+        zones = {r.zone for _, rows in result.groups for r in rows if r.zone}
         note = [result.note]
-        legend = zone_legend({r.zone for _, rows in result.groups for r in rows})
-        if legend:
+        if zones:
             note.append(result.zones_note)
-            note.append(f"Pos colours: {legend}.")
         note.append("Click a team to follow it.")
         self.note_label.configure(text=" ".join(part for part in note if part))
+        self._show_zone_key(zones)
 
     def _render_analysis(self) -> None:
+        self.overlays[ANALYSIS].clear()          # the Form panel draws its pills again
         {"Form": self._render_form, "Positions": self._render_positions, "xG": self._render_xg}[self.analysis]()
 
     def _table_order(self) -> tuple[int, ...]:
@@ -1424,12 +1554,19 @@ class FMReviewApp(ctk.CTk):
                   + [self.px(66)] * 4)
         sheet = self._fill_analysis(headers, data, widths, [c for c in range(1, len(headers)) if c != run])
         theme = self.view_theme
+        pills: dict[tuple[int, int], str] = {}
         for i, r in enumerate(guide.rows):
-            if r.team_id == self.focus:
+            followed = r.team_id == self.focus
+            if followed:
                 sheet.highlight_rows(i, bg=theme.focus[0], fg=theme.focus[1], redraw=False, end_of_screen=False)
+            # Each letter stays in its cell for copying, written in the cell's own colour, under its pill.
+            hidden = theme.focus[0] if followed else theme.table[0]
             for column, letter in enumerate(data[i][1:run], start=1):
                 if letter:
-                    self._paint(sheet, i, column, theme.colours[letter])
+                    pills[(i, column)] = letter
+                    sheet.highlight_cells(row=i, column=column, bg=hidden if followed else None, fg=hidden,
+                                          redraw=False)
+        self.overlays[ANALYSIS].show(pills, {}, theme.colours, (theme.colours["W"][0], theme.colours["L"][0]))
         sheet.refresh()
         note = [guide.describe(),
                 "Form: the last five matches, oldest first. PPG: points per game. CS: clean sheets. FTS: failed to "
@@ -1487,11 +1624,12 @@ class FMReviewApp(ctk.CTk):
             self._paint(sheet, row_idx, column, colours)
         sheet.refresh()
         note = [chart.describe(), "Columns are matchdays; each cell is the team's place after it."]
-        legend = zone_legend({zone for group in chart.groups for zone in group.zones})
-        if legend:
-            note += [chart.zones_note, f"Colours: {legend}."]
+        zones = {zone for group in chart.groups for zone in group.zones if zone}
+        if zones:
+            note.append(chart.zones_note)
         note.append("Click a team to follow it.")
         self.note_label.configure(text=" ".join(part for part in note if part))
+        self._show_zone_key(zones)
 
     def _render_xg(self) -> None:
         cov = fd.xg_coverage(self.dataset, self.fixtures)
