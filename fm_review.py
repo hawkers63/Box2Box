@@ -36,7 +36,7 @@ import fm_export as fx
 from palette import COLOURS, DRAW_BG, FOCUS, HEADING, LOSS_BG, WIN_BG, ZONE_COLOURS, zone_legend
 
 APP_TITLE = "Box2Box"
-VERSION = "1.1"
+VERSION = "1.2"
 APP_DIR = Path(__file__).resolve().parent
 NAMES_PATH = APP_DIR / "competition_names.csv"
 SETTINGS_PATH = APP_DIR / "box2box_settings.json"
