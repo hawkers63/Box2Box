@@ -16,7 +16,9 @@ import customtkinter as ctk
 
 import fm_data as fd
 import fm_review
-from test_fm_data import LEAGUE, D, club, fx, info, row, team, unresolved_away
+from test_fm_data import LEAGUE, D, club, fx, info, match_stats, row, team, unresolved_away
+
+HULL_LEEDS_XG = match_stats(LEAGUE[0], 1.82, 0.45)     # the report the save kept for Hull 2-1 Leeds
 
 # The first line of LICENSE, word for word.
 COPYRIGHT = "Copyright (c) 2026 onwards Mark Hawksworth (hawkers63). All rights reserved."
@@ -32,7 +34,7 @@ def texts_in(widget) -> list[str]:
     return found
 
 
-def dataset() -> fd.Dataset:
+def dataset(match_stats=None) -> fd.Dataset:
     fixtures = LEAGUE + [
         fx(D(2027, 8, 7), 1, 2, season=2027, md=1),                          # next season, unplayed
         fx(D(2026, 7, 20), 1, 5, 2, 2, comp=131, season=None),               # a friendly
@@ -42,7 +44,8 @@ def dataset() -> fd.Dataset:
     stored = NS(competition_id=101, rows=(row(1, 1, 2, 2, 0, 0, 5, 2, 6), row(4, 2), row(2, 3), row(3, 4)))
     rules = [NS(competition_id=101, promotion_places=1, playoff_places=1, relegation_places=1, rounds=())]
     return fd.build_dataset(info(), fixtures, clubs=[club(1, slots=(0, 1)), club(2), club(3), club(4), club(5)],
-                            competitions=[NS(id=101, database_id=12)], tables=[stored], rules=rules)
+                            competitions=[NS(id=101, database_id=12)], tables=[stored], rules=rules,
+                            match_stats=match_stats)
 
 
 class WindowTests(unittest.TestCase):
@@ -104,6 +107,76 @@ class WindowTests(unittest.TestCase):
             for view in fm_review.VIEWS:
                 app.set_view(view)
                 app.update()
+                for analysis in fm_review.ANALYSES if view == fm_review.ANALYSIS else ():
+                    app._on_analysis(analysis)
+                    app.update()
+
+    def test_analysis_shows_form_positions_and_expected_goals(self):
+        app = self.app
+        app.install_dataset(dataset(match_stats=HULL_LEEDS_XG))
+        app.set_view(fm_review.ANALYSIS)
+        app.update()
+        sheet = app.sheets[fm_review.ANALYSIS]
+        self.assertEqual(app.analysis_switch.get(), "Form")
+        self.assertEqual(sheet.get_cell_data(0, 0), "Hull City")                  # the stored table's order
+        self.assertEqual([sheet.get_cell_data(0, c) for c in range(1, 6)], ["", "", "", "W", "W"])
+        self.assertNotIn("", sheet.headers())          # tksheet shows a column letter for an empty header
+        self.assertIn("Form from 3 scored matches", app.note_label.cget("text"))
+        self.assertIn("W 3-1 at Derby County", app.detail_label.cget("text"))     # the followed team's form
+        app._on_analysis("Positions")
+        app.update()
+        self.assertEqual([sheet.get_cell_data(0, c) for c in range(3)], ["Hull City", 1, 1])
+        self.assertIn("after each matchday", app.note_label.cget("text"))
+        app._on_analysis("xG")
+        app.update()
+        self.assertEqual([sheet.get_cell_data(0, c) for c in range(3)], ["Hull City", "1 of 2", "1.82"])
+        self.assertIn("Expected goals for 1 of 4 played matches", app.note_label.cget("text"))
+        sheet.select_cell(1, 0, redraw=False, run_binding_func=False)
+        app._on_sheet_select(fm_review.ANALYSIS)
+        self.assertEqual(app.focus, team(4))                 # a click follows the team, as in the table
+
+    def test_results_show_expected_goals_where_the_save_kept_a_report(self):
+        app = self.app
+        app.install_dataset(dataset(match_stats=HULL_LEEDS_XG))
+        app.set_view("Results")
+        app.update()
+        sheet = app.sheets["Results"]
+        found = [i for i, r in enumerate(app.result_rows) if r.fixture is LEAGUE[0]]
+        self.assertEqual(sheet.get_cell_data(found[0], 4), "1.82-0.45")
+        sheet.select_cell(found[0], 2, redraw=False, run_binding_func=False)
+        app._on_sheet_select("Results")
+        self.assertIn("Hull City [1.82] 2-1 [0.45] Leeds United", app.detail_label.cget("text"))
+
+    def test_the_save_opens_before_its_expected_goals_arrive(self):
+        app = self.app
+        pending = dataset()
+        app.loading_since, app._loading_file = time.monotonic(), "x.fm"     # as open_save leaves them
+        app.handle_event(("loaded", pending))
+        app.set_view("Results")
+        app.update()
+        self.assertIs(app.dataset, pending)
+        self.assertEqual(app.open_button.cget("state"), "disabled")          # still reading
+        self.assertIn("not been read yet", app.note_label.cget("text"))
+        found = [i for i, r in enumerate(app.result_rows) if r.fixture is LEAGUE[0]][0]
+        self.assertEqual(app.sheets["Results"].get_cell_data(found, 4), "")
+        app.handle_event(("xg", fd.with_expected_goals(pending, HULL_LEEDS_XG)))
+        app.update()
+        self.assertEqual(app.dataset.xg_report.joined, 1)
+        self.assertEqual(app.open_button.cget("state"), "normal")
+        self.assertEqual(app.sheets["Results"].get_cell_data(found, 4), "1.82-0.45")
+        self.assertIn("Expected goals for 1 of 4 played matches", app.note_label.cget("text"))
+
+    def test_the_worker_hands_over_the_save_then_its_expected_goals(self):
+        pending = dataset()
+        full = fd.with_expected_goals(pending, HULL_LEEDS_XG)
+
+        def load(path, progress, ready):
+            ready(pending)
+            return full
+
+        with mock.patch.object(fm_review.fd, "load_dataset", side_effect=load):
+            self.app._load_worker(Path("x.fm"))
+        self.assertEqual([self.app.events.get_nowait() for _ in range(2)], [("loaded", pending), ("xg", full)])
 
     def test_list_search_and_details(self):
         app = self.app

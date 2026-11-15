@@ -639,10 +639,12 @@ class PositionTests(unittest.TestCase):
         self.assertEqual((chart.agreeing, chart.compared), (2, 4))
         self.assertIn("2 of 4", chart.describe())
 
-    def test_zones_follow_the_rules(self):
+    def test_zones_follow_the_rules_and_say_so(self):
         rules = [NS(competition_id=101, promotion_places=1, playoff_places=1, relegation_places=1, rounds=())]
-        self.assertEqual(self.chart(LEAGUE, rules=rules).groups[0].zones,
-                         (fd.ZONE_PROMOTION, fd.ZONE_PLAYOFF, fd.ZONE_NONE, fd.ZONE_RELEGATION))
+        chart = self.chart(LEAGUE, rules=rules)
+        self.assertEqual(chart.groups[0].zones, (fd.ZONE_PROMOTION, fd.ZONE_PLAYOFF, fd.ZONE_NONE, fd.ZONE_RELEGATION))
+        self.assertIn("game's rules", chart.zones_note)
+        self.assertEqual(self.chart(LEAGUE).zones_note, "")      # four teams and no rules: no zones
 
     def test_nothing_played_yet(self):
         chart = self.chart(LEAGUE[4:])
@@ -768,6 +770,11 @@ class ExpectedGoalsTests(unittest.TestCase):
 
     def test_over_and_under_performance_beyond_a_dead_zone(self):
         self.assertEqual([fd.xg_tint(v) for v in (0.3, 0.25, -0.25, -0.3)], [fd.XG_ABOVE, "", "", fd.XG_BELOW])
+
+    def test_a_seasons_difference_is_judged_per_match(self):
+        self.assertEqual(fd.xg_tint(3.0, matches=15), "")              # 0.20 a match: noise
+        self.assertEqual(fd.xg_tint(4.5, matches=15), fd.XG_ABOVE)     # 0.30 a match
+        self.assertEqual(fd.xg_tint(-4.5, matches=15), fd.XG_BELOW)
 
 
 class FakeSave:

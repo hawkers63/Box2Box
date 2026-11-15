@@ -25,8 +25,12 @@ Saves are read with [fmsave](https://rhiever.github.io/fmsave/) and are never mo
 
 - **Competitions hub.** Browse every competition in the save, classified into *Your Club*, *League*, *Cup*, *Youth / Reserves* and *Friendlies*. The hub shows entrants, fixture volume, matches played and season progress. Click a row to select that competition; double-click it, or pick it in the list on the left, to open it in the view you last used.
 - **Fixture grid.** A high-contrast home-and-away matrix. When you follow a club, its row and column show results from that club's perspective (emerald for wins, amber for draws, crimson for defeats).
-- **League standings.** Broadcast-style zone colours for promotion, play-offs and relegation, taken from the save's own competition rules where they can be matched — for example the Championship shows 1st–2nd promoted, 3rd–8th in the play-offs and 22nd–24th relegated. Where the rules cannot be matched (League One and League Two before their season starts), and for the Champions League and Europa League places of a 20-team top division, the zones are estimated from the league's size, and the note above the table says so. Zones are shown on the Overall table. Split the table instantly between **Overall**, **Home**, **Away** and **Form (last six matches)**.
-- **Weekly results.** Every match in chronological order, grouped by calendar week (Monday start), matchday or date. Pick a club to view their campaign with W/D/L indicators and running points.
+- **League standings.** Broadcast-style zone colours for promotion, play-offs and relegation, taken from the save's own competition rules where they can be matched — for example the Championship shows 1st–2nd promoted, 3rd–8th in the play-offs and 22nd–24th relegated. Where the rules cannot be matched (League One and League Two before their season starts), and for the Champions League and Europa League places of a 20-team top division, the zones are estimated from the league's size, and the note above the table says so. Zones are shown on the Overall table. Split the table instantly between **Overall**, **Home**, **Away** and **Form (last six matches)**. A table worked out from the results separates teams level on points as the competition's own rules list them, where results can settle it (wins first in MLS and Brazil, goal difference first in most leagues), and the note says which order it used.
+- **Analysis.** Three looks at a season, each stating how much of it the save covers:
+  - **Form:** every team's last five results, current run, points per game, totals (clean sheets and failures to score among them) and longest winning, unbeaten, winless and losing runs, with the season's records underneath. Click a team to follow it; its last five appear in words below the sheet. A played match whose score the save does not hold shows as **?**, counts in no total, and any run it touches reads "at least".
+  - **Positions:** each team's place after every matchday, worked out from the results and ranked within each of the game's tables (conferences and zones included), coloured by zone, and checked against the game's own table.
+  - **xG:** each team's expected goals for and against, from the match reports the save kept, beside its goals in the same matches. Over- and under-performance are green or red only where they average more than 0.25 goals a match. Missing values are left blank, never shown as 0.00.
+- **Weekly results.** Every match in chronological order, grouped by calendar week (Monday start), matchday or date. Pick a club to view their campaign with W/D/L indicators and running points. Matches with a match report in the save show their expected goals (xG); click one for its xG scoreline, for example `Hull City [1.82] 2-1 [0.45] Leeds United`.
 - **Coverage.** Transparent counts of played matches, matches still to play, and played matches with unrecovered scorelines ("n/a").
 - **Competition names.** Saves do not store competition names, so a competition first appears by its id and best-known clubs, for example `[8] West Ham, Wolves, Burnley`. Use **Name this competition…** to name it. Names go in `competition_names.csv` (`database_id,name`), keyed on the game's database id, so they apply to every save and can be edited in Excel. fmsave reads the same format.
 
@@ -40,7 +44,7 @@ A screenshot of the main window, captured on Windows with no save open.
 
 ## Quick start
 
-Double-click **Box2Box.bat**, then **Open save…**. Saves live in `Documents\Sports Interactive\Football Manager 27\games`. Reading one takes around half a minute. You can also drag a `.fm` save file onto the launcher to open it straight away.
+Double-click **Box2Box.bat**, then **Open save…**. Saves live in `Documents\Sports Interactive\Football Manager 27\games`. Reading one takes around half a minute. The save opens as soon as it has been read; its expected goals follow about 12 seconds later, while you browse. You can also drag a `.fm` save file onto the launcher to open it straight away.
 
 From a terminal:
 
@@ -78,7 +82,7 @@ Exports go to `Documents\Box2Box` (*Export ▾ → Open the export folder*), one
 | --- | --- |
 | `Box2Box.bat` | One-click launcher for the application |
 | `fm_review.py` | The main Box2Box desktop application (CustomTkinter + tksheet) |
-| `fm_data.py` | Pure data layer: parsing, grid matrices, standings and competition summaries |
+| `fm_data.py` | Pure data layer: parsing, grid matrices, standings, form, positions, expected goals and competition summaries |
 | `fm_export.py` | Excel, web page and CSV exports of one competition and season |
 | `palette.py` | The app's colours, shared by the window and the exports |
 | `test_fm_data.py`, `test_fm_export.py`, `test_fm_review_ui.py`, `test_probe.py` | Test suite |

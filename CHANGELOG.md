@@ -11,6 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Analysis** view, beside Results, Grid and Table, with three panels:
+  - **Form:** every team's last five results, current run, points per game, totals and longest runs (winning, unbeaten, without a win, losing), with the season's records.
+  - **Positions:** each team's place after every matchday, ranked within each of the game's tables, coloured by zone and checked against the game's own table.
+  - **xG:** each team's expected goals for and against beside its goals in the same matches, with over- and under-performance.
+- Expected goals (xG) in Results, and the xG scoreline in the details line when a match is clicked.
+- Every analysis states its coverage. A played match with no recoverable score shows as "?", counts in no total, and marks any run or record it could change; missing xG is left blank, never 0.00.
+
+### Changed
+
+- A save opens as soon as it has been read; its expected goals follow about 12 seconds later while you browse.
+- Tables worked out from the results separate teams level on points as the competition's own rules list them, where results can settle it (wins first in MLS and Brazil), and say which order they used.
+
 ## [1.1] - 2026-11-15
 
 Adds an About screen that states who owns Box2Box and on what terms it may be used.

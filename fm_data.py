@@ -1061,7 +1061,7 @@ def standings(
             groups.append((f"Table {number} of {len(stored)}" if len(stored) > 1 else "", rows))
         note = ("Table as stored by the game: its positions, tie-breaks and any points "
                 "deductions. Form is worked out from the results.")
-        return Standings(True, note, tuple(groups), _zones_note(rules, groups))
+        return Standings(True, note, tuple(groups), _zones_note(rules, {r.zone for _, rows in groups for r in rows}))
 
     rows = calculate_standings(fixtures, labels, forms, zones=True, rules=rules, tie_breaks=tie_breaks)
     note = (f"Calculated from the results: 3 points for a win, 1 for a draw; {tie_break_order(tie_breaks)[1]}. "
@@ -1070,12 +1070,12 @@ def standings(
     if missing:
         note += f" {_plural(missing, 'played match', 'played matches')} with no recoverable score left out, so this table is incomplete."
     groups = (("", rows),)
-    return Standings(False, note, groups, _zones_note(rules, groups))
+    return Standings(False, note, groups, _zones_note(rules, {r.zone for _, rows in groups for r in rows}))
 
 
-def _zones_note(rules: ZoneRules | None, groups: Sequence[tuple[str, Sequence[StandingRow]]]) -> str:
+def _zones_note(rules: ZoneRules | None, zones: set[str]) -> str:
     """Where the coloured positions come from, or nothing when no position is coloured."""
-    zones = {r.zone for _, rows in groups for r in rows if r.zone}
+    zones = {zone for zone in zones if zone}
     if not zones:
         return ""
     if rules is None:
@@ -1634,6 +1634,7 @@ class PositionChart:
     agreeing: int = 0                    # final places that match the game's stored tables...
     compared: int = 0                    # ...out of this many; 0 when the save stores none
     tie_breaks: tuple[int, ...] = ()     # the competition's tie-break codes, as its rules list them
+    zones_note: str = ""                 # where the zone colours come from, as the table says it
 
     def describe(self) -> str:
         if not self.matchdays:
@@ -1733,6 +1734,7 @@ def positions_by_matchday(
         agreeing=agreeing,
         compared=compared,
         tie_breaks=tuple(tie_breaks),
+        zones_note=_zones_note(rules, {zone for group in chart_groups for zone in group.zones}) if matchdays else "",
     )
 
 
@@ -1932,12 +1934,13 @@ def xg_table(
     return tuple(rows)
 
 
-def xg_tint(value: float) -> str:
+def xg_tint(value: float, matches: int = 1) -> str:
     """XG_ABOVE or XG_BELOW when goals beat or fall short of expected goals by more than the dead
-    zone, else ''."""
-    if value > XG_DEAD_ZONE:
+    zone a match, else ''. A season's difference is judged per match, so noise does not show."""
+    per_match = value / max(matches, 1)
+    if per_match > XG_DEAD_ZONE:
         return XG_ABOVE
-    if value < -XG_DEAD_ZONE:
+    if per_match < -XG_DEAD_ZONE:
         return XG_BELOW
     return ""
 

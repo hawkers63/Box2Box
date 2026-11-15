@@ -51,9 +51,12 @@ REPOSITORY = "https://github.com/hawkers63/Box2Box"
 ALL_TEAMS = "All teams"
 EXPORT_LABEL = "Export ▾"
 HUB = "Competitions"
-VIEWS = ("Results", "Grid", "Table", HUB)
+ANALYSIS = "Analysis"
+VIEWS = ("Results", "Grid", "Table", ANALYSIS, HUB)
+ANALYSES = ("Form", "Positions", "xG")
 GROUPINGS = (fd.GROUP_BY_WEEK, fd.GROUP_BY_MATCHDAY, fd.GROUP_BY_DATE)
 MAX_TEAM_CHOICES = 120
+RESULTS_XG_COLUMN = 4
 
 FONT = "Segoe UI"
 LIST_BG, LIST_FG = "#1d1d1d", "#e3e3e3"
@@ -202,6 +205,7 @@ class FMReviewApp(ctk.CTk):
         self.settings = self._read_settings()
         self.loading_since: float | None = None
         self.loading_step = ""
+        self._reading_xg = False          # the save is open and its expected goals are on their way
         self._exporting = False
         self.about_window: AboutWindow | None = None
 
@@ -212,6 +216,7 @@ class FMReviewApp(ctk.CTk):
         self.last_comp_view = VIEWS[0]     # the view a competition opens in from the hub
         self.group_by = fd.GROUP_BY_WEEK
         self.table_split = fd.SPLIT_OVERALL
+        self.analysis = ANALYSES[0]
         self.fixtures: tuple = ()
         self.labels: dict[int, str] = {}
         self.short_labels: dict[int, str] = {}
@@ -221,6 +226,7 @@ class FMReviewApp(ctk.CTk):
         self.result_rows: list[fd.TimelineRow] = []
         self.grid_data: fd.Grid | None = None
         self.table_rows: list[int | None] = []
+        self.analysis_rows: list[int | None] = []    # the team on each row of the Analysis sheet
         self.comp_row_ids: list[int] = []
         self._list_job: str | None = None
         self._search_job: str | None = None
@@ -337,6 +343,9 @@ class FMReviewApp(ctk.CTk):
         self.split_label = ctk.CTkLabel(controls, text="Standings")
         self.split_switch = ctk.CTkSegmentedButton(controls, values=list(fd.SPLITS), command=self._on_table_split)
         self.split_switch.set(self.table_split)
+        self.analysis_label = ctk.CTkLabel(controls, text="Show")
+        self.analysis_switch = ctk.CTkSegmentedButton(controls, values=list(ANALYSES), command=self._on_analysis)
+        self.analysis_switch.set(self.analysis)
 
         self.coverage_label = ctk.CTkLabel(main, text="", anchor="w", justify="left")
         self.coverage_label.grid(row=2, column=0, sticky="ew")
@@ -352,6 +361,7 @@ class FMReviewApp(ctk.CTk):
             "Results": self._make_sheet(content, show_row_index=False),
             "Grid": self._make_sheet(content, align="center"),
             "Table": self._make_sheet(content, show_row_index=False),
+            ANALYSIS: self._make_sheet(content, show_row_index=False),
             HUB: self._make_sheet(content, show_row_index=False),
         }
         for name, sheet in self.sheets.items():
@@ -430,9 +440,12 @@ class FMReviewApp(ctk.CTk):
         threading.Thread(target=self._load_worker, args=(path,), daemon=True).start()
 
     def _load_worker(self, path: Path) -> None:
+        """Read a save: the views get it as soon as it is in ("loaded"), and the same save with its
+        expected goals about 12 s later ("xg")."""
         try:
-            dataset = fd.load_dataset(path, progress=lambda step: self.events.put(("progress", step)))
-            self.events.put(("loaded", dataset))
+            dataset = fd.load_dataset(path, progress=lambda step: self.events.put(("progress", step)),
+                                      ready=lambda first: self.events.put(("loaded", first)))
+            self.events.put(("xg", dataset))
         except fd.ImportFailed as exc:
             self.events.put(("failed", str(exc)))
         except Exception as exc:  # report anything unexpected rather than dying silently
@@ -447,9 +460,13 @@ class FMReviewApp(ctk.CTk):
             pass
         if self.loading_since is not None:
             seconds = time.monotonic() - self.loading_since
-            self.status_label.configure(
-                text=f"Reading {self._loading_file}: {self.loading_step}…  {seconds:.0f} s "
-                     "(a save usually takes about half a minute)")
+            if self._reading_xg:
+                text = (f"{self._loading_file} is open. Reading its match statistics for expected goals…  "
+                        f"{seconds:.0f} s")
+            else:
+                text = (f"Reading {self._loading_file}: {self.loading_step}…  {seconds:.0f} s "
+                        "(a save usually takes about half a minute)")
+            self.status_label.configure(text=text)
         self._poll_job = self.after(150, self._poll)
 
     def handle_event(self, event: tuple) -> None:
@@ -460,13 +477,22 @@ class FMReviewApp(ctk.CTk):
         if kind in ("exported", "export_failed"):
             self._finish_export(kind, payload)
             return
+        if kind == "loaded":
+            # The save is in and can be browsed; its expected goals follow from the same worker,
+            # and another save cannot be opened until they have.
+            self._reading_xg = True
+            self.open_button.configure(state="disabled")
+            self.reopen_button.configure(state="disabled")
+            self.install_dataset(payload)
+            return
         self.loading_since = None
+        self._reading_xg = False
         self.progress.stop()
         self.progress.grid_remove()
         self.open_button.configure(state="normal")
         self.reopen_button.configure(state="normal")
-        if kind == "loaded":
-            self.install_dataset(payload)
+        if kind == "xg":
+            self.install_expected_goals(payload)
         else:
             # A failed import leaves whatever was open before untouched.
             kept = "\n\nThe save that was already open is still shown." if self.dataset else ""
@@ -499,6 +525,23 @@ class FMReviewApp(ctk.CTk):
             self.select_competition(dataset.competitions[0].id)
         else:
             self._show_message("This save holds no fixtures that could be read.")
+
+    def install_expected_goals(self, dataset: fd.Dataset) -> None:
+        """Swap in the open save with its expected goals, leaving the view where it is."""
+        if self.dataset is None or self.dataset.info.path != dataset.info.path:
+            self.install_dataset(dataset)
+            return
+        self.dataset = dataset
+        self._refresh_status()
+        if self.comp_id is None or self.view == HUB or not self.fixtures:
+            return
+        if self.view == "Results":
+            sheet = self.sheets["Results"]
+            self._fill_results_xg(sheet)
+            sheet.refresh()
+            self.note_label.configure(text=self._results_note())
+        elif self.view == ANALYSIS and self.analysis == "xG":
+            self.render()
 
     def _refresh_status(self) -> None:
         if not self.dataset:
@@ -695,7 +738,8 @@ class FMReviewApp(ctk.CTk):
     def _sync_view_controls(self) -> None:
         """Show the grouping or standings switch the view uses, and enable the season and team
         pickers only where they apply: the hub covers every competition at once."""
-        for widget in (self.group_label, self.group_switch, self.split_label, self.split_switch):
+        for widget in (self.group_label, self.group_switch, self.split_label, self.split_switch,
+                       self.analysis_label, self.analysis_switch):
             widget.pack_forget()
         if self.view == "Results":
             self.group_label.pack(side="left", padx=(0, 6))
@@ -703,12 +747,20 @@ class FMReviewApp(ctk.CTk):
         elif self.view == "Table":
             self.split_label.pack(side="left", padx=(0, 6))
             self.split_switch.pack(side="left")
+        elif self.view == ANALYSIS:
+            self.analysis_label.pack(side="left", padx=(0, 6))
+            self.analysis_switch.pack(side="left")
         state = "normal" if self.dataset and self.view != HUB else "disabled"
-        for widget in (self.season_menu, self.team_box, self.group_switch, self.split_switch):
+        for widget in (self.season_menu, self.team_box, self.group_switch, self.split_switch, self.analysis_switch):
             widget.configure(state=state)
 
     def _on_table_split(self, value: str) -> None:
         self.table_split = value
+        self.render()
+
+    def _on_analysis(self, value: str) -> None:
+        self.analysis = value
+        self.analysis_switch.set(value)
         self.render()
 
     def _on_group(self, value: str) -> None:
@@ -716,8 +768,8 @@ class FMReviewApp(ctk.CTk):
         self.render()
 
     def _set_controls_state(self, state: str) -> None:
-        for widget in (self.season_menu, self.team_box, self.view_switch, self.group_switch,
-                       self.split_switch, self.rename_button, self.details_button, self.search_entry):
+        for widget in (self.season_menu, self.team_box, self.view_switch, self.group_switch, self.split_switch,
+                       self.analysis_switch, self.rename_button, self.details_button, self.search_entry):
             widget.configure(state=state)
         self.export_button.configure(state="disabled" if self._exporting else state)
 
@@ -801,7 +853,8 @@ class FMReviewApp(ctk.CTk):
             self.note_label.configure(text="")
             self._show_message("No fixtures for this season.")
             return
-        {"Results": self._render_results, "Grid": self._render_grid, "Table": self._render_table}[self.view]()
+        {"Results": self._render_results, "Grid": self._render_grid, "Table": self._render_table,
+         ANALYSIS: self._render_analysis}[self.view]()
 
     def _show_sheet(self, name: str) -> Sheet:
         self.message.grid_remove()
@@ -839,10 +892,11 @@ class FMReviewApp(ctk.CTk):
         focus = self.focus
         rows = fd.timeline(self.fixtures, self.labels, group_by=self.group_by, focus_team=focus)
         self.result_rows = rows
-        headers = ["Date", "KO", "Home", "Score", "Away", "Round"] + (["Res", "Pts"] if focus is not None else [])
+        headers = ["Date", "KO", "Home", "Score", "xG", "Away", "Round"] + (["Res", "Pts"] if focus is not None else [])
         blank = [""] * (len(headers) - 1)
         data = [[r.heading, *blank] if r.is_heading else
-                [r.date, r.time, r.home, r.score, r.away, r.round] + ([r.result, r.points] if focus is not None else [])
+                [r.date, r.time, r.home, r.score, "", r.away, r.round]
+                + ([r.result, r.points] if focus is not None else [])
                 for r in rows]
         sheet = self._show_sheet("Results")
         sheet.set_sheet_data(data, reset_col_positions=True, reset_row_positions=True, redraw=False,
@@ -850,9 +904,11 @@ class FMReviewApp(ctk.CTk):
         sheet.headers(headers, redraw=False)
         names = [r.home for r in rows] + [r.away for r in rows]
         team_width = self._text_width(names, minimum=180)
-        widths = [self.px(110), self.px(56), team_width, self.px(64), team_width, self.px(100), self.px(46), self.px(54)]
+        widths = [self.px(110), self.px(56), team_width, self.px(64), self.px(86), team_width, self.px(100),
+                  self.px(46), self.px(54)]
         sheet.set_column_widths(widths[:len(headers)])
-        sheet.align_columns([1, 3, 5, 6, 7][: 3 if focus is None else 5], align="center", align_header=True, redraw=False)
+        sheet.align_columns([1, 3, 4, 6, 7, 8][: 4 if focus is None else 6], align="center", align_header=True,
+                            redraw=False)
         first_unplayed = None
         for i, r in enumerate(rows):
             if r.is_heading:
@@ -862,21 +918,44 @@ class FMReviewApp(ctk.CTk):
                 first_unplayed = i
             if focus is not None and r.result:
                 self._paint(sheet, i, 3, COLOURS[r.result])
-                self._paint(sheet, i, 6, COLOURS[r.result])
+                self._paint(sheet, i, 7, COLOURS[r.result])
             elif r.kind in (fd.UNAVAILABLE, fd.SCHEDULED):
                 self._paint(sheet, i, 3, COLOURS[r.kind])
             if focus is not None:
-                self._paint(sheet, i, 2 if r.home_id == focus else 4, (None, FOCUS_TEXT))
+                self._paint(sheet, i, 2 if r.home_id == focus else 5, (None, FOCUS_TEXT))
+        self._fill_results_xg(sheet)
         sheet.refresh()
         # Open on the most recent results: just before the first match still to play.
         target = len(rows) - 1 if first_unplayed is None else max(0, first_unplayed - 6)
         sheet.set_yview(target / max(len(rows), 1) if target > 0 else 0.0)
+        self.note_label.configure(text=self._results_note())
+
+    def _fill_results_xg(self, sheet: Sheet) -> None:
+        """The Results sheet's xG column. For the team you follow, the cell is green or red where it
+        scored more or fewer goals than its expected goals, beyond the dead zone."""
+        for i, r in enumerate(self.result_rows):
+            xg = fd.xg_for(self.dataset, r.fixture) if r.fixture is not None else None
+            if xg is None:
+                continue
+            sheet.set_cell_data(i, RESULTS_XG_COLUMN, xg.describe(), redraw=False)
+            f = r.fixture
+            if self.focus in (r.home_id, r.away_id) and fd.has_score(f):
+                home = r.home_id == self.focus
+                tint = fd.xg_tint((f.home_goals - xg.home) if home else (f.away_goals - xg.away))
+                if tint:
+                    self._paint(sheet, i, RESULTS_XG_COLUMN, COLOURS["W" if tint == fd.XG_ABOVE else "L"])
+
+    def _results_note(self) -> str:
         note = []
-        if focus is not None:
+        if self.focus is not None:
             note.append("Res and Pts are for the team you follow; points count 3 for a win and 1 for a draw."
                         " * = a played match has no recoverable score, so the total is a minimum.")
         note.append("“n/a” = played, but no score could be recovered from the save. Click a match for details.")
-        self.note_label.configure(text=" ".join(note))
+        note.append(fd.xg_coverage(self.dataset, self.fixtures).describe())
+        if self.focus is not None:
+            note.append(f"xG is green where the team you follow scored more than {fd.XG_DEAD_ZONE} goals above "
+                        "its expected goals, red where it scored that much below.")
+        return " ".join(note)
 
     def _render_grid(self) -> None:
         teams = fd.teams_in(self.fixtures)
@@ -981,6 +1060,144 @@ class FMReviewApp(ctk.CTk):
         note.append("Click a team to follow it.")
         self.note_label.configure(text=" ".join(part for part in note if part))
 
+    def _render_analysis(self) -> None:
+        {"Form": self._render_form, "Positions": self._render_positions, "xG": self._render_xg}[self.analysis]()
+
+    def _table_order(self) -> tuple[int, ...]:
+        """Teams in the order of this season's table: the game's own where it stores one."""
+        return fd.standings(self.dataset, self.comp_id, self.season, self.fixtures, self.labels).order
+
+    def _fill_analysis(self, headers: list[str], data: list[list], widths: list[int], centred: list[int]) -> Sheet:
+        sheet = self._show_sheet(ANALYSIS)
+        sheet.set_sheet_data(data, reset_col_positions=True, reset_row_positions=True, redraw=False,
+                             reset_highlights=True)
+        sheet.headers(headers, redraw=False)
+        sheet.set_column_widths(widths)
+        sheet.align_columns(centred, align="center", align_header=True, redraw=False)
+        return sheet
+
+    def _render_form(self) -> None:
+        guide = fd.form_guide(self.fixtures, self.labels, order=self._table_order())
+        length = fd.FORM_LENGTH
+        strip_headers = [" "] * length       # a space: tksheet shows a column letter for an empty header
+        strip_headers[length // 2] = "Form"
+        headers = (["Team"] + strip_headers + ["Current run", "PPG", "P", "W", "D", "L", "GF", "GA", "CS", "FTS",
+                                               "Wins", "Unbeaten", "No win", "Defeats"])
+        data, self.analysis_rows = [], []
+        for r in guide.rows:
+            t, longest = r.totals, r.streaks.longest
+            letters = [""] * (length - len(r.strip.steps)) + [step.outcome for step in r.strip.steps]
+            data.append([r.team, *letters, r.streaks.describe_current() if r.steps else "", t.ppg_text(),
+                         t.played, t.won, t.drawn, t.lost, t.goals_for, t.goals_against, t.clean_sheets,
+                         t.failed_to_score, *(longest[kind].short() for kind in fd.STREAK_KINDS)])
+            self.analysis_rows.append(r.team_id)
+        run = length + 1
+        widths = ([self._text_width([row[0] for row in data], minimum=180)] + [self.px(36)] * length
+                  + [self._text_width([row[run] for row in data], minimum=120), self.px(54)] + [self.px(40)] * 8
+                  + [self.px(66)] * 4)
+        sheet = self._fill_analysis(headers, data, widths, [c for c in range(1, len(headers)) if c != run])
+        for i, r in enumerate(guide.rows):
+            if r.team_id == self.focus:
+                sheet.highlight_rows(i, bg=FOCUS[0], fg=FOCUS[1], redraw=False, end_of_screen=False)
+            for column, letter in enumerate(data[i][1:run], start=1):
+                if letter:
+                    self._paint(sheet, i, column, COLOURS[letter])
+        sheet.refresh()
+        note = [guide.describe(),
+                "Form: the last five matches, oldest first. PPG: points per game. CS: clean sheets. FTS: failed to "
+                "score. Wins, Unbeaten, No win and Defeats: each team's longest run this season; + = it may be "
+                "longer and ? = not known, because a match next to it has no recoverable score. * = the figure "
+                "leaves out a match with no recoverable score. Click a team to follow it."]
+        records = fd.season_records(guide)
+        if records:
+            text = "Records: " + "  ·  ".join(record.describe() for record in records)
+            if any(record.incomplete for record in records):
+                text += ".  * = a missing score could change this record."
+            note.append(text)
+        self.note_label.configure(text="\n".join(note))
+        followed = next((r for r in guide.rows if r.team_id == self.focus and r.strip.steps), None)
+        if followed:
+            self.detail_label.configure(
+                text=f"{followed.team}, last {len(followed.strip.steps)}: "
+                     + "  ·  ".join(step.describe() for step in followed.strip.steps)
+                     + f"  ·  {followed.strip.describe()}")
+
+    def _render_positions(self) -> None:
+        chart = fd.positions_by_matchday(self.dataset, self.comp_id, self.season, self.fixtures, self.labels)
+        if chart is None or not chart.matchdays:
+            self.note_label.configure(text="")
+            self._show_message(chart.describe() if chart else
+                               "This competition has no matchdays (it is a cup or a set of friendlies), so "
+                               "there are no league positions to chart.")
+            return
+        headers = ["Team"] + [str(matchday) for matchday in chart.matchdays]
+        blank = [""] * len(chart.matchdays)
+        data, self.analysis_rows, headings, followed, zone_cells = [], [], [], [], []
+        for group in chart.groups:
+            if group.title:
+                headings.append(len(data))
+                data.append([group.title, *blank])
+                self.analysis_rows.append(None)
+            for track in group.tracks:
+                row_idx = len(data)
+                if track.team_id == self.focus:
+                    followed.append(row_idx)
+                for column, position in enumerate(track.positions, start=1):
+                    zone = group.zones[position - 1] if position <= len(group.zones) else ""
+                    if zone in ZONE_COLOURS:
+                        zone_cells.append((row_idx, column, ZONE_COLOURS[zone]))
+                data.append([track.team, *track.positions])
+                self.analysis_rows.append(track.team_id)
+        widths = [self._text_width([row[0] for row in data], minimum=180)] + [self.px(34)] * len(chart.matchdays)
+        sheet = self._fill_analysis(headers, data, widths, list(range(1, len(headers))))
+        for i in headings:
+            sheet.highlight_rows(i, bg=HEADING[0], fg=HEADING[1], redraw=False, end_of_screen=True)
+        for i in followed:
+            sheet.highlight_rows(i, bg=FOCUS[0], fg=FOCUS[1], redraw=False, end_of_screen=False)
+        for row_idx, column, colours in zone_cells:
+            self._paint(sheet, row_idx, column, colours)
+        sheet.refresh()
+        note = [chart.describe(), "Columns are matchdays; each cell is the team's place after it."]
+        legend = zone_legend({zone for group in chart.groups for zone in group.zones})
+        if legend:
+            note += [chart.zones_note, f"Colours: {legend}."]
+        note.append("Click a team to follow it.")
+        self.note_label.configure(text=" ".join(part for part in note if part))
+
+    def _render_xg(self) -> None:
+        cov = fd.xg_coverage(self.dataset, self.fixtures)
+        if cov.state or not cov.covered:
+            self.note_label.configure(text="")
+            self._show_message(cov.describe())
+            return
+        rows = fd.xg_table(self.dataset, self.fixtures, self.labels, order=self._table_order())
+        headers = ["Team", "Reports", "xG", "xGA", "xGD", "GF", "GA", "Goals − xG", "xGA − GA"]
+        data, self.analysis_rows = [], []
+        for r in rows:
+            if r.covered:
+                data.append([r.team, f"{r.covered} of {r.played}", f"{r.xg_for:.2f}", f"{r.xg_against:.2f}",
+                             f"{r.xg_difference:+.2f}", r.goals_for, r.goals_against, f"{r.finishing:+.2f}",
+                             f"{r.prevention:+.2f}"])
+            else:
+                data.append([r.team, f"0 of {r.played}", "", "", "", "", "", "", ""])
+            self.analysis_rows.append(r.team_id)
+        widths = [self._text_width([row[0] for row in data], minimum=180), self.px(70)] + [self.px(60)] * 5 \
+            + [self.px(90)] * 2
+        sheet = self._fill_analysis(headers, data, widths, list(range(1, len(headers))))
+        for i, r in enumerate(rows):
+            if r.team_id == self.focus:
+                sheet.highlight_rows(i, bg=FOCUS[0], fg=FOCUS[1], redraw=False, end_of_screen=False)
+            for column, value in ((7, r.finishing), (8, r.prevention)):
+                tint = fd.xg_tint(value, matches=r.covered) if value is not None else ""
+                if tint:
+                    self._paint(sheet, i, column, COLOURS["W" if tint == fd.XG_ABOVE else "L"])
+        sheet.refresh()
+        self.note_label.configure(text=(
+            f"{cov.describe()} xG and goals here come from the same matches: those with a match report and a "
+            "score. Goals − xG: scored more (+) or fewer (−) than expected. xGA − GA: conceded fewer (+) or more "
+            f"(−) than expected. Green or red where that averages more than {fd.XG_DEAD_ZONE} a match either way. "
+            "Click a team to follow it."))
+
     def _render_competitions(self) -> None:
         """Fill the hub once per save and set of names; after that only the highlighted row moves,
         so picking a competition keeps the hub's scroll position."""
@@ -1055,7 +1272,11 @@ class FMReviewApp(ctk.CTk):
         if name == "Results" and 0 <= row < len(self.result_rows):
             item = self.result_rows[row]
             if item.fixture is not None:
-                self.detail_label.configure(text=fd.describe_fixture(item.fixture, self.labels))
+                text = fd.describe_fixture(item.fixture, self.labels)
+                xg = fd.xg_for(self.dataset, item.fixture)
+                if xg is not None:
+                    text += f" · xG: {fd.xg_scoreline(item.fixture, xg, self.labels)}"
+                self.detail_label.configure(text=text)
         elif name == "Grid" and self.grid_data is not None:
             grid = self.grid_data
             if selected.type_ == "rows" and 0 <= row < len(grid.team_ids):
@@ -1075,6 +1296,9 @@ class FMReviewApp(ctk.CTk):
         elif name == "Table" and 0 <= row < len(self.table_rows) and self.table_rows[row] is not None:
             if self.table_rows[row] != self.focus:
                 self.set_focus(self.table_rows[row])
+        elif name == ANALYSIS and 0 <= row < len(self.analysis_rows) and self.analysis_rows[row] is not None:
+            if self.analysis_rows[row] != self.focus:
+                self.set_focus(self.analysis_rows[row])
         elif name == HUB and self.view == HUB and 0 <= row < len(self.comp_row_ids):
             if self.comp_row_ids[row] != self.comp_id:
                 self.select_competition(self.comp_row_ids[row])
@@ -1106,6 +1330,7 @@ class FMReviewApp(ctk.CTk):
             f"Fixtures:        {ds.fixture_total:,} in {len(ds.competitions)} competitions"
             + (f" ({ds.fixtures_without_competition:,} with no competition, not shown)" if ds.fixtures_without_competition else ""),
             f"Stored tables:   {sum(len(t) for t in ds.stored_tables.values())} live league tables",
+            "Expected goals:  " + (ds.xg_report.describe() if ds.xg_report else "still being read from the save"),
             f"Names file:      {NAMES_PATH} ({len(self.names)} names)",
             "",
             "fmsave only reads the save. It never changes it.",
