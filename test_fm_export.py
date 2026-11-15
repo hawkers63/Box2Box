@@ -27,7 +27,7 @@ WHEN = dt.datetime(2026, 11, 14, 20, 30)
 
 def request(**changes) -> fx.ExportRequest:
     """The Championship-like league from the UI tests: a stored table and 1/1/1 rules."""
-    base = fx.ExportRequest(dataset(), 8, 2026, names={12: "Championship"}, focus=team(1), exported_at=WHEN)
+    base = fx.ExportRequest(dataset(), 101, 2026, names={12: "Championship"}, focus=team(1), exported_at=WHEN)
     return dataclasses.replace(base, **changes)
 
 
@@ -61,7 +61,7 @@ class WorkbookTests(unittest.TestCase):
         self.book = fx.workbook(fx.snapshot(request()))
 
     def test_sheets(self):
-        self.assertEqual(self.book.sheetnames, ["Table", "Grid", "Results", "Sheffield United", "About"])
+        self.assertEqual(self.book.sheetnames, ["Table", "Grid", "Results", "Hull City", "About"])
         self.assertEqual(fx.workbook(fx.snapshot(request(focus=None))).sheetnames,
                          ["Table", "Grid", "Results", "About"])
 
@@ -69,7 +69,7 @@ class WorkbookTests(unittest.TestCase):
         sheet = self.book["Table"]
         top = find_row(sheet, 1, "Pos") + 1
         self.assertEqual([sheet.cell(row=top + i, column=2).value for i in range(4)],
-                         ["Sheffield United", "Derby County", "Leeds United", "Hull City"])   # the stored order
+                         ["Hull City", "Derby County", "Leeds United", "Sheffield United"])   # the stored order
         zones = [sheet.cell(row=top + i, column=1).fill.start_color.rgb for i in range(4)]
         self.assertEqual(zones, [argb(ZONE_COLOURS[fd.ZONE_PROMOTION][0]), argb(ZONE_COLOURS[fd.ZONE_PLAYOFF][0]),
                                  "00000000", argb(ZONE_COLOURS[fd.ZONE_RELEGATION][0])])
@@ -85,11 +85,11 @@ class WorkbookTests(unittest.TestCase):
         sheet = self.book["Grid"]
         top = find_row(sheet, 1, "Home \\ Away")
         column = {sheet.cell(row=top, column=c).value: c for c in range(2, sheet.max_column + 1)}
-        row = find_row(sheet, 1, "Sheffield United")
+        row = find_row(sheet, 1, "Hull City")
         win = sheet.cell(row=row, column=column["Leeds"])
         self.assertEqual(win.value, "2-1")                # kept as text, never turned into a date
         self.assertEqual(win.fill.start_color.rgb, argb(COLOURS[fd.HOME_WIN][0]))
-        unplayed = sheet.cell(row=row, column=column["Hull"])
+        unplayed = sheet.cell(row=row, column=column["Sheff Utd"])
         self.assertEqual((unplayed.value, unplayed.fill.start_color.rgb), ("26 Sep", argb(COLOURS[fd.SCHEDULED][0])))
         self.assertEqual(sheet.cell(row=row, column=1).fill.start_color.rgb, argb(FOCUS[0]))
 
@@ -105,7 +105,7 @@ class WorkbookTests(unittest.TestCase):
         self.assertEqual(scores["v"], argb(COLOURS[fd.SCHEDULED][0]))
 
     def test_followed_team_sheet_has_results_and_running_points(self):
-        sheet = self.book["Sheffield United"]
+        sheet = self.book["Hull City"]
         top = find_row(sheet, 1, "Date") + 1
         played = [(sheet.cell(row=r, column=7).value, sheet.cell(row=r, column=8).value,
                    sheet.cell(row=r, column=7).fill.start_color.rgb)
@@ -114,7 +114,7 @@ class WorkbookTests(unittest.TestCase):
 
     def test_about_sheet_says_where_the_data_came_from(self):
         text = " ".join(str(cell.value) for row in self.book["About"].iter_rows() for cell in row if cell.value)
-        for needle in ("Championship (competition id 8, database id 12)", "6 fixtures · 4 played", "fmsave 0",
+        for needle in ("Championship (competition id 101, database id 12)", "6 fixtures · 4 played", "fmsave 0",
                        "Unverified build", "1 promoted, 1 in the play-offs, 1 relegated", "14 November 2026 at 20:30"):
             self.assertIn(needle, text)
 
@@ -128,11 +128,11 @@ class CsvTests(unittest.TestCase):
         self.assertEqual(header[:8], ["Date", "Kick-off", "Round", "Home", "Away", "Home goals", "Away goals", "Score"])
         self.assertEqual(len(rows), 6)
         by_teams = {(r[3], r[4]): r for r in rows}
-        win = by_teams[("Sheffield United", "Leeds United")]
+        win = by_teams[("Hull City", "Leeds United")]
         self.assertEqual((win[0], win[5], win[6], win[7], win[8]), ("2026-08-08", 2, 1, "2–1", "Played"))
-        missing = by_teams[("Leeds United", "Hull City")]
+        missing = by_teams[("Leeds United", "Sheffield United")]
         self.assertEqual((missing[5], missing[7], missing[8]), ("", "n/a", "Played, score not recovered"))
-        unplayed = by_teams[("Sheffield United", "Hull City")]
+        unplayed = by_teams[("Hull City", "Sheffield United")]
         self.assertEqual((unplayed[7], unplayed[8]), ("", "To play"))
 
     def test_table_names_its_zones(self):

@@ -26,10 +26,10 @@ def dataset() -> fd.Dataset:
         fx(D(2026, 8, 10), 1, 4, 1, 0, comp=60, home_slot=1, away_slot=1),   # youth league
         unresolved_away(fx(D(2026, 8, 9), 2, 3, 1, 0, comp=70, md=1)),       # a team the save can't resolve
     ]
-    stored = NS(competition_id=8, rows=(row(1, 1, 2, 2, 0, 0, 5, 2, 6), row(4, 2), row(2, 3), row(3, 4)))
-    rules = [NS(competition_id=8, promotion_places=1, playoff_places=1, relegation_places=1, rounds=())]
+    stored = NS(competition_id=101, rows=(row(1, 1, 2, 2, 0, 0, 5, 2, 6), row(4, 2), row(2, 3), row(3, 4)))
+    rules = [NS(competition_id=101, promotion_places=1, playoff_places=1, relegation_places=1, rounds=())]
     return fd.build_dataset(info(), fixtures, clubs=[club(1, slots=(0, 1)), club(2), club(3), club(4), club(5)],
-                            competitions=[NS(id=8, database_id=12)], tables=[stored], rules=rules)
+                            competitions=[NS(id=101, database_id=12)], tables=[stored], rules=rules)
 
 
 class WindowTests(unittest.TestCase):
@@ -63,9 +63,9 @@ class WindowTests(unittest.TestCase):
         app = self.app
         app.install_dataset(dataset())
         app.update()
-        self.assertEqual(app.comp_id, 8)                    # managed club's league first
+        self.assertEqual(app.comp_id, 101)                    # managed club's league first
         self.assertEqual(app.season, 2026)
-        self.assertEqual(app.team_box.get(), "Sheffield United")
+        self.assertEqual(app.team_box.get(), "Hull City")
         for view in fm_review.VIEWS:
             app.set_view(view)
             for grouping in fm_review.GROUPINGS:
@@ -78,14 +78,14 @@ class WindowTests(unittest.TestCase):
         app._on_team_typed()
         app.update()
         self.assertEqual(app.team_box.get(), fm_review.ALL_TEAMS)
-        app.team_box.set("hull")
+        app.team_box.set("sheffield")
         app._on_team_typed()
-        self.assertEqual(app.labels[app.focus], "Hull City")
+        self.assertEqual(app.labels[app.focus], "Sheffield United")
         self.assertEqual(list(app.season_by_label), ["2027", "2026"])     # newest first
         app._on_season("2027")
         app.update()
         self.assertEqual(app.season, 2027)
-        self.assertEqual(app.labels[app.focus], "Sheffield United")   # Hull have no 2027 fixture yet
+        self.assertEqual(app.labels[app.focus], "Hull City")   # Sheffield United have no 2027 fixture yet
         for comp in app.dataset.competitions:
             app.select_competition(comp.id)
             for view in fm_review.VIEWS:
@@ -97,7 +97,7 @@ class WindowTests(unittest.TestCase):
         app.install_dataset(dataset())
         app.search_entry.insert(0, "derby")
         app._fill_competition_list()
-        self.assertEqual([c for c in app.list_rows if c is not None], [8, 60])
+        self.assertEqual([c for c in app.list_rows if c is not None], [101, 60])
         app.search_entry.delete(0, "end")
         app.search_entry.insert(0, "wrexham")
         app._fill_competition_list()
@@ -117,7 +117,7 @@ class WindowTests(unittest.TestCase):
         with mock.patch.object(fm_review.ctk, "CTkInputDialog") as dialog:
             dialog.return_value.get_input.return_value = ""      # empty removes the name
             app.rename_competition()
-        self.assertEqual(app.title_label.cget("text"), "Competition 8")
+        self.assertEqual(app.title_label.cget("text"), "Competition 101")
         self.assertEqual(fd.load_competition_names(fm_review.NAMES_PATH), {})
 
     def test_picking_a_competition_in_the_list_leaves_the_hub(self):
@@ -126,7 +126,7 @@ class WindowTests(unittest.TestCase):
         app.set_view("Table")
         app.set_view(fm_review.HUB)        # used to crash on the unresolved team in competition 70
         app.update()
-        self.assertCountEqual(app.comp_row_ids, [8, 60, 131, 70])
+        self.assertCountEqual(app.comp_row_ids, [101, 60, 131, 70])
         self.assertEqual(app.season_menu.cget("state"), "disabled")
         app.comp_list.selection_clear(0, "end")
         app.comp_list.selection_set(app.list_rows.index(70))
@@ -193,7 +193,7 @@ class WindowTests(unittest.TestCase):
             app.export(fm_review.fx.HTML)          # ignored: one export at a time
             self.wait_for_export()
         files = sorted(p.name for p in folder.iterdir())
-        self.assertEqual(files, ["Competition 8 2026 (2026-09-01).xlsx"])
+        self.assertEqual(files, ["Competition 101 2026 (2026-09-01).xlsx"])
         self.assertEqual(offered.call_count, 1)
         self.assertIn("Saved the Excel workbook", app.detail_label.cget("text"))
         self.assertEqual(app.export_button.cget("state"), "normal")
@@ -217,7 +217,7 @@ class WindowTests(unittest.TestCase):
             app.handle_event(("failed", "The save looks damaged."))
         self.assertIs(app.dataset, first)
         self.assertIn("still shown", shown.call_args.args[1])
-        self.assertEqual(app.comp_id, 8)
+        self.assertEqual(app.comp_id, 101)
 
 
 if __name__ == "__main__":

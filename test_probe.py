@@ -11,13 +11,16 @@ from types import SimpleNamespace as NS
 from unittest import mock
 
 import fmsave
-import fm27_probe
+try:
+    import fm27_probe
+except ImportError:
+    fm27_probe = None
 
-names = ["Sheffield United", "Leeds", "Hull", "Derby"]
+names = ["Hull City", "Leeds", "Sheffield United", "Derby"]
 clubs = [NS(uid=i, name=n, short_name=n[:5], teams=(NS(team_id=100 + i, is_affiliate=False),)) for i, n in enumerate(names)]
 
 
-def fx(d, h, a, hg, ag, played=True, comp=7, rnd=0):
+def fx(d, h, a, hg, ag, played=True, comp=102, rnd=0):
     return NS(competition_id=comp, season_start_year=2026, date=d, kick_off_time=dt.time(15, 0), round_index=rnd,
               home_team_id=100 + h, away_team_id=100 + a, home_club_name=names[h], away_club_name=names[a],
               home_club_short_name=names[h][:5], away_club_short_name=names[a][:5],
@@ -32,9 +35,9 @@ fixtures = [
     fx(D(2026, 9, 1), 3, 0, None, None, played=False),
     fx(None, 2, 0, None, None, played=False, comp=None),
 ]
-row = NS(position=1, club_name="Sheffield United", team_id=100, played=3, won=1, drawn=1, lost=0,
+row = NS(position=1, club_name="Hull City", team_id=100, played=3, won=1, drawn=1, lost=0,
          goals_for=3, goals_against=2, points=4)
-stat = NS(competition_id=7, home_team_id=100, away_team_id=101, date=D(2026, 8, 8))
+stat = NS(competition_id=102, home_team_id=100, away_team_id=101, date=D(2026, 8, 8))
 
 
 class FakeSave:
@@ -48,7 +51,7 @@ class FakeSave:
         return False
 
     def managed_clubs(self):
-        return [NS(club_uid=0, club_name="Sheffield United")]
+        return [NS(club_uid=0, club_name="Hull City")]
 
     def clubs(self):
         return clubs
@@ -57,15 +60,16 @@ class FakeSave:
         return fixtures
 
     def competitions(self):
-        return [NS(id=7, name=None)]
+        return [NS(id=102, name=None)]
 
     def league_tables(self):
-        return [NS(competition_id=7, club_count=4, rows=(row,))]
+        return [NS(competition_id=102, club_count=4, rows=(row,))]
 
     def team_match_stats(self):
         raise fmsave.UnsupportedGameError("no report layout")
 
 
+@unittest.skipUnless(fm27_probe is not None, "fm27_probe.py is a private local tool")
 class ProbeSmokeTest(unittest.TestCase):
     def test_probe_output(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -75,7 +79,7 @@ class ProbeSmokeTest(unittest.TestCase):
                     fm27_probe.main()
             text = out_path.read_text(encoding="utf-8")
             for needle in ["Played, result unavailable:   1", "pairings that occur more than once: 1",
-                           "result unavailable", "NO - layouts", "UnknownBuildWarning", "Sheffield United  2-1"]:
+                           "result unavailable", "NO - layouts", "UnknownBuildWarning", "Hull City  2-1"]:
                 self.assertIn(needle, text)
 
 

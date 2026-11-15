@@ -17,9 +17,9 @@ from fmsave import CodedValue, CompetitionRound, Fixture
 import fm_data as fd
 
 CLUBS = {
-    1: ("Sheffield United", "Sheff Utd"),
+    1: ("Hull City", "Hull"),
     2: ("Leeds United", "Leeds"),
-    3: ("Hull City", "Hull"),
+    3: ("Sheffield United", "Sheff Utd"),
     4: ("Derby County", "Derby"),
     5: ("Wrexham", "Wrexham"),
 }
@@ -30,7 +30,7 @@ def team(club, slot=0):
     return club * 100 + slot
 
 
-def fx(day, home, away, hg=None, ag=None, *, played=None, comp=8, season=2026, md=None,
+def fx(day, home, away, hg=None, ag=None, *, played=None, comp=101, season=2026, md=None,
        home_slot=0, away_slot=0, ko=(15, 0), rnd=None):
     """A Fixture between clubs (by number) with the fields fmsave fills in."""
     return Fixture(
@@ -108,9 +108,9 @@ class SeasonTests(unittest.TestCase):
 
     def test_default_season_is_latest_played_else_first_to_come(self):
         ds = fd.build_dataset(info(), LEAGUE + [fx(D(2027, 8, 7), 1, 2, season=2027, md=1)])
-        self.assertEqual(fd.default_season(ds, 8), 2026)
+        self.assertEqual(fd.default_season(ds, 101), 2026)
         unplayed = fd.build_dataset(info(), [fx(D(2026, 8, 8), 1, 2, md=1), fx(D(2027, 8, 7), 1, 2, season=2027, md=1)])
-        self.assertEqual(fd.default_season(unplayed, 8), 2026)
+        self.assertEqual(fd.default_season(unplayed, 101), 2026)
 
 
 class CoverageTests(unittest.TestCase):
@@ -129,16 +129,16 @@ class CoverageTests(unittest.TestCase):
 class LabelTests(unittest.TestCase):
     def test_second_team_of_the_same_club_is_told_apart(self):
         labels = fd.team_labels([fx(D(2026, 7, 1), 1, 1, away_slot=1), fx(D(2026, 7, 2), 2, 1)])
-        self.assertEqual(labels[team(1)], "Sheffield United")
-        self.assertEqual(labels[team(1, 1)], "Sheffield United (team 2)")
+        self.assertEqual(labels[team(1)], "Hull City")
+        self.assertEqual(labels[team(1, 1)], "Hull City (team 2)")
         self.assertEqual(labels[team(2)], "Leeds United")
 
     def test_youth_league_shows_plain_names(self):
         labels = fd.team_labels([fx(D(2026, 8, 1), 1, 2, home_slot=1, away_slot=1)])
-        self.assertEqual(labels[team(1, 1)], "Sheffield United")
+        self.assertEqual(labels[team(1, 1)], "Hull City")
 
     def test_short_labels(self):
-        self.assertEqual(fd.team_labels(LEAGUE, short=True)[team(1)], "Sheff Utd")
+        self.assertEqual(fd.team_labels(LEAGUE, short=True)[team(1)], "Hull")
 
 
 class TimelineTests(unittest.TestCase):
@@ -156,12 +156,12 @@ class TimelineTests(unittest.TestCase):
 
     def test_postponed_match_sits_on_its_date_but_keeps_its_matchday(self):
         by_week = fd.timeline(LEAGUE, self.labels, group_by=fd.GROUP_BY_WEEK)
-        late = [r for r in by_week if r.home == "Sheffield United" and r.away == "Hull City"][0]
+        late = [r for r in by_week if r.home == "Hull City" and r.away == "Sheffield United"][0]
         self.assertEqual((late.date, late.round), ("Sat 26 Sep", "Md 3"))
         by_matchday = fd.timeline(LEAGUE, self.labels, group_by=fd.GROUP_BY_MATCHDAY)
         self.assertEqual(self.headings(by_matchday), ["Matchday 1", "Matchday 2", "Matchday 3"])
         md3 = by_matchday[by_matchday.index(next(r for r in by_matchday if r.heading.startswith("Matchday 3"))) + 1:]
-        self.assertEqual([r.home for r in md3], ["Derby County", "Sheffield United"])
+        self.assertEqual([r.home for r in md3], ["Derby County", "Hull City"])
 
     def test_focus_team_gets_results_and_running_points(self):
         rows = [r for r in fd.timeline(LEAGUE, self.labels, focus_team=team(1)) if not r.is_heading]
@@ -207,38 +207,38 @@ class GridTests(unittest.TestCase):
 class TableTests(unittest.TestCase):
     def test_calculated_table_ignores_matches_without_a_score(self):
         ds = fd.build_dataset(info(), LEAGUE)
-        result = fd.standings(ds, 8, 2026, fd.season_fixtures(ds, 8, 2026), fd.team_labels(LEAGUE))
+        result = fd.standings(ds, 101, 2026, fd.season_fixtures(ds, 101, 2026), fd.team_labels(LEAGUE))
         self.assertFalse(result.stored)
         self.assertIn("incomplete", result.note)
         rows = {r.team: r for r in result.groups[0][1]}
-        self.assertEqual(rows["Sheffield United"].position, 1)
-        self.assertEqual((rows["Sheffield United"].played, rows["Sheffield United"].points), (2, 6))
-        self.assertEqual(rows["Sheffield United"].form, "WW")
+        self.assertEqual(rows["Hull City"].position, 1)
+        self.assertEqual((rows["Hull City"].played, rows["Hull City"].points), (2, 6))
+        self.assertEqual(rows["Hull City"].form, "WW")
         self.assertEqual(rows["Leeds United"].played, 1)       # the unscored match is left out
-        self.assertEqual(rows["Hull City"].form, "D")
+        self.assertEqual(rows["Sheffield United"].form, "D")
 
     def test_competition_with_nothing_played_lists_every_team_on_zero(self):
         fixtures = [fx(D(2026, 8, 8), 1, 2, md=1), fx(D(2026, 8, 8), 3, 4, md=1), fx(D(2026, 8, 15), 5, 1, md=2)]
         ds = fd.build_dataset(info(), fixtures)
-        result = fd.standings(ds, 8, 2026, fixtures, fd.team_labels(fixtures))
+        result = fd.standings(ds, 101, 2026, fixtures, fd.team_labels(fixtures))
         self.assertEqual(len(result.groups[0][1]), 5)
         self.assertTrue(all(r.played == 0 and r.points == 0 for r in result.groups[0][1]))
 
     def test_stored_table_is_used_for_the_latest_played_season_only(self):
-        stored = NS(competition_id=8, rows=(row(1, 1, 2, 2, 0, 0, 5, 2, 9), row(4, 2), row(2, 3), row(3, 4)))
+        stored = NS(competition_id=101, rows=(row(1, 1, 2, 2, 0, 0, 5, 2, 9), row(4, 2), row(2, 3), row(3, 4)))
         ds = fd.build_dataset(info(), LEAGUE + [fx(D(2027, 8, 7), 1, 2, season=2027, md=1)], tables=[stored])
         labels = fd.team_labels(LEAGUE)
-        current = fd.standings(ds, 8, 2026, fd.season_fixtures(ds, 8, 2026), labels)
+        current = fd.standings(ds, 101, 2026, fd.season_fixtures(ds, 101, 2026), labels)
         self.assertTrue(current.stored)
         self.assertEqual(current.groups[0][1][0].points, 9)     # the game's number, deductions and all
         self.assertEqual(current.groups[0][1][0].form, "WW")
-        next_season = fd.standings(ds, 8, 2027, fd.season_fixtures(ds, 8, 2027), labels)
+        next_season = fd.standings(ds, 101, 2027, fd.season_fixtures(ds, 101, 2027), labels)
         self.assertFalse(next_season.stored)
 
     def test_stored_table_with_unknown_clubs_is_not_trusted(self):
-        stored = NS(competition_id=8, rows=(row(1, 1), row(5, 2)))   # Wrexham is not in this league
+        stored = NS(competition_id=101, rows=(row(1, 1), row(5, 2)))   # Wrexham is not in this league
         ds = fd.build_dataset(info(), LEAGUE, tables=[stored])
-        self.assertFalse(fd.standings(ds, 8, 2026, fd.season_fixtures(ds, 8, 2026), {}).stored)
+        self.assertFalse(fd.standings(ds, 101, 2026, fd.season_fixtures(ds, 101, 2026), {}).stored)
 
     def test_zone_for_position(self):
         self.assertEqual(fd.zone_for_position(1, 20), fd.ZONE_UCL)
@@ -256,23 +256,23 @@ class TableTests(unittest.TestCase):
     def test_split_standings(self):
         ds = fd.build_dataset(info(), LEAGUE)
         labels = fd.team_labels(LEAGUE)
-        fxs = fd.season_fixtures(ds, 8, 2026)
+        fxs = fd.season_fixtures(ds, 101, 2026)
 
-        home = fd.standings(ds, 8, 2026, fxs, labels, split=fd.SPLIT_HOME)
+        home = fd.standings(ds, 101, 2026, fxs, labels, split=fd.SPLIT_HOME)
         self.assertEqual(home.note, "Home matches only. 3 points for a win, 1 for a draw.")
         home_rows = {r.team: r for r in home.groups[0][1]}
-        self.assertEqual(home_rows["Sheffield United"].played, 1)
-        self.assertEqual(home_rows["Sheffield United"].won, 1)
+        self.assertEqual(home_rows["Hull City"].played, 1)
+        self.assertEqual(home_rows["Hull City"].won, 1)
         self.assertEqual(home_rows["Leeds United"].played, 0)
 
-        away = fd.standings(ds, 8, 2026, fxs, labels, split=fd.SPLIT_AWAY)
+        away = fd.standings(ds, 101, 2026, fxs, labels, split=fd.SPLIT_AWAY)
         self.assertEqual(away.note, "Away matches only. 3 points for a win, 1 for a draw.")
         away_rows = {r.team: r for r in away.groups[0][1]}
-        self.assertEqual(away_rows["Sheffield United"].played, 1)
-        self.assertEqual(away_rows["Sheffield United"].won, 1)
+        self.assertEqual(away_rows["Hull City"].played, 1)
+        self.assertEqual(away_rows["Hull City"].won, 1)
         self.assertEqual(away_rows["Leeds United"].played, 1)
 
-        form = fd.standings(ds, 8, 2026, fxs, labels, split=fd.SPLIT_FORM)
+        form = fd.standings(ds, 101, 2026, fxs, labels, split=fd.SPLIT_FORM)
         self.assertIn("Form guide", form.note)
         self.assertEqual(len(form.groups[0][1]), 4)
 
@@ -300,16 +300,16 @@ class ZoneTests(unittest.TestCase):
         self.assertEqual({fd.zone_for_position(p, 4, self.CHAMPIONSHIP) for p in range(1, 5)}, {fd.ZONE_NONE})
 
     def test_unlinked_rules_are_matched_to_their_league_by_calendar(self):
-        fixtures = league_season(8, D(2026, 8, 8)) + league_season(9, D(2026, 8, 9))
+        fixtures = league_season(101, D(2026, 8, 8)) + league_season(9, D(2026, 8, 9))
         rules = [rules_block(2, 6, 3, first_day=D(2026, 8, 8)), rules_block(2, 4, 4, first_day=D(2026, 8, 9))]
         ds = fd.build_dataset(info(), fixtures, rules=rules)
-        self.assertEqual(ds.zone_rules[8], fd.ZoneRules(2, 6, 3, matched_by_calendar=True))
+        self.assertEqual(ds.zone_rules[101], fd.ZoneRules(2, 6, 3, matched_by_calendar=True))
         self.assertEqual(ds.zone_rules[9], fd.ZoneRules(2, 4, 4, matched_by_calendar=True))
 
     def test_numbered_rounds_match_their_matchday(self):
-        ds = fd.build_dataset(info(), league_season(8, D(2026, 8, 8)),
+        ds = fd.build_dataset(info(), league_season(101, D(2026, 8, 8)),
                               rules=[rules_block(2, 6, 3, first_day=D(2026, 8, 8), numbered=True)])
-        self.assertEqual(ds.zone_rules[8].playoff, 6)
+        self.assertEqual(ds.zone_rules[101].playoff, 6)
 
     def test_leagues_sharing_a_calendar_get_rules_only_when_their_blocks_agree(self):
         same_day = D(2026, 8, 8)
@@ -322,28 +322,28 @@ class ZoneTests(unittest.TestCase):
         self.assertEqual(agree.zone_rules[9], agree.zone_rules[10])
 
     def test_fmsave_link_wins_and_short_or_unmatched_calendars_are_ignored(self):
-        fixtures = (league_season(8, D(2026, 8, 8)) + league_season(50, D(2026, 8, 8), matchdays=3)
+        fixtures = (league_season(101, D(2026, 8, 8)) + league_season(50, D(2026, 8, 8), matchdays=3)
                     + league_season(60, D(2026, 8, 10)))
         rules = [
-            rules_block(2, 6, 3, comp=8),                                   # linked by fmsave
-            rules_block(1, 0, 1, first_day=D(2026, 8, 8)),                  # fits 8 too: ignored
+            rules_block(2, 6, 3, comp=101),                                   # linked by fmsave
+            rules_block(1, 0, 1, first_day=D(2026, 8, 8)),                  # fits 101 too: ignored
             rules_block(1, 0, 0, first_day=D(2026, 8, 8), rounds=3),        # too short to trust
             rules_block(4, 0, 0, first_day=D(2027, 1, 2)),                  # no calendar fits
             rules_block(None, 2, 2, comp=60),                               # unreadable places
         ]
         ds = fd.build_dataset(info(), fixtures, rules=rules)
-        self.assertEqual(ds.zone_rules, {8: fd.ZoneRules(2, 6, 3)})
+        self.assertEqual(ds.zone_rules, {101: fd.ZoneRules(2, 6, 3)})
 
     def test_standings_mark_zones_on_the_overall_table_only(self):
-        rules = [NS(competition_id=8, promotion_places=1, playoff_places=1, relegation_places=1, rounds=())]
+        rules = [NS(competition_id=101, promotion_places=1, playoff_places=1, relegation_places=1, rounds=())]
         ds = fd.build_dataset(info(), LEAGUE, rules=rules)
-        fxs, labels = fd.season_fixtures(ds, 8, 2026), fd.team_labels(LEAGUE)
-        overall = fd.standings(ds, 8, 2026, fxs, labels)
+        fxs, labels = fd.season_fixtures(ds, 101, 2026), fd.team_labels(LEAGUE)
+        overall = fd.standings(ds, 101, 2026, fxs, labels)
         self.assertEqual([r.zone for r in overall.groups[0][1]],
                          [fd.ZONE_PROMOTION, fd.ZONE_PLAYOFF, fd.ZONE_NONE, fd.ZONE_RELEGATION])
         self.assertIn("game's rules", overall.zones_note)
         self.assertIn("1 in the play-offs", overall.zones_note)
-        home = fd.standings(ds, 8, 2026, fxs, labels, split=fd.SPLIT_HOME)
+        home = fd.standings(ds, 101, 2026, fxs, labels, split=fd.SPLIT_HOME)
         self.assertEqual({r.zone for r in home.groups[0][1]}, {fd.ZONE_NONE})
         self.assertEqual(home.zones_note, "")
 
@@ -352,7 +352,7 @@ class ZoneTests(unittest.TestCase):
         fixtures = [dataclasses.replace(fx(D(2026, 8, 8), 1, 2, md=1), home_team_id=1000 + 2 * i,
                                         away_team_id=1001 + 2 * i) for i in range(10)]
         ds = fd.build_dataset(info(), fixtures)
-        result = fd.standings(ds, 8, 2026, fd.season_fixtures(ds, 8, 2026), fd.team_labels(fixtures))
+        result = fd.standings(ds, 101, 2026, fd.season_fixtures(ds, 101, 2026), fd.team_labels(fixtures))
         self.assertEqual(len(result.groups[0][1]), 20)
         self.assertIn("estimated", result.zones_note)
 
@@ -364,27 +364,27 @@ class DatasetTests(unittest.TestCase):
             fx(D(2026, 8, 10), 1, 4, 0, 0, comp=60, home_slot=1, away_slot=1),  # our youth side
         ]
         ds = fd.build_dataset(info(), fixtures, clubs=[club(1, slots=(0, 1)), club(2, 9000), club(3), club(4)])
-        self.assertEqual([c.id for c in ds.competitions], [8, 60, 50])
-        self.assertTrue(ds.by_id[8].managed_first_team)
+        self.assertEqual([c.id for c in ds.competitions], [101, 60, 50])
+        self.assertTrue(ds.by_id[101].managed_first_team)
         self.assertFalse(ds.by_id[60].managed_first_team)
         self.assertEqual(ds.first_team_id, team(1))
-        self.assertEqual(ds.by_id[50].top_clubs, ("Leeds", "Hull"))
+        self.assertEqual(ds.by_id[50].top_clubs, ("Leeds", "Sheff Utd"))
 
     def test_managed_teams_fall_back_to_fixtures_without_a_club_table(self):
         ds = fd.build_dataset(info(), LEAGUE)
         self.assertEqual(ds.first_team_id, team(1))
-        self.assertTrue(ds.by_id[8].is_yours)
+        self.assertTrue(ds.by_id[101].is_yours)
 
     def test_search_finds_clubs_and_given_names(self):
-        ds = fd.build_dataset(info(), LEAGUE, competitions=[NS(id=8, database_id=777)])
-        comp = ds.by_id[8]
+        ds = fd.build_dataset(info(), LEAGUE, competitions=[NS(id=101, database_id=777)])
+        comp = ds.by_id[101]
         self.assertTrue(fd.matches_search(comp, {}, "derby"))
         self.assertFalse(fd.matches_search(comp, {}, "championship"))
         self.assertTrue(fd.matches_search(comp, {777: "Championship"}, "champ"))
-        self.assertEqual(fd.competition_list_label(comp, {}), "[8] Derby, Hull, Leeds")
+        self.assertEqual(fd.competition_list_label(comp, {}), "[101] Derby, Hull, Leeds")
 
     def test_competitions_summary_and_categories(self):
-        ds = fd.build_dataset(info(), LEAGUE, competitions=[NS(id=8, database_id=777)])
+        ds = fd.build_dataset(info(), LEAGUE, competitions=[NS(id=101, database_id=777)])
         summaries = fd.competitions_summary(ds, {777: "Championship"})
         self.assertEqual(len(summaries), 1)
         self.assertEqual(summaries[0].name, "Championship")
