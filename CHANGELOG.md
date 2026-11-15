@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Screenshot of the main window (no save open) in the README.
+
 ### Changed
 
 - The test suite no longer reflects a private save.

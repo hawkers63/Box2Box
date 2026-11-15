@@ -21,8 +21,6 @@ Saves are read with [fmsave](https://rhiever.github.io/fmsave/) and are never mo
 
 ---
 
-<!-- Screenshots will be added under docs/screenshots/ when real captures from a Windows session are available. No placeholder images are included. -->
-
 ## Key features
 
 - **Competitions hub.** Browse every competition in the save, classified into *Your Club*, *League*, *Cup*, *Youth / Reserves* and *Friendlies*. The hub shows entrants, fixture volume, matches played and season progress. Click a row to select that competition; double-click it, or pick it in the list on the left, to open it in the view you last used.
@@ -31,6 +29,14 @@ Saves are read with [fmsave](https://rhiever.github.io/fmsave/) and are never mo
 - **Weekly results.** Every match in chronological order, grouped by calendar week (Monday start), matchday or date. Pick a club to view their campaign with W/D/L indicators and running points.
 - **Coverage.** Transparent counts of played matches, matches still to play, and played matches with unrecovered scorelines ("n/a").
 - **Competition names.** Saves do not store competition names, so a competition first appears by its id and best-known clubs, for example `[8] West Ham, Wolves, Burnley`. Use **Name this competition…** to name it. Names go in `competition_names.csv` (`database_id,name`), keyed on the game's database id, so they apply to every save and can be edited in Excel. fmsave reads the same format.
+
+## Glimpse
+
+A screenshot of the main window, captured on Windows with no save open.
+
+<div align="center">
+  <img src="docs/screenshots/main-window.png" alt="Box2Box main window" width="80%">
+</div>
 
 ## Quick start
 
