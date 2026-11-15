@@ -17,6 +17,7 @@ import ctypes
 import json
 import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -25,13 +26,14 @@ import traceback
 from pathlib import Path
 from tkinter import filedialog, messagebox
 from tkinter import font as tkfont
+from typing import NamedTuple
 
 import customtkinter as ctk
 from tksheet import Sheet
 
 import fm_data as fd
 import fm_export as fx
-from palette import COLOURS, FOCUS, HEADING, ZONE_COLOURS, zone_legend
+from palette import COLOURS, DRAW_BG, FOCUS, HEADING, LOSS_BG, WIN_BG, ZONE_COLOURS, zone_legend
 
 APP_TITLE = "Box2Box"
 VERSION = "1.0"
@@ -40,6 +42,11 @@ NAMES_PATH = APP_DIR / "competition_names.csv"
 SETTINGS_PATH = APP_DIR / "box2box_settings.json"
 LEGACY_SETTINGS_PATH = APP_DIR / "fm_review_settings.json"
 ERROR_LOG = APP_DIR / "box2box_errors.log"
+LICENCE_PATH = APP_DIR / "LICENSE"
+
+# Word for word the first line of LICENSE.
+COPYRIGHT = "Copyright (c) 2026 onwards Mark Hawksworth (hawkers63). All rights reserved."
+REPOSITORY = "https://github.com/hawkers63/Box2Box"
 
 ALL_TEAMS = "All teams"
 EXPORT_LABEL = "Export ▾"
@@ -84,6 +91,105 @@ def default_save_folder() -> Path:
     return documents
 
 
+# ----------------------------------------------------------------- About
+
+class AboutText(NamedTuple):
+    """What the About window says, from the top down."""
+
+    name: str
+    version: str
+    summary: str
+    copyright: str
+    notice: str
+
+
+def about_text() -> AboutText:
+    return AboutText(
+        name=APP_TITLE,
+        version=f"Version {VERSION}",
+        summary="A Windows desktop viewer for the fixtures, results, grids and league tables in a Football "
+                "Manager 27 (or 26) save. Saves are read with fmsave and are never modified.",
+        copyright=COPYRIGHT,
+        notice=f"{APP_TITLE} is proprietary software. Copying, distribution, modification, reverse engineering, "
+               "sublicencing and commercial exploitation are prohibited without prior written consent. "
+               "See LICENSE, below, for the full terms.",
+    )
+
+
+def licence_text(path: Path) -> str:
+    """The licence's terms with each paragraph on one line, so that a text box can wrap them to its
+    own width; or, if the file cannot be read, where else the terms can be found."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, ValueError) as exc:            # missing, locked, or not text
+        problem = "was not found" if isinstance(exc, FileNotFoundError) else "could not be read"
+        return f"The LICENSE file {problem} in {path.parent}. The full terms are published at {REPOSITORY}."
+    return "\n\n".join(" ".join(p.split()) for p in re.split(r"\n\s*\n", text) if p.strip())
+
+
+class AboutWindow(ctk.CTkToplevel):
+    """The name, version, copyright and licence: a band in the palette's heading colours over a
+    stripe of the win, draw and loss colours."""
+
+    WIDTH, HEIGHT = 600, 600
+    PAD = 28
+
+    def __init__(self, master: ctk.CTk) -> None:
+        super().__init__(master)
+        text = about_text()
+        self.title(f"About {APP_TITLE}")
+        self.transient(master)
+
+        band = ctk.CTkFrame(self, fg_color=HEADING[0], corner_radius=0)
+        band.pack(fill="x")
+        ctk.CTkLabel(band, text=text.name, text_color=HEADING[1], font=ctk.CTkFont(FONT, 28, "bold"),
+                     anchor="w").pack(fill="x", padx=self.PAD, pady=(18, 0))
+        ctk.CTkLabel(band, text=text.version, text_color="gray75", font=ctk.CTkFont(FONT, 13),
+                     anchor="w").pack(fill="x", padx=self.PAD, pady=(0, 16))
+        stripe = ctk.CTkFrame(self, fg_color="transparent", corner_radius=0, height=6)
+        stripe.pack(fill="x")
+        for colour in (WIN_BG, DRAW_BG, LOSS_BG):
+            ctk.CTkFrame(stripe, fg_color=colour, corner_radius=0, width=1, height=6).pack(
+                side="left", fill="x", expand=True)
+
+        # Packed before the body so that a short screen squeezes the licence box, not the button.
+        self.close_button = ctk.CTkButton(self, text="Close", width=100, command=self.destroy)
+        self.close_button.pack(side="bottom", anchor="e", padx=self.PAD, pady=16)
+
+        body = ctk.CTkFrame(self, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=self.PAD, pady=(18, 0))
+        for line, size, weight, colour in ((text.summary, 13, "normal", "gray80"),
+                                            (text.copyright, 13, "bold", "#ffffff"),
+                                            (text.notice, 12, "normal", "gray70")):
+            ctk.CTkLabel(body, text=line, text_color=colour, font=ctk.CTkFont(FONT, size, weight),
+                         wraplength=self.WIDTH - 2 * self.PAD, justify="left", anchor="w").pack(
+                fill="x", pady=(0, 12))
+        ctk.CTkLabel(body, text="LICENSE", text_color=HEADING[1], font=ctk.CTkFont(FONT, 11, "bold"),
+                     anchor="w").pack(fill="x")
+        self.licence_box = ctk.CTkTextbox(body, wrap="word", height=120, fg_color=TABLE_BG,
+                                          font=ctk.CTkFont(FONT, 12))
+        self.licence_box.pack(fill="both", expand=True, pady=(4, 0))
+        self.licence_box.insert("1.0", licence_text(LICENCE_PATH))
+        self.licence_box.configure(state="disabled")
+
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self._place_over(master)
+        self.after(100, self.bring_forward)
+
+    def _place_over(self, master: tk.Misc) -> None:
+        """Centre the window over the main one, no taller than most of the screen."""
+        scale = ctk.ScalingTracker.get_window_scaling(self)
+        height = min(self.HEIGHT, int(self.winfo_screenheight() / scale * 0.85))
+        x = master.winfo_rootx() + (master.winfo_width() - round(self.WIDTH * scale)) // 2
+        y = max(0, master.winfo_rooty() + (master.winfo_height() - round(height * scale)) // 2)
+        self.geometry(f"{self.WIDTH}x{height}+{x}+{y}")
+        self.minsize(self.WIDTH, height)
+
+    def bring_forward(self) -> None:
+        self.lift()
+        self.focus_force()
+
+
 class FMReviewApp(ctk.CTk):
     """The main window: competitions on the left, the selected season's views on the right."""
 
@@ -97,6 +203,7 @@ class FMReviewApp(ctk.CTk):
         self.loading_since: float | None = None
         self.loading_step = ""
         self._exporting = False
+        self.about_window: AboutWindow | None = None
 
         self.comp_id: int | None = None
         self.season: int | None = None
@@ -160,6 +267,9 @@ class FMReviewApp(ctk.CTk):
         self.progress = ctk.CTkProgressBar(top, mode="indeterminate", width=180)
         self.progress.grid(row=0, column=4, padx=14)
         self.progress.grid_remove()
+        self.about_button = ctk.CTkButton(top, text="About", width=80, fg_color="gray30", hover_color="gray35",
+                                          command=self.show_about)
+        self.about_button.grid(row=0, column=5, padx=(0, 14), pady=12)
 
         side = ctk.CTkFrame(self, width=340, corner_radius=0)
         side.grid(row=1, column=0, sticky="nsw")
@@ -269,6 +379,7 @@ class FMReviewApp(ctk.CTk):
 
         self._set_controls_state("disabled")
         self._show_welcome()
+        self._refresh_status()
 
     def _make_sheet(self, parent, **options) -> Sheet:
         with_index = options.get("show_row_index", True)
@@ -391,7 +502,7 @@ class FMReviewApp(ctk.CTk):
 
     def _refresh_status(self) -> None:
         if not self.dataset:
-            self.status_label.configure(text="")
+            self.status_label.configure(text=f"{APP_TITLE} {VERSION}  ·  {COPYRIGHT}")
             return
         ds, info = self.dataset, self.dataset.info
         count = len(info.warnings)
@@ -968,7 +1079,7 @@ class FMReviewApp(ctk.CTk):
             if self.comp_row_ids[row] != self.comp_id:
                 self.select_competition(self.comp_row_ids[row])
 
-    # ----------------------------------------------------------------- details window
+    # ----------------------------------------------------------------- details and About windows
 
     def show_details(self) -> None:
         if not self.dataset:
@@ -1011,6 +1122,13 @@ class FMReviewApp(ctk.CTk):
         box.insert("1.0", "\n".join(lines))
         box.configure(state="disabled")
         window.after(100, window.lift)
+
+    def show_about(self) -> None:
+        """Open the About window, or bring it forward if it is already open."""
+        if self.about_window is not None and self.about_window.winfo_exists():
+            self.about_window.bring_forward()
+            return
+        self.about_window = AboutWindow(self)
 
     # ----------------------------------------------------------------- files
 

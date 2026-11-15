@@ -1,6 +1,6 @@
 # Copyright (c) 2026 onwards Mark Hawksworth (hawkers63). All rights reserved.
 # Not to be copied or altered without express permission. See LICENSE.
-"""Smoke test for the FM Review window with a small made-up dataset.
+"""Smoke test for the Box2Box window with a small made-up dataset, and its About screen.
 
 Run:  .venv\\Scripts\\python -m unittest -v
 """
@@ -17,6 +17,19 @@ import customtkinter as ctk
 import fm_data as fd
 import fm_review
 from test_fm_data import LEAGUE, D, club, fx, info, row, team, unresolved_away
+
+# The first line of LICENSE, word for word.
+COPYRIGHT = "Copyright (c) 2026 onwards Mark Hawksworth (hawkers63). All rights reserved."
+
+
+def texts_in(widget) -> list[str]:
+    """The text of every label in a window, in the order they were built."""
+    found = []
+    for child in widget.winfo_children():
+        if isinstance(child, ctk.CTkLabel):
+            found.append(child.cget("text"))
+        found += texts_in(child)
+    return found
 
 
 def dataset() -> fd.Dataset:
@@ -218,6 +231,61 @@ class WindowTests(unittest.TestCase):
         self.assertIs(app.dataset, first)
         self.assertIn("still shown", shown.call_args.args[1])
         self.assertEqual(app.comp_id, 101)
+
+    def test_about_opens_from_its_button_before_any_save(self):
+        app = self.app
+        self.assertEqual(app.about_button.cget("state"), "normal")      # no save is open yet
+        app.about_button.invoke()
+        app.update()
+        about = app.about_window
+        self.assertEqual(about.title(), "About Box2Box")
+        shown = texts_in(about)
+        self.assertIn(f"Version {fm_review.VERSION}", shown)
+        self.assertIn(COPYRIGHT, shown)
+        self.assertIn("Permission is hereby refused", about.licence_box.get("1.0", "end"))   # LICENSE's terms
+        app.about_button.invoke()                  # a second click brings the same window forward
+        self.assertIs(app.about_window, about)
+        about.close_button.invoke()
+        app.update()
+        self.assertFalse(about.winfo_exists())
+        app.about_button.invoke()                  # and once closed, it opens again
+        app.update()
+        self.assertIsNot(app.about_window, about)
+        self.assertTrue(app.about_window.winfo_exists())
+
+    def test_status_bar_shows_the_copyright_until_a_save_is_open(self):
+        self.assertIn(COPYRIGHT, self.app.status_label.cget("text"))
+
+
+class AboutTextTests(unittest.TestCase):
+    """The About screen's wording, checked without opening a window."""
+
+    def test_about_shows_the_current_version(self):
+        with mock.patch.object(fm_review, "VERSION", "9.8"):
+            text = "\n".join(fm_review.about_text())
+        self.assertIn("Version 9.8", text)
+
+    def test_about_shows_the_copyright_line_of_the_licence(self):
+        self.assertIn(COPYRIGHT, fm_review.about_text())
+        licence = Path(fm_review.__file__).with_name("LICENSE").read_text(encoding="utf-8")
+        self.assertEqual(licence.splitlines()[0], COPYRIGHT)        # the same wording as the licence
+
+    def test_about_notice_points_to_the_licence(self):
+        notice = fm_review.about_text().notice
+        self.assertIn("proprietary", notice)
+        self.assertIn("LICENSE", notice)
+
+    def test_licence_terms_are_read_with_each_paragraph_on_one_line(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "LICENSE"
+            path.write_text("The first paragraph,\nwrapped by hand.\n\nThe second.\n", encoding="utf-8")
+            self.assertEqual(fm_review.licence_text(path), "The first paragraph, wrapped by hand.\n\nThe second.")
+
+    def test_a_missing_licence_says_where_the_terms_are(self):
+        with tempfile.TemporaryDirectory() as folder:
+            text = fm_review.licence_text(Path(folder) / "LICENSE")
+        self.assertIn("not found", text)
+        self.assertIn("https://github.com/hawkers63/Box2Box", text)
 
 
 if __name__ == "__main__":
