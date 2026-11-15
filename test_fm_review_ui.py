@@ -221,6 +221,16 @@ class WindowTests(unittest.TestCase):
         self.assertEqual((app.view, app.comp_id, app.view_switch.get()), ("Table", 70, "Table"))
         self.assertEqual(app.season_menu.cget("state"), "normal")
 
+    def test_the_team_box_keeps_up_with_a_competition_picked_in_the_hub(self):
+        app = self.app
+        app.install_dataset(dataset())
+        self.assertEqual(app.team_box.get(), "Hull City")
+        app.set_view(fm_review.HUB)          # the team box is disabled here, and ignored set() calls
+        app.select_competition(70)           # Hull do not play in it, so nobody is followed
+        app.set_view("Results")
+        self.assertIsNone(app.focus)
+        self.assertEqual(app.team_box.get(), fm_review.ALL_TEAMS)
+
     def test_hub_click_selects_in_place_and_double_click_opens(self):
         app = self.app
         app.install_dataset(dataset())

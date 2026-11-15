@@ -656,7 +656,7 @@ class FMReviewApp(ctk.CTk):
         if not (keep_focus and self.focus in self.labels):
             mine = [t for t in ds.managed_team_ids if t in self.labels]
             self.focus = ds.first_team_id if ds.first_team_id in self.labels else (mine[0] if mine else None)
-        self.team_box.set(self.labels[self.focus] if self.focus is not None else ALL_TEAMS)
+        self._show_followed_team()
         self._update_header()
         self.render()
 
@@ -720,12 +720,22 @@ class FMReviewApp(ctk.CTk):
             self.detail_label.configure(
                 text=f"No team in this season matches “{text}”." if not found else
                 f"{len(found)} teams match “{text}”: type more of the name.")
-            self.team_box.set(self.labels[self.focus] if self.focus is not None else ALL_TEAMS)
+            self._show_followed_team()
 
     def set_focus(self, team_id: int | None) -> None:
         self.focus = team_id if team_id in self.labels else None
-        self.team_box.set(self.labels[self.focus] if self.focus is not None else ALL_TEAMS)
+        self._show_followed_team()
         self.render()
+
+    def _show_followed_team(self) -> None:
+        """Put the followed team's name in the team box. The box ignores set() while it is disabled,
+        as it is in the hub, so it is enabled for the moment that takes."""
+        disabled = self.team_box.cget("state") == "disabled"
+        if disabled:
+            self.team_box.configure(state="normal")
+        self.team_box.set(self.labels[self.focus] if self.focus is not None else ALL_TEAMS)
+        if disabled:
+            self.team_box.configure(state="disabled")
 
     def set_view(self, view: str) -> None:
         self.view = view

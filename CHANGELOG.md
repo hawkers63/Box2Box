@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A save opens as soon as it has been read; its expected goals follow about 12 seconds later while you browse.
 - Tables worked out from the results separate teams level on points as the competition's own rules list them, where results can settle it (wins first in MLS and Brazil), and say which order they used.
 
+### Fixed
+
+- The Team box now shows the right team after a competition is picked in the Competitions hub; it used to keep the previous competition's team.
+
 ## [1.1] - 2026-11-15
 
 Adds an About screen that states who owns Box2Box and on what terms it may be used.
