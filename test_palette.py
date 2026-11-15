@@ -97,6 +97,15 @@ class TintTests(unittest.TestCase):
         self.assertIsNone(palette.club_tint(palette.MIDNIGHT_EMERALD, None))
         self.assertIs(palette.with_club(palette.MIDNIGHT_EMERALD, None), palette.MIDNIGHT_EMERALD)
 
+    def test_ink_on_white_picks_the_pair_colour_that_reads_on_a_white_sheet(self):
+        self.assertEqual(palette.ink_on_white(palette.FOCUS), "#1e40af")                  # today's blue, unchanged
+        self.assertEqual(palette.ink_on_white(palette.HIGH_CONTRAST.focus), "#000000")    # white on black: its text
+        self.assertEqual(palette.ink_on_white(("#ffffff", "#ffffff")), "#000000")         # neither reads: black
+        me = palette.MIDNIGHT_EMERALD
+        for colours in (self.RED, ("#ffffff", "#1d428a"), ("#f5a12d", "#000000"), ("#000000", "#ffffff")):
+            tinted = palette.club_tint(me, colours)
+            self.assertGreaterEqual(palette.contrast_ratio(palette.ink_on_white(tinted.focus), "#ffffff"), 4.5)
+
     def test_blend_and_readable_text(self):
         self.assertEqual(palette.blend("#000000", "#ffffff", 0), "#000000")
         self.assertEqual(palette.blend("#000000", "#ffffff", 1), "#ffffff")

@@ -18,6 +18,7 @@ import openpyxl
 
 import fm_data as fd
 import fm_export as fx
+import palette
 from palette import COLOURS, FOCUS, ZONE_COLOURS
 from test_fm_data import D, fx as fixture, info, team
 from test_fm_review_ui import dataset
@@ -177,6 +178,67 @@ class WebPageTests(unittest.TestCase):
 
     def test_no_followed_team_means_no_team_section(self):
         self.assertNotIn('id="team"', fx.web_page(fx.snapshot(request(focus=None))))
+
+
+class ThemedExportTests(unittest.TestCase):
+    """Exports wear the theme the window had when they were made, club colours included."""
+
+    def test_the_workbook_takes_the_theme(self):
+        hc = palette.HIGH_CONTRAST
+        sheet = fx.workbook(fx.snapshot(request(theme=hc)))["Table"]
+        top = find_row(sheet, 1, "Pos") + 1
+        self.assertEqual(sheet.cell(row=top, column=1).fill.start_color.rgb, argb("#34d399"))   # promotion, a step lighter
+        self.assertEqual(sheet.cell(row=top, column=2).fill.start_color.rgb, argb("#ffffff"))   # the followed team
+        results = fx.workbook(fx.snapshot(request(theme=hc)))["Hull City"]
+        wins = [c.fill.start_color.rgb for row in results.iter_rows(min_col=7, max_col=7) for c in row
+                if c.value == "W"]                                  # the Res column of the followed team's sheet
+        self.assertEqual(wins, [argb("#34d399")] * 2)
+
+    def test_the_followed_teams_name_stays_readable_on_a_white_sheet(self):
+        # High-Contrast's focus colour is white, so its name must not be written in white on white.
+        sheet = fx.workbook(fx.snapshot(request(theme=palette.HIGH_CONTRAST)))["Results"]
+        names = [c for row in sheet.iter_rows(min_col=3, max_col=3) for c in row if c.value == "Hull City"]
+        self.assertTrue(names)
+        for cell in names:
+            ink = "#" + cell.font.color.rgb[2:]
+            self.assertGreaterEqual(palette.contrast_ratio(ink, "#ffffff"), 4.5)
+
+    def test_the_web_page_writes_the_theme_as_css_variables(self):
+        cp = palette.CYBER_PITCH
+        page = fx.web_page(fx.snapshot(request(theme=cp)))
+        self.assertIn(f"--bg: {cp.table[0]};", page)
+        self.assertIn(f".k-W {{ background: {cp.colours['W'][0]};", page)
+        self.assertIn("--link: #22d3ee;", page)
+
+    def test_the_default_theme_page_keeps_todays_colours(self):
+        page = fx.web_page(fx.snapshot(request()))
+        for value in ("--bg: #1b1b1b;", "--text: #e3e3e3;", "--muted: #a3a3a3;", "--section: #d8b44a;",
+                      "--link: #60a5fa;", "--grid: #2b2b2b;", "--head: #151515;", "--field: #262626;",
+                      "--field-border: #3f3f3f;", ".k-W { background: #059669; color: #ffffff; }",
+                      "tr.heading td { background: #111e2e; color: #38bdf8;"):
+            self.assertIn(value, page)
+
+    def test_the_base_stylesheet_fixes_no_colour_of_its_own(self):
+        # Every colour the page needs is a theme variable, so a theme can never leave one behind.
+        self.assertEqual(re.findall(r"#[0-9a-fA-F]{3,8}\b", fx._BASE_CSS), [])
+
+    def test_the_club_tint_reaches_the_exports(self):
+        me = palette.MIDNIGHT_EMERALD
+        tinted = palette.with_club(me, palette.club_tint(me, ("#ee2737", "#ffffff")))
+        snap = fx.snapshot(request(theme=tinted))
+        sheet = fx.workbook(snap)["Table"]
+        top = find_row(sheet, 1, "Pos") + 1
+        self.assertEqual(sheet.cell(row=top, column=2).fill.start_color.rgb, argb(tinted.focus[0]))
+        page = fx.web_page(snap)
+        self.assertIn(f"tr.focus td, tr th.focus, thead th.focus {{ background: {tinted.focus[0]};", page)
+        self.assertIn(f"--link: {tinted.link};", page)
+        self.assertEqual(sheet.cell(row=top + 3, column=1).fill.start_color.rgb,       # Sheffield United, 4th
+                         argb(tinted.zones[fd.ZONE_RELEGATION][0]))                    # zones keep their own colours
+
+    def test_the_csv_is_plain_text_whatever_the_theme(self):
+        plain = fx.csv_tables(fx.snapshot(request()))
+        themed = fx.csv_tables(fx.snapshot(request(theme=palette.HIGH_CONTRAST)))
+        self.assertEqual(plain, themed)
 
 
 class LargeCompetitionTests(unittest.TestCase):

@@ -387,6 +387,27 @@ class WindowTests(unittest.TestCase):
         self.assertIn("Saved the Excel workbook", app.detail_label.cget("text"))
         self.assertEqual(app.export_button.cget("state"), "normal")
 
+    def test_exports_use_the_windows_theme_and_club_colours(self):
+        app = self.app
+        app.install_dataset(dataset())                       # Hull City is followed, so its colours tint the view
+        app.set_theme("Cyber Pitch")
+        seen = []
+
+        def fake_export(kind, request, folder):
+            seen.append(request)
+            return Path(self.folder.name) / "made.xlsx"
+
+        with mock.patch.object(fm_review, "export_folder", return_value=Path(self.folder.name)), \
+                mock.patch.object(fm_review.fx, "export", side_effect=fake_export), \
+                mock.patch.object(fm_review.messagebox, "askyesno", return_value=False):
+            app.export(fm_review.fx.EXCEL)
+            self.wait_for_export()
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0].theme, app.view_theme)
+        self.assertEqual(seen[0].theme.name, "Cyber Pitch")
+        self.assertEqual(seen[0].theme.focus, app.club_tint.focus)        # the club's colours went with it
+        self.assertNotEqual(seen[0].theme.focus, palette.CYBER_PITCH.focus)
+
     def test_failed_export_is_reported(self):
         app = self.app
         app.install_dataset(dataset())

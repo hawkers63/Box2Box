@@ -261,6 +261,16 @@ READABLE = 4.5      # text on its background, WCAG AA
 DISTINCT = 1.4      # a tinted surface against what surrounds it
 
 
+def ink_on_white(pair: tuple[str, str]) -> str:
+    """The colour of a (background, text) pair that can be written on a white sheet, as the followed
+    team's name is in a workbook: the background if it reads there, else the text, else black.
+    Today's followed-team blue is its own answer; High-Contrast's white gives its black."""
+    for colour in pair:
+        if colour and contrast_ratio(colour, "#ffffff") >= READABLE:
+            return colour
+    return "#000000"
+
+
 # --------------------------------------------------------------------------- club colours
 
 

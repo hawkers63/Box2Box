@@ -31,7 +31,8 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 import fm_data as fd
-from palette import COLOURS, FOCUS, HEADING, ZONE_COLOURS, ZONE_LEGEND, zone_legend
+import palette
+from palette import ZONE_LEGEND, zone_legend
 
 EXCEL, HTML, CSV = "xlsx", "html", "csv"
 KINDS = {EXCEL: "Excel workbook", HTML: "web page", CSV: "CSV files"}
@@ -65,6 +66,7 @@ class ExportRequest:
     focus: int | None = None
     group_by: str = fd.GROUP_BY_WEEK
     exported_at: dt.datetime | None = None      # None means now
+    theme: palette.Theme = palette.MIDNIGHT_EMERALD     # the colours of the window it was made in
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +92,7 @@ class Snapshot:
     details: tuple[tuple[str, str], ...]
     warnings: tuple[str, ...]
     unverified: bool
+    theme: palette.Theme
 
 
 # --------------------------------------------------------------------------- shaping
@@ -153,6 +156,7 @@ def snapshot(request: ExportRequest) -> Snapshot:
         details=tuple(details),
         warnings=tuple(info.warnings),
         unverified=not info.known_build,
+        theme=request.theme,
     )
 
 
@@ -367,10 +371,10 @@ def _header_row(sheet: Worksheet, row: int, headers: Sequence[str], *, left: Ite
         cell.alignment = Alignment(horizontal="left") if column in left else CENTRE
 
 
-def _heading_row(sheet: Worksheet, row: int, text: str, width: int) -> None:
+def _heading_row(sheet: Worksheet, row: int, text: str, width: int, heading: tuple[str, str]) -> None:
     for column in range(1, width + 1):
-        sheet.cell(row=row, column=column).fill = _fill(HEADING[0])
-    sheet.cell(row=row, column=1, value=text).font = _font(HEADING[1], bold=True)
+        sheet.cell(row=row, column=column).fill = _fill(heading[0])
+    sheet.cell(row=row, column=1, value=text).font = _font(heading[1], bold=True)
 
 
 def _widths(sheet: Worksheet, widths: Sequence[float]) -> None:
@@ -384,7 +388,7 @@ def _text_width(texts: Iterable[object], minimum: float = 6, maximum: float = 48
 
 
 def _xl_table(sheet: Worksheet, snap: Snapshot) -> None:
-    standings = snap.standings
+    standings, theme = snap.standings, snap.theme
     row = _sheet_top(sheet, snap, "table",
                      [snap.coverage.describe(), standings.note, standings.zones_note, table_legend(snap)])
     header = row
@@ -393,7 +397,7 @@ def _xl_table(sheet: Worksheet, snap: Snapshot) -> None:
     for title, rows in standings.groups:
         if title:
             row += 1
-            _heading_row(sheet, row, title, width)
+            _heading_row(sheet, row, title, width, theme.heading)
         for r in rows:
             row += 1
             values = (r.position, r.team, r.played, r.won, r.drawn, r.lost, r.goals_for, r.goals_against,
@@ -403,10 +407,10 @@ def _xl_table(sheet: Worksheet, snap: Snapshot) -> None:
                 if column != 2:
                     cell.alignment = CENTRE
                 if r.team_id == snap.focus:
-                    _paint(cell, FOCUS, bold=True)
+                    _paint(cell, theme.focus, bold=True)
             sheet.cell(row=row, column=9).number_format = "+0;-0;0"
-            if r.zone in ZONE_COLOURS:
-                _paint(sheet.cell(row=row, column=1), ZONE_COLOURS[r.zone], bold=True)
+            if r.zone in theme.zones:
+                _paint(sheet.cell(row=row, column=1), theme.zones[r.zone], bold=True)
     teams = [r.team for _, rows in standings.groups for r in rows]
     _widths(sheet, [6, _text_width(teams, 18)] + [6] * 8 + [7, 14])
     sheet.freeze_panes = sheet.cell(row=header + 1, column=1)
@@ -421,6 +425,7 @@ def _xl_grid(sheet: Worksheet, snap: Snapshot) -> None:
                                             f"(the limit is {fd.MAX_GRID_TEAMS}).")
         return
     top = row
+    colours, focus = snap.theme.colours, snap.theme.focus
     _header_row(sheet, top, ["Home \\ Away", *grid.column_labels], left=[1])
     focus_index = grid.team_ids.index(snap.focus) if snap.focus in grid.team_ids else None
     for r, (label, cells) in enumerate(zip(grid.row_labels, grid.cells), start=1):
@@ -429,12 +434,12 @@ def _xl_grid(sheet: Worksheet, snap: Snapshot) -> None:
         for c, item in enumerate(cells, start=2):
             cell = sheet.cell(row=top + r, column=c, value=item.text or None)
             cell.alignment = CENTRE
-            if item.kind in COLOURS:
-                _paint(cell, COLOURS[item.kind])
+            if item.kind in colours:
+                _paint(cell, colours[item.kind])
         if focus_index == r - 1:
-            _paint(name, FOCUS, bold=True)
+            _paint(name, focus, bold=True)
     if focus_index is not None:
-        _paint(sheet.cell(row=top, column=focus_index + 2), FOCUS, bold=True)
+        _paint(sheet.cell(row=top, column=focus_index + 2), focus, bold=True)
     widths = [_text_width(grid.row_labels, 18)]
     for c, label in enumerate(grid.column_labels):
         widths.append(_text_width([label] + [cells[c].text for cells in grid.cells], 7, 24))
@@ -452,11 +457,12 @@ def _xl_results(sheet: Worksheet, snap: Snapshot, rows: Sequence[fd.TimelineRow]
         notes = [snap.coverage.describe(), GROUPING_NOTES.get(snap.group_by, ""), NA_NOTE]
     row = _sheet_top(sheet, snap, f"{snap.focus_label} results" if team else "results", notes)
     header = row
+    colours, name_ink = snap.theme.colours, palette.ink_on_white(snap.theme.focus)    # the sheet itself is white
     _header_row(sheet, row, headers, left=[3, 5])
     for item in rows:
         row += 1
         if item.is_heading:
-            _heading_row(sheet, row, item.heading, len(headers))
+            _heading_row(sheet, row, item.heading, len(headers), snap.theme.heading)
             continue
         f = item.fixture
         values = [f.date, f.kick_off_time, item.home, item.score, item.away, item.round]
@@ -469,14 +475,14 @@ def _xl_results(sheet: Worksheet, snap: Snapshot, rows: Sequence[fd.TimelineRow]
         sheet.cell(row=row, column=1).number_format = "ddd d mmm yyyy"
         sheet.cell(row=row, column=2).number_format = "hh:mm"
         if team and item.result:
-            _paint(sheet.cell(row=row, column=4), COLOURS[item.result])
-            _paint(sheet.cell(row=row, column=7), COLOURS[item.result])
+            _paint(sheet.cell(row=row, column=4), colours[item.result])
+            _paint(sheet.cell(row=row, column=7), colours[item.result])
         elif item.kind in (fd.UNAVAILABLE, fd.SCHEDULED):
-            _paint(sheet.cell(row=row, column=4), COLOURS[item.kind])
+            _paint(sheet.cell(row=row, column=4), colours[item.kind])
         if snap.focus is not None:
             for column, team_id in ((3, item.home_id), (5, item.away_id)):
                 if team_id == snap.focus:
-                    sheet.cell(row=row, column=column).font = _font(FOCUS[0], bold=True)
+                    sheet.cell(row=row, column=column).font = _font(name_ink, bold=True)
     names = [item.home for item in rows] + [item.away for item in rows]
     _widths(sheet, [16, 7, _text_width(names, 18), 8, _text_width(names, 18), 14, 6, 6][:len(headers)])
     sheet.freeze_panes = sheet.cell(row=header + 1, column=1)
@@ -529,7 +535,7 @@ def web_page(snap: Snapshot) -> str:
         '<meta charset="utf-8">',
         '<meta name="viewport" content="width=device-width, initial-scale=1">',
         f"<title>{e(snap.title)} {e(snap.season_label)} · Box2Box</title>",
-        f"<style>{_css()}</style>",
+        f"<style>{_css(snap.theme)}</style>",
         "</head>",
         "<body>",
         "<main>",
@@ -569,40 +575,47 @@ def _header_cells(headers: Sequence[str], names: Iterable[str]) -> str:
     return "".join(f"<th{_attr('class', '' if h in names else 'c')}>{html.escape(h)}</th>" for h in headers)
 
 
+# The page's own colours are CSS variables, written from the theme by _css below.
 _BASE_CSS = """
-:root { color-scheme: dark; }
 * { box-sizing: border-box; }
-body { margin: 0; background: #1b1b1b; color: #e3e3e3; font: 14px/1.45 "Segoe UI", system-ui, sans-serif; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 "Segoe UI", system-ui, sans-serif; }
 main { max-width: 1600px; margin: 0 auto; padding: 20px 16px 40px; }
-h1 { font-size: 26px; margin: 0 0 4px; } h1 span { color: #a3a3a3; font-weight: 400; }
-h2 { font-size: 19px; color: #d8b44a; margin: 32px 0 6px; }
-.meta, .notes, .note, footer { color: #a3a3a3; }
+h1 { font-size: 26px; margin: 0 0 4px; } h1 span { color: var(--muted); font-weight: 400; }
+h2 { font-size: 19px; color: var(--section); margin: 32px 0 6px; }
+.meta, .notes, .note, footer { color: var(--muted); }
 .notes { margin: 8px 0 0; padding-left: 18px; } .note { margin: 0 0 8px; font-size: 13px; }
 nav { margin: 14px 0 0; display: flex; flex-wrap: wrap; gap: 6px 16px; }
-nav a, a { color: #60a5fa; }
+nav a, a { color: var(--link); }
 .scroll { overflow: auto; max-width: 100%; max-height: 85vh; }
 table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
-th, td { border: 1px solid #2b2b2b; padding: 3px 8px; white-space: nowrap; }
-thead th { background: #151515; position: sticky; top: 0; z-index: 1; }
+th, td { border: 1px solid var(--grid); padding: 3px 8px; white-space: nowrap; }
+thead th { background: var(--head); position: sticky; top: 0; z-index: 1; }
 td.c, th.c { text-align: center; }
 table.grid td { text-align: center; min-width: 52px; }
-table.grid tbody th { text-align: left; background: #151515; position: sticky; left: 0; }
+table.grid tbody th { text-align: left; background: var(--head); position: sticky; left: 0; }
 table.grid thead th:first-child { left: 0; z-index: 2; }
-input[type=search] { background: #262626; color: inherit; border: 1px solid #3f3f3f; border-radius: 6px;
+input[type=search] { background: var(--field); color: inherit; border: 1px solid var(--field-border); border-radius: 6px;
   padding: 6px 10px; width: min(320px, 100%); margin: 0 0 10px; font: inherit; }
 dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; } dt { font-weight: 600; } dd { margin: 0; }
 footer { margin-top: 36px; font-size: 13px; }
 """
 
 
-def _css() -> str:
-    rules = [_BASE_CSS]
-    for kind, (background, text) in COLOURS.items():
+def _css(theme: palette.Theme) -> str:
+    """The page's stylesheet in a theme's colours: variables for the page itself, then a class for
+    each result, the headings, the followed team and each zone."""
+    variables = {"bg": theme.table[0], "text": theme.table[1], "muted": theme.page_muted, "section": theme.section,
+                 "link": theme.link, "grid": theme.grid_line, "head": theme.sheet_heading[0],
+                 "field": theme.page_field[0], "field-border": theme.page_field[1]}
+    root = ":root { color-scheme: dark; " + " ".join(f"--{name}: {value.lower()};" for name, value in variables.items()) + " }"
+    rules = [root, _BASE_CSS]
+    for kind, (background, text) in theme.colours.items():
         rules.append(f".{_kind_class(kind)} {{ background: {background};{f' color: {text};' if text else ''} }}")
-    rules.append(f"tr.heading td {{ background: {HEADING[0]}; color: {HEADING[1]}; font-weight: 600; }}")
-    rules.append(f"tr.focus td, tr th.focus, thead th.focus {{ background: {FOCUS[0]}; color: {FOCUS[1]}; font-weight: 600; }}")
-    rules.append("td.team-focus { color: #60a5fa; font-weight: 600; }")
-    for zone, (background, text) in ZONE_COLOURS.items():
+    rules.append(f"tr.heading td {{ background: {theme.heading[0]}; color: {theme.heading[1]}; font-weight: 600; }}")
+    rules.append(f"tr.focus td, tr th.focus, thead th.focus {{ background: {theme.focus[0]}; color: {theme.focus[1]}; "
+                 "font-weight: 600; }")
+    rules.append("td.team-focus { color: var(--link); font-weight: 600; }")
+    for zone, (background, text) in theme.zones.items():
         # Same specificity as the focus row's rule and later, so a zone keeps its colour there too.
         rules.append(f"tr td.z-{zone} {{ background: {background}; color: {text}; font-weight: 600; }}")
     return "\n".join(rules)
@@ -621,7 +634,7 @@ def _html_table(snap: Snapshot) -> str:
         if title:
             out.append(f'<tr class="heading"><td colspan="{len(TABLE_HEADERS)}">{e(title)}</td></tr>')
         for r in rows:
-            zone = f" z-{r.zone}" if r.zone in ZONE_COLOURS else ""
+            zone = f" z-{r.zone}" if r.zone in snap.theme.zones else ""
             focus = _attr("class", "focus" if r.team_id == snap.focus else "")
             gd = r.goal_difference
             cells = [f'<td class="c{zone}">{r.position}</td>', f"<td>{e(r.team)}</td>"]
@@ -648,7 +661,7 @@ def _html_grid(snap: Snapshot) -> str:
     out.append(f'<div class="scroll"><table class="grid"><thead><tr><th>Home \\ Away</th>{head}</tr></thead><tbody>')
     for r, (label, cells) in enumerate(zip(grid.row_labels, grid.cells)):
         row_head = f"<th{_attr('class', 'focus' if r == focus_index else '')}>{e(label)}</th>"
-        tds = "".join(f"<td{_attr('class', _kind_class(cell.kind) if cell.kind in COLOURS else '')}>{e(cell.text)}</td>"
+        tds = "".join(f"<td{_attr('class', _kind_class(cell.kind) if cell.kind in snap.theme.colours else '')}>{e(cell.text)}</td>"
                       for cell in cells)
         out.append(f"<tr>{row_head}{tds}</tr>")
     out.append("</tbody></table></div></section>")

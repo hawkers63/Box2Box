@@ -1199,7 +1199,7 @@ class FMReviewApp(ctk.CTk):
         if not self.dataset or self.comp_id is None or self._exporting:
             return
         request = fx.ExportRequest(self.dataset, self.comp_id, self.season, names=dict(self.names),
-                                   focus=self.focus, group_by=self.group_by)
+                                   focus=self.focus, group_by=self.group_by, theme=self.view_theme)
         self._exporting = True
         self.export_button.configure(state="disabled", text="Exporting…")
         self.detail_label.configure(text=f"Exporting the {fx.KINDS[kind]}…")
