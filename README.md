@@ -13,9 +13,9 @@ Saves are read with [fmsave](https://rhiever.github.io/fmsave/) and are never mo
 
 **Database viewer** · entry point `fm_review.py` · launcher `Box2Box.bat`
 
-**Release:** 1.0  
+**Release:** 1.1  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 1.0), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 1.1), launched with `Box2Box.bat`
 
 </div>
 
@@ -110,5 +110,7 @@ The tests write only to temporary directories and do not need a real Football Ma
 Copyright (c) 2026 onwards Mark Hawksworth (hawkers63). All rights reserved.
 
 Box2Box is proprietary software. Copying, distribution, modification, reverse engineering, sublicencing and commercial exploitation are prohibited without prior written consent. See [LICENSE](LICENSE) for the full terms.
+
+The app shows the same notice: **About**, at the top right of the window, gives the version, the copyright notice and the full licence.
 
 Canonical repository: <https://github.com/hawkers63/Box2Box>

@@ -1,8 +1,8 @@
 # Changelog
 
-**Release:** 1.0  
+**Release:** 1.1  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 1.0), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 1.1), launched with `Box2Box.bat`
 
 All notable changes to this project will be documented in this file.
 
@@ -11,8 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1] - 2026-11-15
+
+Adds an About screen that states who owns Box2Box and on what terms it may be used.
+
 ### Added
 
+- An **About** button at the top right of the window. It opens the About screen: the version, the copyright notice, a short summary of the proprietary licence, and the full terms from `LICENSE`.
+- The status bar shows the version and the copyright notice until a save is opened.
 - Screenshot of the main window (no save open) in the README.
 
 ### Changed
