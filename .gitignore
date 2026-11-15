@@ -11,6 +11,9 @@ box2box_errors.log
 *.log
 *.tmp
 
+# The launcher is built on each machine by build_launcher.ps1
+Box2Box.exe
+
 # Football Manager saves are large and personal; Box2Box only reads them from the game's folder
 *.fm
 

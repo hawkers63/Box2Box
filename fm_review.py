@@ -43,6 +43,8 @@ SETTINGS_PATH = APP_DIR / "box2box_settings.json"
 LEGACY_SETTINGS_PATH = APP_DIR / "fm_review_settings.json"
 ERROR_LOG = APP_DIR / "box2box_errors.log"
 LICENCE_PATH = APP_DIR / "LICENSE"
+ICON_PATH = APP_DIR / "icon" / "football-64-sky-blue.ico"
+APP_ID = "hawkers63.Box2Box"         # the taskbar's name for Box2Box, so it shows its own icon
 
 # Word for word the first line of LICENSE.
 COPYRIGHT = "Copyright (c) 2026 onwards Mark Hawksworth (hawkers63). All rights reserved."
@@ -83,6 +85,28 @@ def documents_folder() -> Path:
 def export_folder() -> Path:
     """Where exports are saved: Documents\\Box2Box."""
     return documents_folder() / APP_TITLE
+
+
+def apply_window_icon(window: tk.Wm) -> bool:
+    """Give a window the Box2Box icon. A missing or unreadable icon leaves Windows' own, quietly."""
+    if not ICON_PATH.is_file():
+        return False
+    try:
+        window.iconbitmap(str(ICON_PATH))
+    except tk.TclError:
+        return False
+    return True
+
+
+def set_taskbar_identity() -> bool:
+    """Tell Windows this process is Box2Box rather than Python, so that its taskbar button shows the
+    window's own icon. True when Windows accepted it."""
+    if sys.platform != "win32":
+        return False
+    try:
+        return ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID) == 0
+    except (AttributeError, OSError):
+        return False
 
 
 def default_save_folder() -> Path:
@@ -139,6 +163,7 @@ class AboutWindow(ctk.CTkToplevel):
 
     def __init__(self, master: ctk.CTk) -> None:
         super().__init__(master)
+        apply_window_icon(self)
         text = about_text()
         self.title(f"About {APP_TITLE}")
         self.transient(master)
@@ -199,6 +224,7 @@ class FMReviewApp(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
         self.title(f"{APP_TITLE} {VERSION}")
+        apply_window_icon(self)
         self.events: queue.Queue = queue.Queue()
         self.dataset: fd.Dataset | None = None
         self.names: dict[int, str] = {}
@@ -680,7 +706,9 @@ class FMReviewApp(ctk.CTk):
                   + (f"Currently: {current}\n" if current else "")
                   + "Leave empty to remove the name. Names are kept in competition_names.csv "
                     "and apply to every save.")
-        answer = ctk.CTkInputDialog(title="Name this competition", text=prompt).get_input()
+        dialog = ctk.CTkInputDialog(title="Name this competition", text=prompt)
+        apply_window_icon(dialog)
+        answer = dialog.get_input()
         if answer is None:
             return
         answer = answer.strip()
@@ -1349,6 +1377,7 @@ class FMReviewApp(ctk.CTk):
         ]
         lines += [f"  • {w}" for w in info.warnings] or ["  none"]
         window = ctk.CTkToplevel(self)
+        apply_window_icon(window)
         window.title("Save details & warnings")
         window.geometry("860x480")
         window.transient(self)
@@ -1416,6 +1445,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Browse the fixtures and results in a Football Manager save.")
     parser.add_argument("save", nargs="?", help="a .fm save to open straight away")
     args = parser.parse_args()
+    set_taskbar_identity()
     ctk.set_appearance_mode("dark")
     ctk.set_default_color_theme("blue")
     app = Box2BoxApp()

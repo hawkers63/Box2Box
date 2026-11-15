@@ -44,7 +44,7 @@ A screenshot of the main window, captured on Windows with no save open.
 
 ## Quick start
 
-Double-click **Box2Box.bat**, then **Open save…**. Saves live in `Documents\Sports Interactive\Football Manager 27\games`. Reading one takes around half a minute. The save opens as soon as it has been read; its expected goals follow about 12 seconds later, while you browse. You can also drag a `.fm` save file onto the launcher to open it straight away.
+Double-click the **Box2Box** shortcut on the desktop (see below) or **Box2Box.bat**, then **Open save…**. Saves live in `Documents\Sports Interactive\Football Manager 27\games`. Reading one takes around half a minute. The save opens as soon as it has been read; its expected goals follow about 12 seconds later, while you browse. You can also drag a `.fm` save file onto the launcher to open it straight away.
 
 From a terminal:
 
@@ -60,6 +60,16 @@ py -3.14 -m venv .venv
 ```
 
 Python 3.12 or newer is required. This working tree uses Python 3.14 in `.venv`.
+
+## Start Box2Box from the desktop
+
+`Box2Box.exe` is a small launcher that carries the Box2Box football icon. It starts Box2Box exactly as `Box2Box.bat` does, with the project's own Python, and a save dropped onto it opens straight away. Build it once, from PowerShell in the Box2Box folder:
+
+```powershell
+.\build_launcher.ps1
+```
+
+This compiles `launcher\Box2Box.cs` with the C# compiler that comes with Windows, so nothing else needs installing. It writes `Box2Box.exe` next to `Box2Box.bat` and puts a **Box2Box** shortcut on the desktop; add `-NoShortcut` to leave the desktop alone. Keep the exe in the Box2Box folder and start it from the shortcut, because on its own it cannot find the app. It never needs rebuilding when Box2Box is updated, and `Box2Box.bat` still works as before.
 
 ## Exports
 
@@ -81,6 +91,8 @@ Exports go to `Documents\Box2Box` (*Export ▾ → Open the export folder*), one
 | File | Purpose |
 | --- | --- |
 | `Box2Box.bat` | One-click launcher for the application |
+| `build_launcher.ps1`, `launcher/Box2Box.cs` | Builds `Box2Box.exe`, the launcher with the icon, and its desktop shortcut |
+| `icon/football-64-sky-blue.ico` | The Box2Box icon: windows, taskbar and launcher |
 | `fm_review.py` | The main Box2Box desktop application (CustomTkinter + tksheet) |
 | `fm_data.py` | Pure data layer: parsing, grid matrices, standings, form, positions, expected goals and competition summaries |
 | `fm_export.py` | Excel, web page and CSV exports of one competition and season |

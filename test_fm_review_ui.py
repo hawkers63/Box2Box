@@ -5,6 +5,8 @@
 Run:  .venv\\Scripts\\python -m unittest -v
 """
 
+import ctypes
+import sys
 import tempfile
 import time
 import unittest
@@ -338,6 +340,46 @@ class WindowTests(unittest.TestCase):
 
     def test_status_bar_shows_the_copyright_until_a_save_is_open(self):
         self.assertIn(COPYRIGHT, self.app.status_label.cget("text"))
+
+    def test_the_main_window_wears_the_box2box_icon(self):
+        self.app.destroy()
+        with mock.patch.object(fm_review.FMReviewApp, "iconbitmap", autospec=True) as icon:
+            self.app = fm_review.FMReviewApp()          # tearDown closes this one
+            self.app.geometry("1300x800+-4000+0")
+            self.app.update()
+        icon.assert_any_call(self.app, str(fm_review.ICON_PATH))
+
+    def test_the_about_and_details_windows_wear_the_box2box_icon(self):
+        app = self.app
+        app.install_dataset(dataset())
+        with mock.patch.object(ctk.CTkToplevel, "iconbitmap", autospec=True) as icon:
+            app.about_button.invoke()
+            app.show_details()
+            app.update()
+        iconed = [c.args[0] for c in icon.call_args_list if c.args[1:] == (str(fm_review.ICON_PATH),)]
+        self.assertIn(app.about_window, iconed)
+        self.assertEqual(len(iconed), 2)              # About and the save details
+
+    def test_a_missing_icon_is_not_an_error(self):
+        with mock.patch.object(fm_review, "ICON_PATH", Path(self.folder.name) / "none.ico"):
+            self.assertFalse(fm_review.apply_window_icon(self.app))
+
+
+class IconTests(unittest.TestCase):
+    def test_the_icon_is_a_windows_icon(self):
+        data = fm_review.ICON_PATH.read_bytes()
+        self.assertEqual(data[:4], b"\x00\x00\x01\x00")              # an .ico header
+        self.assertGreaterEqual(int.from_bytes(data[4:6], "little"), 1)
+
+    @unittest.skipUnless(sys.platform == "win32", "the taskbar identity is a Windows setting")
+    def test_the_taskbar_knows_box2box_by_its_own_name(self):
+        self.assertTrue(fm_review.set_taskbar_identity())
+        found = ctypes.c_wchar_p()
+        ctypes.windll.shell32.GetCurrentProcessExplicitAppUserModelID(ctypes.byref(found))
+        try:
+            self.assertEqual(found.value, "hawkers63.Box2Box")
+        finally:
+            ctypes.windll.ole32.CoTaskMemFree(found)
 
 
 class AboutTextTests(unittest.TestCase):
