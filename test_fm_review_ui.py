@@ -535,6 +535,30 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(app.top_bar.cget("fg_color"), app.theme.panel)
         self.assertEqual(app.view_switch.cget("selected_color"), app.theme.switch_selected)
 
+    def test_the_unverified_build_notice_keeps_its_own_colours_on_a_club_band(self):
+        # With a club followed, v1.3 turned the amber notice white on the club's band, which on a red club
+        # read like an error. It must stay amber, on a small chip of the plain panel colour.
+        app = self.app
+        app.install_dataset(dataset())                      # an unverified build, Hull City followed: a tinted band
+        self.assertIsNotNone(app.club_tint)
+        self.assertIn("Unverified build", app.verify_label.cget("text"))
+        theme = app.theme
+        self.assertEqual(app.verify_label.cget("text_color"), theme.warning)
+        self.assertEqual(app.verify_chip.cget("fg_color"), theme.panel)
+        self.assertNotEqual(app.top_bar.cget("fg_color"), theme.panel)          # the band really is tinted
+        for name in ("Cyber Pitch", "Deep Slate & Gold", "High-Contrast"):       # and so in every other theme
+            app.set_theme(name)
+            self.assertEqual(app.verify_label.cget("text_color"), app.theme.warning, name)
+            self.assertEqual(app.verify_chip.cget("fg_color"), app.theme.panel, name)
+
+    def test_the_unverified_build_notice_is_hidden_when_the_build_is_known(self):
+        app = self.app
+        ds = dataset()
+        app.install_dataset(dataclasses.replace(ds, info=dataclasses.replace(ds.info, known_build=True)))
+        self.assertEqual(app.verify_chip.grid_info(), {})                       # no empty chip left on the band
+        app.install_dataset(dataset())
+        self.assertNotEqual(app.verify_chip.grid_info(), {})
+
     def test_club_colour_edits_are_saved_and_win(self):
         app = self.app
         app.install_dataset(dataset())

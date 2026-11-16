@@ -499,9 +499,15 @@ class FMReviewApp(ctk.CTk):
         self.save_label.grid(row=0, column=1, padx=(0, 12), sticky="w")
         self.meta_label = role("muted", ctk.CTkLabel(top, text=""))
         self.meta_label.grid(row=0, column=2, sticky="w")
-        self.verify_label = role("warning", ctk.CTkLabel(top, text="", cursor="hand2"))
-        self.verify_label.grid(row=0, column=3, padx=12, sticky="w")
-        self.verify_label.bind("<Button-1>", lambda _e: self.show_details())
+        # The unverified-build notice is amber on a small chip of the plain panel colour, so that a club's
+        # tint on the band never takes its colour: the one colour on the band that carries meaning.
+        self.verify_chip = role("chip", ctk.CTkFrame(top, width=0, height=0, corner_radius=6))
+        self.verify_chip.grid(row=0, column=3, padx=12, sticky="w")
+        self.verify_label = role("warning", ctk.CTkLabel(self.verify_chip, text="", cursor="hand2"))
+        self.verify_label.pack(padx=10, pady=2)
+        for widget in (self.verify_chip, self.verify_label):
+            widget.bind("<Button-1>", lambda _e: self.show_details())
+        self.verify_chip.grid_remove()
         self.progress = role("progress", ctk.CTkProgressBar(top, mode="indeterminate", width=180))
         self.progress.grid(row=0, column=4, padx=14)
         self.progress.grid_remove()
@@ -677,6 +683,7 @@ class FMReviewApp(ctk.CTk):
             "text": dict(text_color=t.text),
             "muted": dict(text_color=t.muted),
             "warning": dict(text_color=t.warning),
+            "chip": dict(fg_color=t.panel),
             "button": dict(fg_color=t.accent[0], hover_color=t.accent_hover, text_color=t.accent[1]),
             "quiet": dict(fg_color=t.quiet[0], hover_color=t.quiet_hover, text_color=t.quiet[1]),
             "switch": dict(fg_color=t.switch[0], unselected_color=t.switch[0], unselected_hover_color=t.switch_hover,
@@ -744,11 +751,11 @@ class FMReviewApp(ctk.CTk):
         self.view_theme = palette.with_club(self.theme, self.club_tint)
         t, tint = self.theme, self.club_tint
         if tint is None:
-            band, text, muted, warning = t.panel, t.text, t.muted, t.warning
+            band, text, muted = t.panel, t.text, t.muted
             selected, hover = t.switch_selected, t.switch_selected_hover
             self.stripe.place_forget()
         else:
-            (band, text), muted, warning = tint.band, tint.band_muted, tint.band_warning
+            (band, text), muted = tint.band, tint.band_muted
             selected, hover = tint.selected
             for i, part in enumerate(self.stripe_parts):
                 part.configure(fg_color=tint.colours[i % 2])
@@ -756,7 +763,6 @@ class FMReviewApp(ctk.CTk):
         self.top_bar.configure(fg_color=band)
         self.save_label.configure(text_color=text)
         self.meta_label.configure(text_color=muted)
-        self.verify_label.configure(text_color=warning)
         self.view_switch.configure(selected_color=selected, selected_hover_color=hover)
         self.theme_menu.entryconfigure(self._club_menu_item,
                                        state="normal" if self._followed_club() else "disabled")
@@ -914,8 +920,7 @@ class FMReviewApp(ctk.CTk):
         if info.managed_club_name:
             meta.append(info.managed_club_name)
         self.meta_label.configure(text="  ·  ".join(meta))
-        self.verify_label.configure(
-            text="" if info.known_build else "⚠ Unverified build: values unconfirmed (details)")
+        self._set_build_notice("" if info.known_build else "⚠ Unverified build: values unconfirmed (details)")
         self._refresh_status()
         self._set_controls_state("normal")
         self._sync_view_controls()
@@ -925,6 +930,14 @@ class FMReviewApp(ctk.CTk):
             self.select_competition(dataset.competitions[0].id)
         else:
             self._show_message("This save holds no fixtures that could be read.")
+
+    def _set_build_notice(self, text: str) -> None:
+        """Show the unverified-build notice on its chip, or hide the chip when the build is known."""
+        self.verify_label.configure(text=text)
+        if text:
+            self.verify_chip.grid()
+        else:
+            self.verify_chip.grid_remove()
 
     def install_expected_goals(self, dataset: fd.Dataset) -> None:
         """Swap in the open save with its expected goals, leaving the view where it is."""

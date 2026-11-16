@@ -282,7 +282,6 @@ class ClubTint:
     shown: str                     # the one the window shows
     band: tuple[str, str]          # the title band: (background, text)
     band_muted: str                # the band's secondary text
-    band_warning: str              # the unverified-build warning on the band
     selected: tuple[str, str]      # the view switch's selected button: (colour, hover)
     focus: tuple[str, str]         # the followed team's highlight
     link: str                      # the followed team's name in Results
@@ -317,7 +316,6 @@ def club_tint(theme: Theme, colours: tuple[str, str] | None) -> ClubTint | None:
         shown=shown,
         band=(band, band_text),
         band_muted=muted if contrast_ratio(muted, band) >= READABLE else band_text,
-        band_warning=theme.warning if contrast_ratio(theme.warning, band) >= READABLE else band_text,
         selected=(selected, blend(selected, "#000000", 0.2)),
         focus=(focus, readable_text(focus)),
         link=_nearest(shown, (table, READABLE)),

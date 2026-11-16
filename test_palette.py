@@ -50,6 +50,11 @@ class ThemeTests(unittest.TestCase):
             for background, text in (theme.accent, theme.quiet, theme.switch, (theme.switch_selected, theme.switch[1])):
                 self.assertGreaterEqual(palette.contrast_ratio(background, text), 4.5, (theme.name, background))
 
+    def test_the_warning_colour_reads_on_the_panel_in_every_theme(self):
+        # The unverified-build notice sits on a chip of the panel colour, so it must read there.
+        for theme in palette.THEMES:
+            self.assertGreaterEqual(palette.contrast_ratio(theme.warning, theme.panel), 4.5, theme.name)
+
     def test_contrast_follows_wcag(self):
         self.assertAlmostEqual(palette.contrast_ratio("#000000", "#ffffff"), 21.0, places=2)
         self.assertAlmostEqual(palette.contrast_ratio("#777777", "#ffffff"), 4.48, places=2)
@@ -88,7 +93,7 @@ class TintTests(unittest.TestCase):
         for theme in palette.THEMES[:3]:
             for colours in (self.RED, ("#f5a12d", "#000000"), ("#ffffff", "#1d428a"), ("#fde100", "#000000")):
                 t = palette.club_tint(theme, colours)
-                for background, text in (t.band, (t.band[0], t.band_muted), (t.band[0], t.band_warning),
+                for background, text in (t.band, (t.band[0], t.band_muted),
                                          (t.selected[0], theme.switch[1]), t.focus, (theme.table[0], t.link)):
                     self.assertGreaterEqual(palette.contrast_ratio(background, text), 4.5, (theme.name, colours))
 
