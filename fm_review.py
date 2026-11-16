@@ -265,6 +265,19 @@ class AboutWindow(ctk.CTkToplevel):
         self.focus_force()
 
 
+class MenuEntry(NamedTuple):
+    """One line of a sheet's right-click menu. A command of None is greyed; `children` make a submenu;
+    MENU_SEPARATOR is a rule."""
+
+    label: str
+    command: Callable[[], object] | None = None
+    children: tuple[MenuEntry, ...] = ()
+
+
+MENU_SEPARATOR = MenuEntry("")
+HEAD_TO_HEAD_LABEL = "Head-to-head… (needs saves from more than one season)"
+
+
 class SheetOverlay:
     """Rounded form pills and goal-difference bars painted over a sheet's cells. tksheet redraws only
     what is on screen, so after each of its redraws the overlay paints the rows on screen too, which
@@ -496,6 +509,7 @@ class FMReviewApp(_Root):
         self._resize_job: str | None = None       # the view switch's counts follow the window's width
         self._dataset_serial = 0                  # bumped per installed save
         self._club_cache: tuple[int, tuple[fd.ClubEntry, ...]] | None = None    # the palette's clubs, per save
+        self.opponent_filter: tuple[int, int] | None = None   # Results shows only matches between these two teams
         self._hub_key: tuple | None = None        # what the Competitions sheet was last filled from
         self._hub_summary = ""
         self._hub_categories: list[str] = []      # the hub's category on each row, for painting
@@ -649,23 +663,30 @@ class FMReviewApp(_Root):
         self.coverage_label.grid(row=2, column=0, sticky="ew")
         self.note_label = role("muted", ctk.CTkLabel(main, text="", anchor="w", justify="left", wraplength=1100))
         self.note_label.grid(row=3, column=0, sticky="ew", pady=(0, 6))
+        self.filter_clear = role("quiet", ctk.CTkButton(main, text="Clear", width=70, height=24,
+                                                        command=lambda: self.set_opponent_filter(None)))
+        self.filter_clear.grid(row=3, column=0, sticky="ne", pady=(0, 6))
+        self.filter_clear.grid_remove()
 
         content = role("content", ctk.CTkFrame(main, corner_radius=6))
         content.grid(row=4, column=0, sticky="nsew")
         content.grid_columnconfigure(0, weight=1)
         content.grid_rowconfigure(0, weight=1)
         self.sheets = {
-            "Results": self._make_sheet(content, show_row_index=False),
-            "Grid": self._make_sheet(content, align="center"),
+            "Results": self._make_sheet(content, show_row_index=False, own_menu=True),
+            "Grid": self._make_sheet(content, own_menu=True, align="center"),
             # A row index a few pixels wide, coloured with each row's zone: the zone edge.
-            "Table": self._make_sheet(content, show_row_index=True, show_default_index_for_empty=False,
-                                      default_row_index=None),
-            ANALYSIS: self._make_sheet(content, show_row_index=False),
+            "Table": self._make_sheet(content, own_menu=True, show_row_index=True,
+                                      show_default_index_for_empty=False, default_row_index=None),
+            ANALYSIS: self._make_sheet(content, own_menu=True, show_row_index=False),
             HUB: self._make_sheet(content, show_row_index=False),
         }
         for name, sheet in self.sheets.items():
             sheet.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
             sheet.bind("<<SheetSelect>>", lambda _e, n=name: self._on_sheet_select(n))
+            if name != HUB:     # the hub keeps tksheet's own menu; the others get one that knows the club
+                for part in (sheet.MT, sheet.RI):
+                    part.bind("<Button-3>", lambda e, n=name: self._show_row_menu(n, e), add="+")
             sheet.grid_remove()
         self.sheets[HUB].bind("<Double-Button-1>", lambda _e: self._open_from_hub())
         self.overlays = {name: SheetOverlay(self.sheets[name], self.px) for name in ("Table", ANALYSIS)}
@@ -709,8 +730,9 @@ class FMReviewApp(_Root):
             self.team_box.bind(key, self._on_palette_key, add=True)
             self.search_entry.bind(key, self._on_palette_key, add=True)
 
-    def _make_sheet(self, parent, **options) -> Sheet:
-        """A sheet in the shared style; its colours come from the theme (see _recolour)."""
+    def _make_sheet(self, parent, own_menu: bool = False, **options) -> Sheet:
+        """A sheet in the shared style; its colours come from the theme (see _recolour). With `own_menu`
+        the sheet keeps tksheet's right-click selection but not its menu: see _show_row_menu."""
         with_index = options.get("show_row_index", True)
         sheet = Sheet(
             parent, theme="dark blue", show_top_left=with_index, row_index_align="w",
@@ -719,7 +741,9 @@ class FMReviewApp(_Root):
             outline_thickness=0, default_row_height=self.px(24), **options,
         )
         sheet.enable_bindings("single_select", "row_select", "column_select", "column_width_resize",
-                              "arrowkeys", "copy", "right_click_popup_menu", "rc_select")
+                              "arrowkeys", "copy", "rc_select" if own_menu else "right_click_popup_menu")
+        if not own_menu:
+            sheet.enable_bindings("rc_select")
         return sheet
 
     # ----------------------------------------------------------------- themes
@@ -1150,6 +1174,7 @@ class FMReviewApp(_Root):
     def _apply_season(self, season: int | None, *, keep_focus: bool) -> None:
         ds = self.dataset
         self.season = season
+        self.opponent_filter = None
         self.fixtures = fd.season_fixtures(ds, self.comp_id, season)
         self.labels = fd.team_labels(self.fixtures)
         self.short_labels = fd.team_labels(self.fixtures, short=True)
@@ -1234,6 +1259,7 @@ class FMReviewApp(_Root):
             self._show_followed_team()
 
     def set_focus(self, team_id: int | None) -> None:
+        self.opponent_filter = None
         self.focus = team_id if team_id in self.labels else None
         self._show_followed_team()
         self._update_club_tint()
@@ -1401,6 +1427,7 @@ class FMReviewApp(_Root):
 
     def render(self) -> None:
         self._refresh_view_labels()            # the counts follow the competition, season, team and save
+        self._show_filter_button()
         self._show_zone_key()                  # the Table and Positions views put it back
         if not self.dataset:
             return
@@ -1475,8 +1502,13 @@ class FMReviewApp(_Root):
             sheet.highlight_cells(row=row, column=column, canvas=canvas, redraw=False, **options)
 
     def _render_results(self) -> None:
-        focus = self.focus
-        rows = fd.timeline(self.fixtures, self.labels, group_by=self.group_by, focus_team=focus)
+        pair = self.opponent_filter
+        if pair is None:
+            focus, fixtures = self.focus, self.fixtures
+        else:      # only the matches between the two clubs, whoever is followed
+            focus = None
+            fixtures = tuple(f for f in self.fixtures if {f.home_team_id, f.away_team_id} == set(pair))
+        rows = fd.timeline(fixtures, self.labels, group_by=self.group_by, focus_team=focus)
         self.result_rows = rows
         headers = ["Date", "KO", "Home", "Score", "xG", "Away", "Round"] + (["Res", "Pts"] if focus is not None else [])
         blank = [""] * (len(headers) - 1)
@@ -1516,6 +1548,14 @@ class FMReviewApp(_Root):
         target = len(rows) - 1 if first_unplayed is None else max(0, first_unplayed - 6)
         sheet.set_yview(target / max(len(rows), 1) if target > 0 else 0.0)
         self.note_label.configure(text=self._results_note())
+        self._show_filter_button()
+
+    def _show_filter_button(self) -> None:
+        """The Clear button sits at the right of the note while Results is filtered, and nowhere else."""
+        if self.view == "Results" and self.opponent_filter is not None:
+            self.filter_clear.grid()
+        else:
+            self.filter_clear.grid_remove()
 
     def _fill_results_xg(self, sheet: Sheet) -> None:
         """The Results sheet's xG column. For the team you follow, the cell is green or red where it
@@ -1534,7 +1574,10 @@ class FMReviewApp(_Root):
 
     def _results_note(self) -> str:
         note = []
-        if self.focus is not None:
+        if self.opponent_filter is not None:
+            home, away = (self.labels.get(t, f"Team {t}") for t in self.opponent_filter)
+            note.append(f"Showing only {home} v {away} this season.   ")
+        if self.focus is not None and self.opponent_filter is None:
             note.append("Res and Pts are for the team you follow; points count 3 for a win and 1 for a draw."
                         " * = a played match has no recoverable score, so the total is a minimum.")
         note.append("“n/a” = played, but no score could be recovered from the save. Click a match for details.")
@@ -2027,6 +2070,83 @@ class FMReviewApp(_Root):
         self.set_focus(team_id)
         if self.focus != team_id:
             self.detail_label.configure(text=f"{name} has no matches in this competition and season.")
+
+    # ----------------------------------------------------------------- the right-click menu
+
+    def set_opponent_filter(self, pair: tuple[int, int] | None) -> None:
+        """Show only the matches between two teams in Results, or (None) all again."""
+        self.opponent_filter = pair
+        if pair is not None and self.view != "Results":
+            self.set_view("Results")
+        else:
+            self.render()
+
+    def _row_clubs(self, name: str, row: int, column: int | None) -> list[tuple[int, str]]:
+        """The clubs a right-click on this row (and column, in the grid) can act on: (team id, label)
+        for each team the save can resolve to a club."""
+        ids: list[int | None] = []
+        if name == "Results" and 0 <= row < len(self.result_rows):
+            item = self.result_rows[row]
+            ids = [item.home_id, item.away_id] if item.fixture is not None else []
+        elif name == "Table" and 0 <= row < len(self.table_rows):
+            ids = [self.table_rows[row]]
+        elif name == ANALYSIS and 0 <= row < len(self.analysis_rows):
+            ids = [self.analysis_rows[row]]
+        elif name == "Grid" and self.grid_data is not None and 0 <= row < len(self.grid_data.team_ids):
+            ids = [self.grid_data.team_ids[row]]
+            if column is not None and 0 <= column < len(self.grid_data.team_ids):
+                ids.append(self.grid_data.team_ids[column])
+        clubs: list[tuple[int, str]] = []
+        for team_id in ids:
+            if team_id is not None and team_id in self.club_names and team_id in self.labels \
+                    and all(team_id != known for known, _ in clubs):
+                clubs.append((team_id, self.labels[team_id]))
+        return clubs
+
+    def _row_menu(self, name: str, row: int, column: int | None = None) -> list[MenuEntry]:
+        """What a right-click on a row offers: follow each club on it (but not the one already followed),
+        for a match show only the two clubs' meetings, a head-to-head that waits for the archive, export
+        and copy. A row with no club offers only the last two."""
+        clubs = self._row_clubs(name, row, column)
+        entries = [MenuEntry(f"Follow {label}", lambda t=team_id: self.set_focus(t))
+                   for team_id, label in clubs if team_id != self.focus]
+        if name == "Results" and len(clubs) == 2:
+            (home_id, home), (away_id, away) = clubs
+            entries.append(MenuEntry(f"Show only {home} v {away}",
+                                     lambda pair=(home_id, away_id): self.set_opponent_filter(pair)))
+        if clubs:
+            entries += [MENU_SEPARATOR, MenuEntry(HEAD_TO_HEAD_LABEL), MENU_SEPARATOR]
+        kinds = ((fx.EXCEL, "Excel workbook (.xlsx)"), (fx.HTML, "Web page (.html)"), (fx.CSV, "CSV files (.csv)"))
+        children = () if self._exporting or self.comp_id is None else tuple(
+            MenuEntry(label, lambda k=kind: self.export(k)) for kind, label in kinds)
+        entries.append(MenuEntry("Export", None, children))
+        entries.append(MenuEntry("Copy", self.sheets[name].copy))
+        return entries
+
+    def _show_row_menu(self, name: str, event) -> None:
+        """Right-click on a sheet: tksheet has already selected the row; offer what _row_menu lists."""
+        sheet = self.sheets[name]
+        row = sheet.identify_row(event, allow_end=False)
+        if row is None:
+            return
+        column = sheet.identify_column(event, allow_end=False)
+        menu = self._build_menu(self._row_menu(name, row, column))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _build_menu(self, entries: Sequence[MenuEntry]) -> tk.Menu:
+        menu = tk.Menu(self, tearoff=False)
+        for entry in entries:
+            if entry is MENU_SEPARATOR:
+                menu.add_separator()
+            elif entry.children:
+                menu.add_cascade(label=entry.label, menu=self._build_menu(entry.children))
+            else:
+                menu.add_command(label=entry.label, command=entry.command,
+                                 state="normal" if entry.command else "disabled")
+        return menu
 
     # ----------------------------------------------------------------- details and About windows
 

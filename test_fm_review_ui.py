@@ -11,6 +11,7 @@ import json
 import sys
 import tempfile
 import time
+import tkinter as tk
 import unittest
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -932,6 +933,130 @@ class WindowTests(unittest.TestCase):
         pal.run_selected()
         self.assertIn("no luck", app.detail_label.cget("text"))
         self.assertIn("no luck", fm_review.ERROR_LOG.read_text(encoding="utf-8"))
+
+    # ----------------------------------------------------------------- the right-click menu
+
+    TWO_LEGS = [fx(D(2026, 9, 12), 4, 1, comp=101, md=4)]               # Derby v Hull: a second meeting
+
+    def menu_app(self, focus=None):
+        """A wide window on the Results view of the league, following `focus` (nobody by default)."""
+        app = self.app
+        self.widen()
+        app.install_dataset(dataset(extra=self.TWO_LEGS))
+        app.set_focus(focus)
+        app.set_view("Results")
+        app.update()
+        return app
+
+    @staticmethod
+    def match_row(app):
+        return next(i for i, r in enumerate(app.result_rows) if r.fixture is not None)
+
+    def test_a_results_row_offers_follow_show_only_head_to_head_export_and_copy(self):
+        app = self.menu_app()
+        row = self.match_row(app)
+        r = app.result_rows[row]
+        menu = app._row_menu("Results", row, 2)
+        labels = [e.label for e in menu]
+        self.assertEqual(labels[:3], [f"Follow {r.home}", f"Follow {r.away}", f"Show only {r.home} v {r.away}"])
+        head_to_head = next(e for e in menu if e.label.startswith("Head-to-head"))
+        self.assertIsNone(head_to_head.command)                       # greyed until v2.0
+        export = next(e for e in menu if e.label == "Export")
+        self.assertEqual([c.label for c in export.children],
+                         ["Excel workbook (.xlsx)", "Web page (.html)", "CSV files (.csv)"])
+        self.assertEqual(labels[-1], "Copy")
+
+    def test_following_from_the_menu_follows_and_the_followed_club_is_not_offered_again(self):
+        app = self.menu_app()
+        row = self.match_row(app)
+        home = app.result_rows[row].home_id
+        next(e for e in app._row_menu("Results", row, 2) if e.label.startswith("Follow")).command()
+        self.assertEqual(app.focus, home)
+        row = self.match_row(app)                                     # now only the followed team's matches
+        labels = [e.label for e in app._row_menu("Results", row, 2)]
+        self.assertNotIn(f"Follow {app.labels[home]}", labels)
+
+    def test_a_heading_row_gets_only_export_and_copy(self):
+        app = self.menu_app()
+        row = next(i for i, r in enumerate(app.result_rows) if r.is_heading)
+        self.assertEqual([e.label for e in app._row_menu("Results", row, 0)], ["Export", "Copy"])
+
+    def test_a_team_the_save_cannot_resolve_is_not_offered_to_follow(self):
+        app = self.menu_app()
+        app.select_competition(70)
+        app.set_view("Results")
+        row = self.match_row(app)
+        labels = [e.label for e in app._row_menu("Results", row, 2)]
+        self.assertIn("Follow Leeds United", labels)
+        self.assertFalse([label for label in labels if "999" in label or label.startswith("Show only")])
+
+    def test_a_table_row_offers_follow_unless_followed_a_greyed_head_to_head_and_export(self):
+        app = self.menu_app(focus=team(1))
+        app.set_view("Table")
+        app.update()
+        followed = app.table_rows.index(team(1))
+        other = next(i for i, t in enumerate(app.table_rows) if t not in (None, team(1)))
+        self.assertNotIn("Follow Hull City", [e.label for e in app._row_menu("Table", followed, 0)])
+        menu = app._row_menu("Table", other, 0)
+        self.assertEqual(menu[0].label, f"Follow {app.labels[app.table_rows[other]]}")
+        self.assertIsNone(next(e for e in menu if e.label.startswith("Head-to-head")).command)
+        self.assertEqual([e.label for e in menu][-2:], ["Export", "Copy"])
+
+    def test_export_is_greyed_while_an_export_is_running(self):
+        app = self.menu_app()
+        app._exporting = True
+        export = next(e for e in app._row_menu("Results", self.match_row(app), 2) if e.label == "Export")
+        self.assertEqual(export.children, ())
+
+    def test_show_only_filters_results_to_the_two_clubs_and_clear_removes_it(self):
+        app = self.menu_app()
+        app.set_opponent_filter((team(1), team(4)))
+        app.update()
+        matches = [r for r in app.result_rows if r.fixture is not None]
+        self.assertEqual(len(matches), 2)                             # both meetings, either way round
+        self.assertTrue(all({r.home_id, r.away_id} == {team(1), team(4)} for r in matches))
+        self.assertIn("Showing only Hull City v Derby County", app.note_label.cget("text"))
+        self.assertTrue(app.filter_clear.winfo_ismapped())
+        app.set_view("Table")
+        app.update()
+        self.assertFalse(app.filter_clear.winfo_ismapped())
+        app.set_view("Results")
+        app.filter_clear.invoke()
+        app.update()
+        self.assertIsNone(app.opponent_filter)
+        self.assertGreater(len([r for r in app.result_rows if r.fixture is not None]), 2)
+        self.assertFalse(app.filter_clear.winfo_ismapped())
+
+    def test_the_filter_clears_when_the_competition_season_or_team_changes(self):
+        app = self.menu_app()
+        changes = (lambda: app.select_competition(101), lambda: app._on_season("2027"),
+                   lambda: app.set_focus(team(1)))
+        for change in changes:
+            app.set_opponent_filter((team(1), team(4)))
+            self.assertIsNotNone(app.opponent_filter)
+            change()
+            self.assertIsNone(app.opponent_filter)
+            app.select_competition(101)
+
+    def test_the_hub_keeps_the_sheets_own_menu_and_the_other_sheets_use_ours(self):
+        app = self.menu_app()
+        self.assertTrue(app.sheets[fm_review.HUB].MT.rc_popup_menus_enabled)
+        for name in ("Results", "Grid", "Table", fm_review.ANALYSIS):
+            self.assertFalse(app.sheets[name].MT.rc_popup_menus_enabled, name)
+
+    def test_a_right_click_selects_the_row_under_the_pointer_and_opens_the_menu(self):
+        app = self.menu_app()
+        sheet = app.sheets["Results"]
+        row = self.match_row(app)
+        sheet.see(row=row)
+        self.assertTrue(self.wait_until(lambda: sheet.MT.row_positions[row] >= 0))
+        app.update()
+        y = int(sheet.MT.row_positions[row] - sheet.MT.canvasy(0)) + 5
+        with mock.patch.object(tk.Menu, "tk_popup") as popup:
+            sheet.MT.event_generate("<Button-3>", x=120, y=y, rootx=300, rooty=300)
+            app.update()
+        popup.assert_called_once()
+        self.assertEqual(sheet.get_currently_selected().row, row)
 
 
 class IconTests(unittest.TestCase):
