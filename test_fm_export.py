@@ -276,3 +276,81 @@ class FailureTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PostTests(unittest.TestCase):
+    """Copy for a post: the same content as Markdown (Reddit) and as an HTML table (rich editors)."""
+
+    def snap(self, **changes):
+        return fx.snapshot(request(**changes))
+
+    def test_the_table_post_is_a_markdown_table_with_the_followed_club_in_bold(self):
+        snap = self.snap()
+        lines = fx.post_table(snap).markdown.splitlines()
+        hull = snap.standings.groups[0][1][0]
+        self.assertEqual(lines[0], f"**Championship {snap.season_label}**")
+        self.assertEqual(lines[1], "")
+        self.assertEqual(lines[2], "| Pos | Club | P | W | D | L | GF | GA | GD | Pts | Form |")
+        self.assertEqual(lines[3], "|--:|:--|--:|--:|--:|--:|--:|--:|--:|--:|:--|")
+        self.assertEqual(lines[4], f"| 1 | **Hull City** | 2 | 2 | 0 | 0 | 5 | 2 | +3 | 6 | {' '.join(hull.form)} |")
+
+    def test_a_post_ends_with_the_in_game_date_and_the_coverage(self):
+        snap = self.snap()
+        last = fx.post_table(snap).markdown.splitlines()[-1]
+        self.assertEqual(last, f"*In-game date {dict(snap.details)['In-game date']} · {snap.coverage.describe()}*")
+        self.assertIn("no recoverable score", last)          # the league has one played match without a score
+
+    def test_a_pipe_in_a_name_is_escaped_so_the_table_holds(self):
+        snap = self.snap()
+        (name, rows), *rest = snap.standings.groups
+        odd = dataclasses.replace(rows[1], team="Brighton | Hove")
+        standings = dataclasses.replace(snap.standings, groups=((name, (rows[0], odd, *rows[2:])), *rest))
+        markdown = fx.post_table(dataclasses.replace(snap, standings=standings)).markdown
+        self.assertIn("| Brighton \| Hove |", markdown)
+
+    def test_the_table_post_has_the_same_table_in_plain_html(self):
+        snap = self.snap()
+        html = fx.post_table(snap).html
+        self.assertTrue(html.startswith(f"<p><b>Championship {snap.season_label}</b></p>\n<table>\n<thead>"))
+        self.assertIn("<tr><th>Pos</th><th>Club</th><th>P</th>", html)
+        self.assertIn("<tr><td>1</td><td><b>Hull City</b></td><td>2</td>", html)
+        self.assertTrue(html.endswith(f"</table>\n<p><i>{fx._post_footer(snap)}</i></p>"))
+
+    def test_names_are_escaped_in_the_html(self):        # a guard: escaping arrived with the HTML table
+        snap = self.snap()
+        (name, rows), *rest = snap.standings.groups
+        odd = dataclasses.replace(rows[1], team="Brighton & Hove <Albion>")
+        standings = dataclasses.replace(snap.standings, groups=((name, (rows[0], odd, *rows[2:])), *rest))
+        page = fx.post_table(dataclasses.replace(snap, standings=standings)).html
+        self.assertIn("<td>Brighton &amp; Hove &lt;Albion&gt;</td>", page)
+
+    def test_my_clubs_results_list_each_played_match_with_running_points(self):
+        snap = self.snap()
+        lines = fx.post_team_results(snap).markdown.splitlines()
+        self.assertEqual(lines[0], f"**Hull City: Championship {snap.season_label}**")
+        self.assertEqual(lines[2:6], ["| Date | Opponent | H/A | Score | Res | Pts |", "|:--|:--|:-:|:-:|:-:|--:|",
+                                      "| Sat 8 Aug | Leeds United | H | 2-1 | W | 3 |",
+                                      "| Sat 15 Aug | Derby County | A | 3-1 | W | 6 |"])
+
+    def test_with_no_followed_club_there_is_no_club_post(self):    # a guard: the case arrived with the builder
+        self.assertIsNone(fx.post_team_results(self.snap(focus=None)))
+
+    def test_my_clubs_results_end_with_the_next_match(self):
+        post = fx.post_team_results(self.snap())
+        self.assertIn("\n\nNext: Sheffield United (H), Sat 26 Sep\n\n", post.markdown)
+        self.assertIn("<p>Next: Sheffield United (H), Sat 26 Sep</p>", post.html)
+
+    def test_a_played_match_with_no_recoverable_score_reads_n_a(self):     # a guard: arrived with the builder
+        markdown = fx.post_team_results(self.snap(focus=team(2))).markdown
+        self.assertIn("| Sheffield United | H | n/a |", markdown)
+
+    def test_recent_results_are_the_latest_group_with_a_played_match(self):
+        snap = self.snap()
+        lines = fx.post_recent_results(snap).markdown.splitlines()
+        self.assertTrue(lines[0].startswith(f"**Championship {snap.season_label}: "))
+        self.assertEqual(lines[2:6], ["| Date | Home | Score | Away |", "|:--|--:|:-:|:--|",
+                                      "| Sat 15 Aug | Derby County | 1-3 | Hull City |",
+                                      "| Sat 15 Aug | Leeds United | n/a | Sheffield United |"])
+
+    def test_a_season_with_nothing_played_has_no_recent_results(self):     # a guard: arrived with the builder
+        self.assertIsNone(fx.post_recent_results(self.snap(season=2027)))

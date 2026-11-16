@@ -314,6 +314,107 @@ CENTRE = Alignment(horizontal="center", vertical="center")
 THIN = Side(style="thin", color="FF9CA3AF")
 
 
+# --------------------------------------------------------------------------- copy for a post
+
+
+@dataclass(frozen=True, slots=True)
+class Post:
+    """One "Copy for a post" item: the same content as Markdown (Reddit, Discord) and as HTML (rich editors)."""
+
+    title: str
+    markdown: str
+    html: str
+
+
+class _Strong(str):
+    """A cell to show in bold: the followed club."""
+
+
+def _md_cell(cell: object) -> str:
+    text = str(cell).replace("|", "\\|")
+    return f"**{text}**" if isinstance(cell, _Strong) else text
+
+
+def _html_cell(cell: object, tag: str = "td") -> str:
+    text = html.escape(str(cell))
+    return f"<{tag}><b>{text}</b></{tag}>" if isinstance(cell, _Strong) else f"<{tag}>{text}</{tag}>"
+
+
+def _post(title: str, header: Sequence[str], align: str, rows: Sequence[Sequence[object]], footer: str,
+          after: str = "") -> Post:
+    """The same rows as a Markdown table and as a plain HTML table (no styles: forums strip them), with an
+    optional line after the table."""
+    markdown = [f"**{title}**", "", "| " + " | ".join(header) + " |", align]
+    markdown += ["| " + " | ".join(_md_cell(c) for c in row) + " |" for row in rows]
+    markdown += (["", after] if after else []) + ["", f"*{footer}*"]
+    page = [f"<p><b>{html.escape(title)}</b></p>", "<table>", "<thead>",
+            "<tr>" + "".join(_html_cell(h, "th") for h in header) + "</tr>", "</thead>", "<tbody>"]
+    page += ["<tr>" + "".join(_html_cell(c) for c in row) + "</tr>" for row in rows]
+    page += ["</tbody>", "</table>"] + ([f"<p>{html.escape(after)}</p>"] if after else [])
+    page += [f"<p><i>{html.escape(footer)}</i></p>"]
+    return Post(title, "\n".join(markdown), "\n".join(page))
+
+
+def post_table(snap: Snapshot) -> Post:
+    """The league table, for a post."""
+    rows = []
+    for _, group in snap.standings.groups:
+        for r in group:
+            gd = r.goal_difference
+            rows.append([r.position, _Strong(r.team) if r.team_id == snap.focus else r.team, r.played, r.won, r.drawn,
+                         r.lost, r.goals_for, r.goals_against, f"{gd:+d}" if gd else "0", r.points, " ".join(r.form)])
+    return _post(f"{snap.title} {snap.season_label}",
+                 ["Pos", "Club", "P", "W", "D", "L", "GF", "GA", "GD", "Pts", "Form"],
+                 "|--:|:--|--:|--:|--:|--:|--:|--:|--:|--:|:--|", rows, _post_footer(snap))
+
+
+def post_team_results(snap: Snapshot) -> Post | None:
+    """The followed club's played matches with running points, its goals first; None without one."""
+    if snap.focus is None:
+        return None
+    rows = []
+    for r in snap.focus_results:
+        f = r.fixture
+        if f is None or not f.played:
+            continue
+        home = f.home_team_id == snap.focus
+        mine, theirs = (f.home_goals, f.away_goals) if home else (f.away_goals, f.home_goals)
+        score = f"{mine}-{theirs}" if fd.has_score(f) else "n/a"
+        rows.append([r.date, r.away if home else r.home, "H" if home else "A", score, r.result, r.points])
+    after = ""
+    coming = fd.next_match(snap.fixtures, snap.focus)
+    if coming is not None:
+        home = coming.home_team_id == snap.focus
+        opponent = snap.labels.get(coming.away_team_id if home else coming.home_team_id, "")
+        when = f", {coming.date:%a} {coming.date.day} {coming.date:%b}" if coming.date else ""
+        after = f"Next: {opponent} ({'H' if home else 'A'}){when}"
+    return _post(f"{snap.focus_label}: {snap.title} {snap.season_label}",
+                 ["Date", "Opponent", "H/A", "Score", "Res", "Pts"], "|:--|:--|:-:|:-:|:-:|--:|", rows,
+                 _post_footer(snap), after)
+
+
+def post_recent_results(snap: Snapshot) -> Post | None:
+    """The latest group of the Results grouping (week, matchday or date) with a played match; None if none."""
+    groups: list[tuple[str, list[fd.TimelineRow]]] = []
+    for r in snap.results:
+        if r.is_heading:
+            groups.append((r.heading.split("   ·   ")[0], []))
+        elif groups:
+            groups[-1][1].append(r)
+    latest = next(((heading, rows) for heading, rows in reversed(groups)
+                   if any(r.fixture is not None and r.fixture.played for r in rows)), None)
+    if latest is None:
+        return None
+    heading, rows = latest
+    return _post(f"{snap.title} {snap.season_label}: {heading}", ["Date", "Home", "Score", "Away"],
+                 "|:--|--:|:-:|:--|", [[r.date, r.home, r.score, r.away] for r in rows], _post_footer(snap))
+
+
+def _post_footer(snap: Snapshot) -> str:
+    """How complete the data behind a post is, so a reader is never misled by a missing score."""
+    return f"In-game date {dict(snap.details)['In-game date']} · {snap.coverage.describe()}"
+
+
 def workbook(snap: Snapshot) -> Workbook:
     """Table, Grid, Results, the followed team's results when one is followed, and About."""
     book = Workbook()
