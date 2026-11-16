@@ -19,6 +19,7 @@ from unittest import mock
 import customtkinter as ctk
 
 import club_colours
+import command_palette
 import fm_data as fd
 import fm_review
 import palette
@@ -41,8 +42,8 @@ def texts_in(widget) -> list[str]:
     return found
 
 
-def dataset(match_stats=None) -> fd.Dataset:
-    fixtures = LEAGUE + [
+def dataset(match_stats=None, extra=()) -> fd.Dataset:
+    fixtures = LEAGUE + list(extra) + [
         fx(D(2027, 8, 7), 1, 2, season=2027, md=1),                          # next season, unplayed
         fx(D(2026, 7, 20), 1, 5, 2, 2, comp=131, season=None),               # a friendly
         fx(D(2026, 8, 10), 1, 4, 1, 0, comp=60, home_slot=1, away_slot=1),   # youth league
@@ -51,7 +52,7 @@ def dataset(match_stats=None) -> fd.Dataset:
     stored = NS(competition_id=101, rows=(row(1, 1, 2, 2, 0, 0, 5, 2, 6), row(4, 2), row(2, 3), row(3, 4)))
     rules = [NS(competition_id=101, promotion_places=1, playoff_places=1, relegation_places=1, rounds=())]
     return fd.build_dataset(info(), fixtures, clubs=[club(1, slots=(0, 1)), club(2), club(3), club(4), club(5)],
-                            competitions=[NS(id=101, database_id=12)], tables=[stored], rules=rules,
+                            competitions=[NS(id=101, database_id=12), NS(id=102, database_id=13)], tables=[stored], rules=rules,
                             match_stats=match_stats)
 
 
@@ -752,6 +753,185 @@ class WindowTests(unittest.TestCase):
         self.app = fm_review.FMReviewApp()          # tearDown closes this one
         self.app.geometry("1300x800+-4000+0")
         self.assertIs(self.app.theme, palette.MIDNIGHT_EMERALD)
+
+    # ----------------------------------------------------------------- the command palette
+
+    def palette_app(self, extra=()):
+        """A wide window with a save installed, and its palette. `extra` adds fixtures (a second league)."""
+        app = self.app
+        self.widen()
+        app.install_dataset(dataset(extra=extra))
+        app.names = {12: "Championship", 13: "League One"}
+        app.update()
+        return app, app.command_palette
+
+    OTHER_LEAGUE = [fx(D(2026, 8, 8), 5, 4, 1, 0, comp=102, md=1)]       # Wrexham v Derby, a second league
+
+    def test_ctrl_k_and_ctrl_p_open_the_palette_and_escape_closes_it_unchanged(self):
+        app, pal = self.palette_app()
+        for sequence in ("<Control-k>", "<Control-p>"):
+            app.event_generate(sequence)
+            app.update()
+            self.assertTrue(pal.is_open, sequence)
+            before = (app.comp_id, app.view, app.focus, app.season)
+            pal.entry._entry.event_generate("<Escape>")
+            app.update()
+            self.assertFalse(pal.is_open, sequence)
+            self.assertEqual((app.comp_id, app.view, app.focus, app.season), before)
+
+    def test_a_view_is_chosen_by_typing_and_enter(self):
+        app, pal = self.palette_app()
+        app.open_palette()
+        app.update()                                         # focus moves to the box before keys are sent
+        pal.set_query("table")
+        self.assertEqual(pal.results[0].title, "Table")
+        pal.entry._entry.event_generate("<Return>")
+        app.update()
+        self.assertFalse(pal.is_open)
+        self.assertEqual(app.view, "Table")
+
+    def test_a_competition_is_opened_by_its_name(self):
+        app, pal = self.palette_app(self.OTHER_LEAGUE)
+        app.open_palette()
+        pal.set_query("league one")
+        self.assertEqual(pal.results[0].title, "League One")
+        pal.run_selected()
+        self.assertEqual(app.comp_id, 102)
+
+    def test_a_club_from_another_league_opens_that_league_and_is_followed(self):
+        app, pal = self.palette_app(self.OTHER_LEAGUE)
+        app.open_palette()
+        pal.set_query("wrexham")
+        clubs = [(i.title, i.detail) for i in pal.results if i.kind == "Club"]
+        self.assertEqual(clubs, [("Wrexham", "League One")])
+        pal.run_selected()
+        self.assertEqual(app.comp_id, 102)
+        self.assertEqual(app.labels[app.focus], "Wrexham")
+
+    def test_a_club_met_only_in_friendlies_is_not_offered(self):
+        app, pal = self.palette_app()
+        app.open_palette()
+        pal.set_query("wrexham")
+        self.assertEqual([i for i in pal.results if i.kind == "Club"], [])
+
+    def test_the_open_competitions_teams_are_offered_whatever_it_is(self):
+        app, pal = self.palette_app()
+        app.select_competition(60)                           # a youth league: not a senior competition
+        app.open_palette()
+        pal.set_query("derby")
+        self.assertEqual((pal.results[0].title, pal.results[0].detail), ("Derby County", "Competition 60"))
+        pal.run_selected()
+        self.assertEqual((app.comp_id, app.labels[app.focus]), (60, "Derby County"))
+
+    def test_following_a_club_that_the_competition_does_not_hold_says_so(self):
+        app, pal = self.palette_app()
+        app._follow_club_in(101, team(5), "Wrexham")
+        self.assertIn("no matches", app.detail_label.cget("text"))
+
+    def test_a_club_chosen_from_the_hub_leaves_it_for_the_last_competition_view(self):
+        app, pal = self.palette_app(self.OTHER_LEAGUE)
+        app.set_view("Table")
+        app.set_view(fm_review.HUB)
+        app.open_palette()
+        pal.set_query("wrexham")
+        pal.run_selected()
+        self.assertEqual(app.view, "Table")
+
+    def test_splits_switch_to_their_view_and_set_the_switch(self):
+        app, pal = self.palette_app()
+        app.open_palette()
+        pal.set_query("table home")
+        pal.run_selected()
+        self.assertEqual((app.view, app.table_split, app.split_switch.get()), ("Table", fd.SPLIT_HOME, fd.SPLIT_HOME))
+        app.open_palette()
+        pal.set_query(f"results {fd.GROUP_BY_MATCHDAY}")
+        pal.run_selected()
+        self.assertEqual((app.view, app.group_by, app.group_switch.get()),
+                         ("Results", fd.GROUP_BY_MATCHDAY, fd.GROUP_BY_MATCHDAY))
+        app.open_palette()
+        pal.set_query("analysis positions")
+        pal.run_selected()
+        self.assertEqual((app.view, app.analysis), (fm_review.ANALYSIS, "Positions"))
+
+    def test_an_export_action_exports(self):
+        app, pal = self.palette_app()
+        app.open_palette()
+        pal.set_query("excel")
+        with mock.patch.object(app, "export") as export:
+            pal.run_selected()
+        export.assert_called_once_with(fm_review.fx.EXCEL)
+
+    def test_a_theme_is_chosen_from_the_palette(self):
+        app, pal = self.palette_app()
+        app.open_palette()
+        pal.set_query("cyber")
+        pal.run_selected()
+        self.assertEqual(app.theme.name, "Cyber Pitch")
+
+    def test_without_a_save_only_what_applies_is_offered(self):
+        app = self.app
+        app.open_palette()
+        pal = app.command_palette
+        pal.set_query("open save")
+        self.assertEqual(pal.visible_titles(), ["Open save…"])
+        for absent in ("table", "excel", "details"):
+            pal.set_query(absent)
+            self.assertEqual(pal.results, [], absent)
+        pal.set_query("about")
+        self.assertEqual(pal.visible_titles(), ["About"])
+
+    def test_a_query_with_nothing_to_match_offers_no_clubs(self):
+        app, pal = self.palette_app(self.OTHER_LEAGUE)
+        app.open_palette()
+        for query in ("", "  ", " -- "):
+            pal.set_query(query)
+            self.assertTrue(pal.results)
+            self.assertTrue({i.kind for i in pal.results} <= {"View", "Split", "Action"}, query)
+
+    def test_the_palette_closes_when_a_save_loads(self):
+        app, pal = self.palette_app()
+        app.open_palette()
+        app.install_dataset(dataset())
+        self.assertFalse(pal.is_open)
+
+    def test_a_theme_change_recolours_the_open_palette(self):
+        app, pal = self.palette_app()
+        app.open_palette()
+        app.set_theme("Cyber Pitch")
+        self.assertEqual(pal._rows[0][0].cget("fg_color"), app.theme.list_selected[0])
+        self.assertEqual(pal.cget("fg_color"), app.theme.panel)
+
+    def test_up_and_down_move_the_selection_and_wrap(self):
+        app, pal = self.palette_app()
+        app.open_palette()
+        app.update()
+        count = len(pal.results)
+        self.assertGreater(count, 2)
+        pal.entry._entry.event_generate("<Up>")
+        self.assertEqual(pal.selected_index, count - 1)
+        pal.entry._entry.event_generate("<Down>")
+        pal.entry._entry.event_generate("<Down>")
+        self.assertEqual(pal.selected_index, 1)
+
+    def test_ctrl_k_in_the_team_box_opens_the_palette_and_keeps_the_text(self):
+        app, pal = self.palette_app()
+        app.team_box.focus_set()
+        app.update()
+        app.team_box._entry.event_generate("<Control-k>")
+        app.update()
+        self.assertTrue(pal.is_open)
+        self.assertEqual(app.team_box.get(), "Hull City")
+
+    def test_a_command_that_fails_is_reported_and_logged_not_raised(self):
+        app, pal = self.palette_app()
+
+        def boom():
+            raise RuntimeError("no luck")
+
+        pal.open([command_palette.PaletteItem(command_palette.VIEW, "Boom", action=boom)])
+        pal.run_selected()
+        self.assertIn("no luck", app.detail_label.cget("text"))
+        self.assertIn("no luck", fm_review.ERROR_LOG.read_text(encoding="utf-8"))
 
 
 class IconTests(unittest.TestCase):

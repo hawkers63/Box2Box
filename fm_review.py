@@ -39,6 +39,7 @@ except ImportError:
     COPY, DND_FILES, REFUSE_DROP, TkinterDnD = "copy", "DND_Files", "refuse_drop", None
 
 import club_colours
+import command_palette
 import fm_data as fd
 import fm_export as fx
 import palette
@@ -494,6 +495,7 @@ class FMReviewApp(_Root):
         self._search_job: str | None = None
         self._resize_job: str | None = None       # the view switch's counts follow the window's width
         self._dataset_serial = 0                  # bumped per installed save
+        self._club_cache: tuple[int, tuple[fd.ClubEntry, ...]] | None = None    # the palette's clubs, per save
         self._hub_key: tuple | None = None        # what the Competitions sheet was last filled from
         self._hub_summary = ""
         self._hub_categories: list[str] = []      # the hub's category on each row, for painting
@@ -699,6 +701,13 @@ class FMReviewApp(_Root):
         self._show_welcome()
         self._refresh_status()
         self.bind("<Configure>", self._on_resize, add="+")
+        self.command_palette = command_palette.CommandPalette(self, px=self.px, on_error=self._palette_failed,
+                                                              theme=self.theme)
+        for key in ("<Control-k>", "<Control-K>", "<Control-p>", "<Control-P>"):
+            self.bind(key, self._on_palette_key)
+            # In a text box Ctrl+K would also delete to the end of the line: open the palette instead of that.
+            self.team_box.bind(key, self._on_palette_key, add=True)
+            self.search_entry.bind(key, self._on_palette_key, add=True)
 
     def _make_sheet(self, parent, **options) -> Sheet:
         """A sheet in the shared style; its colours come from the theme (see _recolour)."""
@@ -740,6 +749,8 @@ class FMReviewApp(_Root):
         self.configure(fg_color=t.window)
         for role, widget in self._themed:
             widget.configure(**styles[role])
+        if getattr(self, "command_palette", None) is not None:
+            self.command_palette.restyle(t)
         selected = t.selection[0]
         border = t.selection[1]
         for name, sheet in self.sheets.items():
@@ -949,6 +960,7 @@ class FMReviewApp(_Root):
             messagebox.showerror("Could not open the save", f"{payload}{kept}", parent=self)
 
     def install_dataset(self, dataset: fd.Dataset) -> None:
+        self.close_palette()                       # its items describe the save that was open
         self.dataset = dataset
         self._dataset_serial += 1
         self.settings["last_save"] = dataset.info.path
@@ -1913,6 +1925,108 @@ class FMReviewApp(_Root):
         elif name == HUB and self.view == HUB and 0 <= row < len(self.comp_row_ids):
             if self.comp_row_ids[row] != self.comp_id:
                 self.select_competition(self.comp_row_ids[row])
+
+    # ----------------------------------------------------------------- the command palette
+
+    def open_palette(self) -> None:
+        """Open the command palette over the window, with items for the save and view as they are now."""
+        self.command_palette.open(self._palette_items())
+
+    def close_palette(self) -> None:
+        self.command_palette.close()
+
+    def _on_palette_key(self, _event=None) -> str:
+        self.open_palette()
+        return "break"
+
+    def _palette_failed(self, exc: Exception) -> None:
+        self._log_error(traceback.format_exc())
+        self.detail_label.configure(text=f"That command failed: {exc}")
+
+    def _club_entries(self) -> tuple[fd.ClubEntry, ...]:
+        """The clubs the palette offers, worked out once for each installed save."""
+        if self._club_cache is None or self._club_cache[0] != self._dataset_serial:
+            self._club_cache = (self._dataset_serial, fd.club_index(self.dataset))
+        return self._club_cache[1]
+
+    def _palette_items(self) -> list[command_palette.PaletteItem]:
+        """Everything the palette can do just now. What cannot apply (no save, an export under way) is
+        left out rather than greyed."""
+        cp = command_palette
+        items: list[cp.PaletteItem] = []
+
+        def add(kind, title, action, detail="", priority=0):
+            items.append(cp.PaletteItem(kind, title, detail, action, priority))
+
+        ds = self.dataset
+        ready = ds is not None and self.comp_id is not None
+        if ds is not None:
+            for view in VIEWS:
+                add(cp.VIEW, view, lambda v=view: self.set_view(v))
+        if ready:
+            for split in fd.SPLITS:
+                add(cp.SPLIT, f"Table: {split}", lambda s=split: self._palette_split("Table", s))
+            for grouping in GROUPINGS:
+                add(cp.SPLIT, f"Results by {grouping}", lambda g=grouping: self._palette_split("Results", g))
+            for analysis in ANALYSES:
+                add(cp.SPLIT, f"Analysis: {analysis}", lambda a=analysis: self._palette_split(ANALYSIS, a))
+            if not self._exporting:
+                for kind, label in ((fx.EXCEL, "Excel workbook"), (fx.HTML, "web page"), (fx.CSV, "CSV files")):
+                    add(cp.ACTION, f"Export as {label}", lambda k=kind: self.export(k))
+            add(cp.ACTION, "Name this competition…", self.rename_competition)
+        add(cp.ACTION, "Open the export folder", self.open_export_folder)
+        if self.loading_since is None:
+            add(cp.ACTION, "Open save…", self.choose_save)
+        if ds is not None:
+            add(cp.ACTION, "Save details & warnings", self.show_details)
+        add(cp.ACTION, "About", self.show_about)
+        for theme in palette.THEMES:
+            add(cp.ACTION, f"Theme: {theme.name}", lambda n=theme.name: self.set_theme(n))
+        if self._followed_club():
+            add(cp.ACTION, "Club colours…", self.show_club_colours)
+        if self.focus is not None:
+            add(cp.ACTION, "Clear followed team", lambda: self.set_focus(None))
+        if ds is not None:
+            for comp in ds.competitions:
+                add(cp.COMPETITION, fd.competition_list_label(comp, self.names),
+                    lambda c=comp.id: self.select_competition(c), f"{comp.team_count} teams",
+                    1 if comp.id == self.comp_id else 0)
+            shown: set[tuple[int, int]] = set()
+            if self.comp_id is not None:
+                open_title = fd.competition_title(ds.by_id[self.comp_id], self.names)
+                for team_id, label in self.labels.items():          # the open competition's own teams, any kind
+                    shown.add((team_id, self.comp_id))
+                    add(cp.CLUB, label, lambda c=self.comp_id, t=team_id, n=label: self._follow_club_in(c, t, n),
+                        open_title, 1)
+            for entry in self._club_entries():
+                if (entry.team_id, entry.competition_id) not in shown:
+                    title = fd.competition_title(ds.by_id[entry.competition_id], self.names)
+                    add(cp.CLUB, entry.label,
+                        lambda e=entry: self._follow_club_in(e.competition_id, e.team_id, e.label), title)
+        return items
+
+    def _palette_split(self, view: str, value: str) -> None:
+        """Go to a view and set the switch it uses (the table's split, results' grouping or analysis panel)."""
+        self.set_view(view)
+        if view == "Table":
+            self.split_switch.set(value)
+            self._on_table_split(value)
+        elif view == "Results":
+            self.group_switch.set(value)
+            self._on_group(value)
+        else:
+            self._on_analysis(value)
+
+    def _follow_club_in(self, comp_id: int, team_id: int, name: str) -> None:
+        """Open a club in the competition it was listed under and follow it. From the hub the last
+        competition view opens, so the club is seen."""
+        if comp_id != self.comp_id:
+            if self.view == HUB:
+                self.set_view(self.last_comp_view)
+            self.select_competition(comp_id)
+        self.set_focus(team_id)
+        if self.focus != team_id:
+            self.detail_label.configure(text=f"{name} has no matches in this competition and season.")
 
     # ----------------------------------------------------------------- details and About windows
 
