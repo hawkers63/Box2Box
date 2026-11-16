@@ -13,9 +13,9 @@ Saves are read with [fmsave](https://rhiever.github.io/fmsave/) and are never mo
 
 **Database viewer** · entry point `fm_review.py` · launcher `Box2Box.bat`
 
-**Release:** 1.3  
+**Release:** 1.4  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 1.3), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 1.4), launched with `Box2Box.bat`
 
 </div>
 
@@ -126,7 +126,9 @@ Exports go to `Documents\Box2Box` (*Export ▾ → Open the export folder*), one
 | `fm_export.py` | Excel, web page and CSV exports of one competition and season |
 | `palette.py` | The app's colour themes and how club colours are worked into them, shared by the window and the exports |
 | `club_colours.py` | Football clubs' colours, for the followed club's tint |
-| `test_fm_data.py`, `test_fm_export.py`, `test_fm_review_ui.py`, `test_palette.py`, `test_club_colours.py`, `test_probe.py` | Test suite |
+| `command_palette.py` | The command palette: how a query finds and ranks items, and the overlay that shows them |
+| `inspector.py` | The inspector drawer: what it can show, and the overlay that draws it |
+| `test_fm_data.py`, `test_fm_export.py`, `test_fm_review_ui.py`, `test_palette.py`, `test_club_colours.py`, `test_command_palette.py`, `test_inspector.py`, `test_probe.py` | Test suite |
 | `requirements.txt` | Pinned Python dependencies |
 | `LICENSE` | Proprietary All Rights Reserved licence |
 | `CHANGELOG.md` | Release history |
