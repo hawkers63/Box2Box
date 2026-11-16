@@ -1,8 +1,8 @@
 # Changelog
 
-**Release:** 1.2  
+**Release:** 1.3  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 1.2), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 1.3), launched with `Box2Box.bat`
 
 All notable changes to this project will be documented in this file.
 
@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [1.3] - 2026-11-16
+
+Adds colour themes, the colours of the club you follow, form drawn as badges, and the Box2Box icon with a launcher.
 
 ### Added
 
@@ -20,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Exports follow the theme.** The Excel workbook and the web page are made in the colours the window had when you chose Export, club colours included: the workbook's zone, result, heading and followed-team fills, and the page's stylesheet, which is now written from the theme as CSS variables. The workbook's sheets stay white, and the followed team's name in Results is written in a colour that reads on white. CSV is unchanged.
 - The Box2Box football icon on the main window, the About and save details windows and the naming dialog, and on the taskbar button, where Box2Box now appears as itself rather than as Python.
 - `Box2Box.exe`, a small launcher that carries the icon, and a desktop shortcut to it. `build_launcher.ps1` compiles it from `launcher\Box2Box.cs` with the C# compiler that comes with Windows. It starts Box2Box as `Box2Box.bat` does and opens a save dropped onto it.
+
+### Changed
+
+- The web page export's stylesheet is written from the theme as CSS variables. Under Midnight Emerald, without club colours, the page and the Excel workbook come out exactly as in 1.2.
+- The README has new screenshots and a section on themes and club colours.
+
+### Fixed
+
+- The README said the Form table shows the last six matches; it shows the last five.
 
 ## [1.2] - 2026-11-15
 

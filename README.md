@@ -13,9 +13,9 @@ Saves are read with [fmsave](https://rhiever.github.io/fmsave/) and are never mo
 
 **Database viewer** · entry point `fm_review.py` · launcher `Box2Box.bat`
 
-**Release:** 1.2  
+**Release:** 1.3  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 1.2), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 1.3), launched with `Box2Box.bat`
 
 </div>
 
@@ -25,21 +25,28 @@ Saves are read with [fmsave](https://rhiever.github.io/fmsave/) and are never mo
 
 - **Competitions hub.** Browse every competition in the save, classified into *Your Club*, *League*, *Cup*, *Youth / Reserves* and *Friendlies*. The hub shows entrants, fixture volume, matches played and season progress. Click a row to select that competition; double-click it, or pick it in the list on the left, to open it in the view you last used.
 - **Fixture grid.** A high-contrast home-and-away matrix. When you follow a club, its row and column show results from that club's perspective (emerald for wins, amber for draws, crimson for defeats).
-- **League standings.** Broadcast-style zone colours for promotion, play-offs and relegation, taken from the save's own competition rules where they can be matched — for example the Championship shows 1st–2nd promoted, 3rd–8th in the play-offs and 22nd–24th relegated. Where the rules cannot be matched (League One and League Two before their season starts), and for the Champions League and Europa League places of a 20-team top division, the zones are estimated from the league's size, and the note above the table says so. Zones are shown on the Overall table. Split the table instantly between **Overall**, **Home**, **Away** and **Form (last six matches)**. A table worked out from the results separates teams level on points as the competition's own rules list them, where results can settle it (wins first in MLS and Brazil, goal difference first in most leagues), and the note says which order it used.
+- **League standings.** Broadcast-style zone colours for promotion, play-offs and relegation, taken from the save's own competition rules where they can be matched — for example the Championship shows 1st–2nd promoted, 3rd–8th in the play-offs and 22nd–24th relegated. Where the rules cannot be matched (League One and League Two before their season starts), and for the Champions League and Europa League places of a 20-team top division, the zones are estimated from the league's size, and the note above the table says so. Zones are shown on the Overall table. Split the table instantly between **Overall**, **Home**, **Away** and **Form (last five matches)**. Form is drawn as coloured W, D, L and ? badges, each row has a strip down its left edge in its zone's colour, a colour key sits under the table, and a small bar under each goal difference shows how large it is. A table worked out from the results separates teams level on points as the competition's own rules list them, where results can settle it (wins first in MLS and Brazil, goal difference first in most leagues), and the note says which order it used.
 - **Analysis.** Three looks at a season, each stating how much of it the save covers:
   - **Form:** every team's last five results, current run, points per game, totals (clean sheets and failures to score among them) and longest winning, unbeaten, winless and losing runs, with the season's records underneath. Click a team to follow it; its last five appear in words below the sheet. A played match whose score the save does not hold shows as **?**, counts in no total, and any run it touches reads "at least".
   - **Positions:** each team's place after every matchday, worked out from the results and ranked within each of the game's tables (conferences and zones included), coloured by zone, and checked against the game's own table.
   - **xG:** each team's expected goals for and against, from the match reports the save kept, beside its goals in the same matches. Over- and under-performance are green or red only where they average more than 0.25 goals a match. Missing values are left blank, never shown as 0.00.
+- **Themes and club colours.** Four colour themes, switched at once from **Theme ▾**, and the colours of the club you follow worked into the title band, the selected view and the followed team's highlight. See *Themes and club colours* below.
 - **Weekly results.** Every match in chronological order, grouped by calendar week (Monday start), matchday or date. Pick a club to view their campaign with W/D/L indicators and running points. Matches with a match report in the save show their expected goals (xG); click one for its xG scoreline, for example `Hull City [1.82] 2-1 [0.45] Leeds United`.
 - **Coverage.** Transparent counts of played matches, matches still to play, and played matches with unrecovered scorelines ("n/a").
 - **Competition names.** Saves do not store competition names, so a competition first appears by its id and best-known clubs, for example `[8] West Ham, Wolves, Burnley`. Use **Name this competition…** to name it. Names go in `competition_names.csv` (`database_id,name`), keyed on the game's database id, so they apply to every save and can be edited in Excel. fmsave reads the same format.
 
 ## Glimpse
 
-A screenshot of the main window, captured on Windows with no save open.
+The main window on a made-up league of fictional clubs, in the Midnight Emerald theme. Nothing here is read from a save: the data is invented for the picture, and so is the followed club, whose colours were set by hand with **Club colours…**.
 
 <div align="center">
   <img src="docs/screenshots/main-window.png" alt="Box2Box main window" width="80%">
+</div>
+
+The four themes on the same made-up league: Midnight Emerald, Cyber Pitch, Deep Slate & Gold and High-Contrast.
+
+<div align="center">
+  <img src="docs/screenshots/themes.png" alt="The four Box2Box themes" width="80%">
 </div>
 
 ## Quick start
@@ -71,6 +78,21 @@ Python 3.12 or newer is required. This working tree uses Python 3.14 in `.venv`.
 
 This compiles `launcher\Box2Box.cs` with the C# compiler that comes with Windows, so nothing else needs installing. It writes `Box2Box.exe` next to `Box2Box.bat` and puts a **Box2Box** shortcut on the desktop; add `-NoShortcut` to leave the desktop alone. Keep the exe in the Box2Box folder and start it from the shortcut, because on its own it cannot find the app. It never needs rebuilding when Box2Box is updated, and `Box2Box.bat` still works as before.
 
+## Themes and club colours
+
+**Theme ▾**, at the top right, changes the window's colours at once, and you stay where you are: the competition, season, team, view and scroll position do not move. Four themes come with Box2Box:
+
+- **Midnight Emerald**, the original look and the default.
+- **Cyber Pitch**: near-black surfaces with electric cyan.
+- **Deep Slate & Gold**: broadcast slate with gold headings and controls.
+- **High-Contrast**: white on black with yellow, where every coloured cell reads at 4.5:1 or better (the usual measure of readable text). It shows no club colours.
+
+Your choice is remembered in `box2box_settings.json`.
+
+The club you follow also lends its colours to the title band (with a stripe of both colours along its foot), the selected view and the followed team's highlight. They never replace a colour that carries meaning: results, zones and headings keep theirs, and a club colour is lightened or darkened until it can be read and stands apart from what surrounds it.
+
+The colours come from a built-in list: every English league club, and the big sides of Spain, Germany, Italy, France, Portugal, the Netherlands, Scotland and Turkey. For another club, or to correct one, follow that club and choose **Theme ▾ → Club colours…**: pick its main and second colours with Windows' colour picker, or choose **No club colours**, or **Use the built-in colours** to undo a change. Your changes are kept in `box2box_settings.json`, which stays on your machine.
+
 ## Exports
 
 **Export ▾** (next to *Name this competition…*) saves the competition and season you are looking at:
@@ -84,6 +106,8 @@ This compiles `launcher\Box2Box.cs` with the C# compiler that comes with Windows
 - **Web page (.html):** one file with the same sections and colours, plus a box to show one team's matches. It opens in any browser and needs nothing else, so it can be shared as it is.
 - **CSV files (.csv):** Results, Table, Grid and About, in a folder of their own, for your own analysis. Scores are written with an en dash (2–1) so that Excel does not turn them into dates.
 
+Exports are made in the colours the window has when you choose Export: its theme, and the colours of the club you follow if it has any. The workbook's sheets stay white, and CSV files are plain text.
+
 Exports go to `Documents\Box2Box` (*Export ▾ → Open the export folder*), one per competition and season. Each is named after the competition, the season and the save's in-game date, for example `Championship 2026-27 (2026-07-16).xlsx`, so exporting the same save again replaces it while a later save gets a file of its own. Every export says which save it came from, how complete the data is, and whether the zones are the game's or estimated. If Excel has the workbook open, Box2Box leaves the old file alone and asks you to close it first.
 
 ## Project layout
@@ -96,8 +120,9 @@ Exports go to `Documents\Box2Box` (*Export ▾ → Open the export folder*), one
 | `fm_review.py` | The main Box2Box desktop application (CustomTkinter + tksheet) |
 | `fm_data.py` | Pure data layer: parsing, grid matrices, standings, form, positions, expected goals and competition summaries |
 | `fm_export.py` | Excel, web page and CSV exports of one competition and season |
-| `palette.py` | The app's colours, shared by the window and the exports |
-| `test_fm_data.py`, `test_fm_export.py`, `test_fm_review_ui.py`, `test_probe.py` | Test suite |
+| `palette.py` | The app's colour themes and how club colours are worked into them, shared by the window and the exports |
+| `club_colours.py` | Football clubs' colours, for the followed club's tint |
+| `test_fm_data.py`, `test_fm_export.py`, `test_fm_review_ui.py`, `test_palette.py`, `test_club_colours.py`, `test_probe.py` | Test suite |
 | `requirements.txt` | Pinned Python dependencies |
 | `LICENSE` | Proprietary All Rights Reserved licence |
 | `CHANGELOG.md` | Release history |
