@@ -1068,6 +1068,184 @@ class WindowTests(unittest.TestCase):
         pal.run_selected()
         self.assertEqual(app.comp_id, 102)
 
+    # ----------------------------------------------------------------- the inspector drawer
+
+    REPORT = match_stats(LEAGUE[0], 1.82, 0.45)                           # Hull 2-1 Leeds has a match report
+
+    def inspector_app(self, reports=True, focus=team(1)):
+        """A wide window on the league's Results, the drawer shut, following `focus`."""
+        app = self.app
+        self.widen()
+        app.install_dataset(dataset(match_stats=self.REPORT if reports else None))
+        app.names = {12: "Championship"}
+        app.set_focus(focus)
+        app.set_view("Results")
+        app.update()
+        return app, app.inspector
+
+    def select(self, name, row, column=None):
+        """Select a row (or a cell) on a sheet the way a click does, then let the window react."""
+        sheet = self.app.sheets[name]
+        if column is None:
+            sheet.select_row(row, run_binding_func=False)
+        else:
+            sheet.select_cell(row, column, run_binding_func=False)
+        self.app._on_sheet_select(name)
+        self.app.update()
+
+    def select_match(self, home, away):
+        app = self.app
+        row = next(i for i, r in enumerate(app.result_rows)
+                   if r.fixture is not None and (r.fixture.home_team_id, r.fixture.away_team_id) == (team(home), team(away)))
+        self.select("Results", row)
+
+    def test_the_button_ctrl_i_the_palette_and_escape_open_and_close_the_drawer(self):
+        app, drawer = self.inspector_app()
+        self.assertFalse(drawer.is_open)
+        app.inspector_button.invoke()
+        self.assertTrue(drawer.is_open)
+        app.inspector_button.invoke()
+        self.assertFalse(drawer.is_open)
+        app.event_generate("<Control-i>")
+        app.update()
+        self.assertTrue(drawer.is_open)
+        app.event_generate("<Escape>")
+        app.update()
+        self.assertFalse(drawer.is_open)
+        app.open_palette()
+        app.command_palette.set_query("inspector")
+        self.assertEqual(app.command_palette.visible_titles(), ["Show the inspector"])
+        app.command_palette.run_selected()
+        self.assertTrue(drawer.is_open)
+        app.open_palette()
+        app.command_palette.set_query("inspector")
+        self.assertEqual(app.command_palette.visible_titles(), ["Hide the inspector"])
+
+    def test_escape_in_the_palette_closes_only_the_palette(self):
+        app, drawer = self.inspector_app()
+        app.open_inspector()
+        app.open_palette()
+        app.update()
+        app.command_palette.entry._entry.event_generate("<Escape>")
+        app.update()
+        self.assertFalse(app.command_palette.is_open)
+        self.assertTrue(drawer.is_open)
+
+    def test_a_match_with_a_report_shows_score_statistics_form_and_meetings(self):
+        app, drawer = self.inspector_app()
+        app.open_inspector()
+        self.select_match(1, 2)
+        text = drawer.rendered_text()
+        self.assertEqual(text[0], "Hull City v Leeds United")
+        self.assertIn("Hull City 2-1 Leeds United", text)
+        self.assertIn("xG\t1.82\t0.45", text)
+        self.assertIn("Shots\t10\t10", text)
+        self.assertIn("Hull City: last 5", text)
+        self.assertIn("Meetings this season", text)
+        meeting = next(w for w in drawer._body.winfo_children()
+                       if isinstance(w, tk.Label) and w.cget("text") == "08 Aug  Hull City 2-1 Leeds United")
+        self.assertEqual(meeting.cget("bg"), app.theme.list_selected[0])         # the selected one is marked
+
+    def test_a_played_match_with_no_report_says_so(self):
+        app, drawer = self.inspector_app(focus=None)
+        app.open_inspector()
+        self.select_match(3, 4)
+        self.assertIn("No match report stored for this match", drawer.rendered_text())
+        self.assertFalse([t for t in drawer.rendered_text() if t.startswith("Shots")])
+
+    def test_while_the_statistics_are_still_being_read_it_says_that_instead(self):
+        app, drawer = self.inspector_app(reports=False)
+        app.open_inspector()
+        self.select_match(1, 2)
+        self.assertIn("Match statistics are still being read.", drawer.rendered_text())
+        app.install_expected_goals(dataset(match_stats=self.REPORT))             # the xG stage lands
+        app.update()
+        self.assertIn("xG\t1.82\t0.45", drawer.rendered_text())
+
+    def test_a_match_still_to_play_shows_no_statistics(self):
+        app, drawer = self.inspector_app()
+        app.open_inspector()
+        self.select_match(1, 3)                                                  # Hull v Sheffield United, unplayed
+        text = drawer.rendered_text()
+        self.assertIn("Not played yet.", text)
+        self.assertFalse([t for t in text if t.startswith("Shots") or "report" in t])
+        self.assertIn("26 Sep  Hull City to play Sheffield United", text)
+
+    def test_a_club_row_shows_form_run_record_and_the_next_match(self):
+        app, drawer = self.inspector_app()
+        app.set_view("Table")
+        app.update()
+        app.open_inspector()
+        self.select("Table", app.table_rows.index(team(1)), 0)
+        text = drawer.rendered_text()
+        self.assertEqual(text[0], "Hull City")
+        self.assertIn("Form", text)
+        self.assertIn("W W", " ".join(text))
+        self.assertIn("Played 2: won 2, drawn 0, lost 0 · goals 5-2", text)
+        self.assertIn("Next: Sheffield United (home), Sat 26 Sep", text)
+
+    def test_the_hub_shows_the_selected_competition(self):
+        app, drawer = self.inspector_app()
+        app.set_view(fm_review.HUB)
+        app.update()
+        app.open_inspector()
+        self.select(fm_review.HUB, app.comp_row_ids.index(101))
+        text = drawer.rendered_text()
+        self.assertEqual(text[0], "Championship")
+        self.assertIn("2 teams", text)                                           # the hub's own count, from the latest season
+
+    def test_selecting_with_the_drawer_shut_does_not_open_it(self):
+        app, drawer = self.inspector_app()
+        self.select_match(1, 2)
+        self.assertFalse(drawer.is_open)
+        app.open_inspector()
+        self.assertEqual(drawer.rendered_text()[0], "Hull City v Leeds United")      # but it was kept for later
+
+    def test_opening_with_nothing_selected_shows_the_followed_club_or_asks(self):
+        app, drawer = self.inspector_app()
+        app.open_inspector()
+        self.assertEqual(drawer.rendered_text()[0], "Hull City")
+        app.close_inspector()
+        app.set_focus(None)
+        app.open_inspector()
+        self.assertEqual(drawer.rendered_text(), ["Inspector", "Select a match or a club."])
+
+    def test_the_drawer_follows_team_season_theme_and_save_changes(self):
+        app, drawer = self.inspector_app()
+        app.open_inspector()
+        self.select_match(1, 2)
+        app.set_focus(team(2))
+        self.assertIn("Leeds United: last 5", drawer.rendered_text())
+        app.set_theme("Cyber Pitch")
+        self.assertEqual(drawer.cget("fg_color"), app.theme.panel)
+        app._on_season("2027")
+        app.update()
+        self.assertNotEqual(drawer.rendered_text()[0], "Hull City v Leeds United")
+        app.install_dataset(dataset())
+        self.assertFalse(drawer.is_open)
+
+    def test_a_heading_row_and_an_unresolved_team_do_not_break_it(self):
+        app, drawer = self.inspector_app(focus=None)
+        app.open_inspector()
+        heading = next(i for i, r in enumerate(app.result_rows) if r.is_heading)
+        self.select("Results", heading)
+        self.assertTrue(drawer.rendered_text())
+        app.select_competition(70)
+        app.set_view("Results")
+        app.update()
+        row = next(i for i, r in enumerate(app.result_rows) if r.fixture is not None)
+        self.select("Results", row)
+        self.assertEqual(drawer.rendered_text()[0], "Leeds United v Team 999")
+
+    def test_opening_the_drawer_leaves_keyboard_focus_on_the_sheet(self):
+        app, drawer = self.inspector_app()
+        sheet = app.sheets["Results"]
+        sheet.MT.focus_set()
+        app.update()
+        app.open_inspector()
+        app.update()
+        self.assertIs(app.focus_get(), sheet.MT)
+
 
 class IconTests(unittest.TestCase):
     def test_the_icon_is_a_windows_icon(self):

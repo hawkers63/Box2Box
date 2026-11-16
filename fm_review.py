@@ -42,6 +42,7 @@ import club_colours
 import command_palette
 import fm_data as fd
 import fm_export as fx
+import inspector
 import palette
 
 APP_TITLE = "Box2Box"
@@ -512,6 +513,7 @@ class FMReviewApp(_Root):
         self._dataset_serial = 0                  # bumped per installed save
         self._club_cache: tuple[int, tuple[fd.ClubEntry, ...]] | None = None    # the palette's clubs, per save
         self.opponent_filter: tuple[int, int] | None = None   # Results shows only matches between these two teams
+        self._selection: tuple | None = None      # what the inspector describes: ("match", Fixture), ("club", id), ("hub", id)
         self._hub_key: tuple | None = None        # what the Competitions sheet was last filled from
         self._hub_summary = ""
         self._hub_categories: list[str] = []      # the hub's category on each row, for painting
@@ -622,6 +624,9 @@ class FMReviewApp(_Root):
         self.export_button = role("button", ctk.CTkButton(header, text=EXPORT_LABEL, width=100,
                                                           command=self._show_export_menu))
         self.export_button.grid(row=0, column=2, rowspan=2, padx=(8, 0), sticky="e")
+        self.inspector_button = role("quiet", ctk.CTkButton(header, text="Inspector", width=90,
+                                                            command=self.toggle_inspector))
+        self.inspector_button.grid(row=0, column=3, rowspan=2, padx=(8, 0), sticky="e")
         self.export_menu = tk.Menu(self, tearoff=False)
         for kind, label in ((fx.EXCEL, "Excel workbook (.xlsx)"), (fx.HTML, "Web page (.html)"),
                             (fx.CSV, "CSV files (.csv)")):
@@ -692,6 +697,8 @@ class FMReviewApp(_Root):
             sheet.grid_remove()
         self.sheets[HUB].bind("<Double-Button-1>", lambda _e: self._open_from_hub())
         self.overlays = {name: SheetOverlay(self.sheets[name], self.px) for name in ("Table", ANALYSIS)}
+        self.inspector = inspector.Inspector(content, px=self.px, font=(FONT, 10), theme=self.theme,
+                                             on_close=self._inspector_closed)
         self.message = role("content", ctk.CTkFrame(content))
         self.message.grid(row=0, column=0, sticky="nsew")
         self.message_label = role("text", ctk.CTkLabel(self.message, text="", font=ctk.CTkFont(FONT, 15),
@@ -726,6 +733,9 @@ class FMReviewApp(_Root):
         self.bind("<Configure>", self._on_resize, add="+")
         self.command_palette = command_palette.CommandPalette(self, px=self.px, font=(FONT, 11), on_error=self._palette_failed,
                                                               theme=self.theme)
+        for key in ("<Control-i>", "<Control-I>"):
+            self.bind(key, self._on_inspector_key)
+        self.bind("<Escape>", self._on_escape, add="+")
         for key in ("<Control-k>", "<Control-K>", "<Control-p>", "<Control-P>"):
             self.bind(key, self._on_palette_key)
             # In a text box Ctrl+K would also delete to the end of the line: open the palette instead of that.
@@ -777,6 +787,8 @@ class FMReviewApp(_Root):
             widget.configure(**styles[role])
         if getattr(self, "command_palette", None) is not None:
             self.command_palette.restyle(t)
+        if getattr(self, "inspector", None) is not None:
+            self.inspector.restyle(t)
         selected = t.selection[0]
         border = t.selection[1]
         for name, sheet in self.sheets.items():
@@ -987,6 +999,8 @@ class FMReviewApp(_Root):
 
     def install_dataset(self, dataset: fd.Dataset) -> None:
         self.close_palette()                       # its items describe the save that was open
+        self.close_inspector()
+        self._selection = None
         self.dataset = dataset
         self._dataset_serial += 1
         self.settings["last_save"] = dataset.info.path
@@ -1025,6 +1039,7 @@ class FMReviewApp(_Root):
             return
         self.dataset = dataset
         self._refresh_status()
+        self._refresh_inspector()                  # the statistics it was waiting for may have arrived
         if self.comp_id is None or self.view == HUB or not self.fixtures:
             return
         if self.view == "Results":
@@ -1177,6 +1192,7 @@ class FMReviewApp(_Root):
         ds = self.dataset
         self.season = season
         self.opponent_filter = None
+        self._selection = None
         self.fixtures = fd.season_fixtures(ds, self.comp_id, season)
         self.labels = fd.team_labels(self.fixtures)
         self.short_labels = fd.team_labels(self.fixtures, short=True)
@@ -1365,7 +1381,8 @@ class FMReviewApp(_Root):
 
     def _set_controls_state(self, state: str) -> None:
         for widget in (self.season_menu, self.team_box, self.view_switch, self.group_switch, self.split_switch,
-                       self.analysis_switch, self.rename_button, self.details_button, self.search_entry):
+                       self.analysis_switch, self.rename_button, self.details_button, self.search_entry,
+                       self.inspector_button):
             widget.configure(state=state)
         self.export_button.configure(state="disabled" if self._exporting else state)
 
@@ -1429,6 +1446,7 @@ class FMReviewApp(_Root):
 
     def render(self) -> None:
         self._refresh_view_labels()            # the counts follow the competition, season, team and save
+        self._refresh_inspector()
         self._show_filter_button()
         self._show_zone_key()                  # the Table and Positions views put it back
         if not self.dataset:
@@ -1940,6 +1958,7 @@ class FMReviewApp(_Root):
         if name == "Results" and 0 <= row < len(self.result_rows):
             item = self.result_rows[row]
             if item.fixture is not None:
+                self._selection = ("match", item.fixture)
                 text = fd.describe_fixture(item.fixture, self.labels)
                 xg = fd.xg_for(self.dataset, item.fixture)
                 if xg is not None:
@@ -1948,11 +1967,15 @@ class FMReviewApp(_Root):
         elif name == "Grid" and self.grid_data is not None:
             grid = self.grid_data
             if selected.type_ == "rows" and 0 <= row < len(grid.team_ids):
+                self._selection = ("club", grid.team_ids[row])
                 self.set_focus(grid.team_ids[row])
             elif selected.type_ == "columns" and column is not None and 0 <= column < len(grid.team_ids):
+                self._selection = ("club", grid.team_ids[column])
                 self.set_focus(grid.team_ids[column])
             elif 0 <= row < len(grid.cells) and column is not None and 0 <= column < len(grid.team_ids):
                 cell = grid.cells[row][column]
+                if cell.fixtures:
+                    self._selection = ("match", cell.fixtures[0])
                 home, away = grid.row_labels[row], grid.row_labels[column]
                 if cell.fixtures:
                     text = "   |   ".join(fd.describe_fixture(f, self.labels) for f in cell.fixtures)
@@ -1962,14 +1985,18 @@ class FMReviewApp(_Root):
                     text = f"{home} v {away}: no fixture between them at {home}'s ground this season."
                 self.detail_label.configure(text=text)
         elif name == "Table" and 0 <= row < len(self.table_rows) and self.table_rows[row] is not None:
+            self._selection = ("club", self.table_rows[row])
             if self.table_rows[row] != self.focus:
                 self.set_focus(self.table_rows[row])
         elif name == ANALYSIS and 0 <= row < len(self.analysis_rows) and self.analysis_rows[row] is not None:
+            self._selection = ("club", self.analysis_rows[row])
             if self.analysis_rows[row] != self.focus:
                 self.set_focus(self.analysis_rows[row])
         elif name == HUB and self.view == HUB and 0 <= row < len(self.comp_row_ids):
             if self.comp_row_ids[row] != self.comp_id:
                 self.select_competition(self.comp_row_ids[row])
+            self._selection = ("hub", self.comp_row_ids[row])
+        self._refresh_inspector()
 
     # ----------------------------------------------------------------- the command palette
 
@@ -2024,6 +2051,8 @@ class FMReviewApp(_Root):
             add(cp.ACTION, "Open save…", self.choose_save)
         if ds is not None:
             add(cp.ACTION, "Save details & warnings", self.show_details)
+            add(cp.ACTION, "Hide the inspector" if self.inspector.is_open else "Show the inspector",
+                self.toggle_inspector)
         add(cp.ACTION, "About", self.show_about)
         for theme in palette.THEMES:
             add(cp.ACTION, f"Theme: {theme.name}", lambda n=theme.name: self.set_theme(n))
@@ -2080,6 +2109,162 @@ class FMReviewApp(_Root):
         self.set_focus(team_id)
         if self.focus != team_id:
             self.detail_label.configure(text=f"{name} has no matches in this competition and season.")
+
+    # ----------------------------------------------------------------- the inspector drawer
+
+    def toggle_inspector(self) -> None:
+        if self.inspector.is_open:
+            self.close_inspector()
+        else:
+            self.open_inspector()
+
+    def open_inspector(self) -> None:
+        """Show the drawer over the right of the sheet, describing the selection. It never takes focus."""
+        self.inspector.show(self._inspector_model_safely())
+        self.inspector.open()
+
+    def close_inspector(self) -> None:
+        self.inspector.close()
+
+    def _inspector_closed(self) -> None:
+        pass
+
+    def _on_inspector_key(self, _event=None) -> str:
+        self.toggle_inspector()
+        return "break"
+
+    def _on_escape(self, _event=None) -> None:
+        if self.inspector.is_open and not self.command_palette.is_open:
+            self.close_inspector()
+
+    def _refresh_inspector(self) -> None:
+        """Redraw the open drawer for the current selection and data; a shut drawer costs nothing."""
+        if self.inspector.is_open:
+            self.inspector.show(self._inspector_model_safely())
+
+    def _inspector_model_safely(self) -> inspector.InspectorModel:
+        """The drawer must never break the window: a failure is logged and the drawer says so."""
+        try:
+            return self._inspector_model()
+        except Exception:
+            self._log_error(traceback.format_exc())
+            return inspector.InspectorModel("Inspector", "This could not be shown; the error was logged.")
+
+    def _inspector_model(self) -> inspector.InspectorModel:
+        if not self.dataset:
+            return inspector.InspectorModel("Inspector", "Open a save first.")
+        selection = self._selection
+        if self.view == HUB:
+            selection = ("hub", self.comp_id) if self.comp_id is not None else None
+        elif selection is not None and (selection[0] == "hub" or (
+                selection[0] == "match" and selection[1] not in self.fixtures)):
+            selection = None
+        if selection is None and self.focus is not None:
+            selection = ("club", self.focus)
+        if selection is not None:
+            kind, value = selection
+            if kind == "match":
+                return self._match_model(value)
+            if kind == "club" and value in self.labels:
+                return self._club_model(value)
+            if kind == "hub" and value in self.dataset.by_id:
+                return self._hub_model(value)
+        return inspector.InspectorModel("Inspector", "Select a match or a club.")
+
+    def _team_name(self, team_id: int) -> str:
+        return self.labels.get(team_id, f"Team {team_id}")
+
+    @staticmethod
+    def _day(f: fd.Fixture, fmt: str = "%a {d} %b") -> str:
+        return f.date.strftime(fmt.replace("{d}", str(f.date.day))) if f.date else "—"
+
+    def _form_blocks(self, team_id: int) -> list:
+        """The team's last five results as chips, with its current run in words."""
+        steps = fd.team_steps(self.fixtures, team_id, self.labels)
+        if not steps:
+            return [inspector.Heading(f"{self._team_name(team_id)}: last 5"),
+                    inspector.Line("No matches played yet.", muted=True)]
+        return [inspector.Heading(f"{self._team_name(team_id)}: last 5"),
+                inspector.Chips(fd.form_strip(steps).letters, fd.streaks(steps).describe_current())]
+
+    def _match_model(self, f: fd.Fixture) -> inspector.InspectorModel:
+        ds = self.dataset
+        home, away = self._team_name(f.home_team_id), self._team_name(f.away_team_id)
+        kind = fd.result_kind(f)
+        when = []
+        if f.date:
+            when.append(self._day(f, "%a {d} %b %Y"))
+        if f.kick_off_time:
+            when.append(f.kick_off_time.strftime("%H:%M"))
+        if fd.round_text(f):
+            when.append(fd.round_text(f))
+        when.append({fd.SCHEDULED: "To play", fd.UNAVAILABLE: "Played, score not recoverable (n/a)"}.get(kind, "Played"))
+        blocks: list = []
+        if kind == fd.SCHEDULED:
+            blocks.append(inspector.Line("Not played yet.", muted=True))
+        else:
+            blocks.append(inspector.Line(f"{home} {fd.score_text(f)} {away}"))
+            stats = fd.match_stats_for(ds, f)
+            if stats is not None:
+                blocks += [inspector.Heading("Statistics"),
+                           inspector.Stats(home, away, fd.describe_match_stats(stats))]
+            elif ds.xg_report is None:
+                blocks.append(inspector.Line("Match statistics are still being read.", muted=True))
+            elif ds.xg_report.failed:
+                blocks.append(inspector.Line("Match statistics could not be read from this save.", muted=True))
+            else:
+                blocks.append(inspector.Line("No match report stored for this match", muted=True))
+        form_team = self.focus if self.focus in (f.home_team_id, f.away_team_id) else f.home_team_id
+        blocks += self._form_blocks(form_team)
+        blocks.append(inspector.Heading("Meetings this season"))
+        for meeting in fd.meetings(self.fixtures, f.home_team_id, f.away_team_id)[:12]:
+            score = "to play" if fd.result_kind(meeting) == fd.SCHEDULED else fd.score_text(meeting)
+            blocks.append(inspector.Line(
+                f"{self._day(meeting, '%d %b')}  {self._team_name(meeting.home_team_id)} {score} "
+                f"{self._team_name(meeting.away_team_id)}", marked=meeting == f))
+        return inspector.InspectorModel(f"{home} v {away}", " · ".join(when), tuple(blocks))
+
+    def _club_model(self, team_id: int) -> inspector.InspectorModel:
+        ds = self.dataset
+        name = self.labels[team_id]
+        steps = fd.team_steps(self.fixtures, team_id, self.labels)
+        blocks: list = [inspector.Heading("Form")]
+        if steps:
+            blocks.append(inspector.Chips(fd.form_strip(steps).letters, fd.streaks(steps).describe_current()))
+            totals = fd.team_totals(steps)
+            blocks.append(inspector.Heading("Season so far"))
+            blocks.append(inspector.Line(f"Played {totals.played}: won {totals.won}, drawn {totals.drawn}, "
+                                         f"lost {totals.lost} · goals {totals.goals_for}-{totals.goals_against}"))
+            blocks.append(inspector.Line(totals.describe_ppg()))
+            if totals.unavailable:
+                blocks.append(inspector.Line("A match with no recoverable score counts as played only, so these "
+                                             "totals are minimums.", muted=True))
+        else:
+            blocks.append(inspector.Line("No matches played yet.", muted=True))
+        coming = fd.next_match(self.fixtures, team_id)
+        if coming is not None:
+            home = coming.home_team_id == team_id
+            opponent = self._team_name(coming.away_team_id if home else coming.home_team_id)
+            blocks.append(inspector.Line(f"Next: {opponent} ({'home' if home else 'away'}), {self._day(coming)}"))
+        row = next((r for r in fd.xg_table(ds, self.fixtures, self.labels) if r.team_id == team_id), None)
+        if row is not None and row.covered:
+            blocks.append(inspector.Line(f"Expected goals: {row.xg_for:.1f} for, {row.xg_against:.1f} against, over "
+                                         f"{row.covered} match{'es' if row.covered != 1 else ''} with a report"))
+        subtitle = fd.competition_title(ds.by_id[self.comp_id], self.names) if self.comp_id in ds.by_id else ""
+        return inspector.InspectorModel(name, subtitle, tuple(blocks))
+
+    def _hub_model(self, comp_id: int) -> inspector.InspectorModel:
+        ds = self.dataset
+        comp = ds.by_id[comp_id]
+        plural = lambda n, word: f"{n} {word}{'' if n == 1 else 's'}"      # noqa: E731
+        blocks = (
+            inspector.Line(fd.competition_category(comp, ds)),
+            inspector.Line(plural(comp.team_count, "team")),
+            inspector.Line(f"{plural(len(comp.seasons), 'season')} in the save"),
+            inspector.Line(f"{plural(comp.fixture_count, 'fixture')}, {comp.played_count} played"),
+            inspector.Line(", ".join(comp.top_clubs) or "No clubs named", muted=True),
+        )
+        return inspector.InspectorModel(fd.competition_title(comp, self.names), f"Competition {comp.id}", blocks)
 
     # ----------------------------------------------------------------- the right-click menu
 
