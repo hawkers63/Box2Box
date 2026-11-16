@@ -1409,6 +1409,15 @@ class FormStrip:
         return self.totals.describe_ppg()
 
 
+def describe_form_step(step: FormStep) -> str:
+    """One match of a form strip in words, for a tooltip: 'Won 1-0 v Leeds United, Sat 1 Aug'."""
+    venue = "v" if step.home else "at"
+    if step.outcome == UNKNOWN_RESULT:
+        return f"Played, score not recoverable (n/a), {venue} {step.opponent}, {_short_date(step.date)}"
+    verb = {"W": "Won", "D": "Drew", "L": "Lost"}[step.outcome]
+    return f"{verb} {step.goals_for}-{step.goals_against} {venue} {step.opponent}, {_short_date(step.date)}"
+
+
 def form_strip(steps: Sequence[FormStep], length: int = FORM_LENGTH) -> FormStrip:
     """The last `length` played matches of a team's steps."""
     return FormStrip(tuple(steps[-length:]) if length > 0 else ())

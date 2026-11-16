@@ -161,6 +161,52 @@ class InspectorTests(unittest.TestCase):
         self.root.update()
         self.assertEqual(self.drawer._viewport.yview()[0], 0.0)
 
+    def chip(self, letter):
+        """The chip label showing this letter (the first one, oldest first)."""
+        labels = [w for strip in self.drawer._body.winfo_children() for w in strip.winfo_children()]
+        return next(w for w in labels if w.cget("text") == letter and w.cget("width") == 2)
+
+    def test_hovering_a_chip_shows_that_match_in_words(self):
+        self.drawer.open()
+        self.drawer.show(inspector.InspectorModel("Hull City", "", (
+            inspector.Chips("WL", "Lost the last match", tips=("Won 1-0 v Leeds United, Sat 1 Aug",
+                                                               "Lost 0-1 at Sheffield United, Sat 8 Aug")),)))
+        self.root.update()
+        self.chip("L").event_generate("<Enter>", x=3, y=3)
+        self.root.update()
+        self.assertTrue(self.drawer.tooltip.is_shown)
+        self.assertEqual(self.drawer.tooltip.text, "Lost 0-1 at Sheffield United, Sat 8 Aug")
+
+    def test_leaving_a_chip_hides_its_tooltip(self):
+        self.drawer.open()
+        self.drawer.show(inspector.InspectorModel("Hull City", "", (
+            inspector.Chips("W", "", tips=("Won 1-0 v Leeds United, Sat 1 Aug",)),)))
+        self.root.update()
+        self.chip("W").event_generate("<Enter>", x=3, y=3)
+        self.chip("W").event_generate("<Leave>", x=30, y=30)
+        self.root.update()
+        self.assertFalse(self.drawer.tooltip.is_shown)
+
+    def test_a_new_model_or_closing_takes_a_showing_tooltip_with_it(self):
+        model = inspector.InspectorModel("Hull City", "", (
+            inspector.Chips("W", "", tips=("Won 1-0 v Leeds United, Sat 1 Aug",)),))
+        self.drawer.open()
+        self.drawer.show(model)
+        self.root.update()
+        self.chip("W").event_generate("<Enter>", x=3, y=3)
+        self.drawer.show(self.long_model(3))                 # the chip under the pointer is gone: no <Leave> comes
+        self.assertFalse(self.drawer.tooltip.is_shown)
+        self.drawer.show(model)
+        self.root.update()
+        self.chip("W").event_generate("<Enter>", x=3, y=3)
+        self.drawer.close()
+        self.assertFalse(self.drawer.tooltip.is_shown)
+
+    def test_a_new_theme_recolours_the_drawers_tooltip(self):
+        theme = palette.theme_by_name("Cyber Pitch")
+        self.drawer.restyle(theme)
+        self.assertEqual(str(self.drawer.tooltip._label.cget("bg")), theme.panel)
+
     def test_the_close_mark_is_a_solid_cross(self):
         self.assertEqual(self.drawer._close.cget("text"), "×")
 

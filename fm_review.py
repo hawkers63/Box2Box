@@ -44,6 +44,7 @@ import fm_data as fd
 import fm_export as fx
 import inspector
 import palette
+import tooltip
 
 APP_TITLE = "Box2Box"
 VERSION = "1.4"
@@ -299,7 +300,30 @@ class SheetOverlay:
         self._colours: Mapping[str, tuple[str | None, str | None]] = {}
         self._bar_colours = ("", "")
         self._font = (FONT, 9, "bold")
+        self._hits: list[tuple[float, float, float, float, int, int, int]] = []   # each pill: box, row, column, index
+        # Hovering a pill: on_hover(row, column, index, x_root, y_root); leaving every pill: on_leave().
+        self.on_hover: Callable[[int, int, int, int, int], None] | None = None
+        self.on_leave: Callable[[], None] | None = None
         sheet.bind("<<SheetRedrawn>>", self.draw, add=True)
+        sheet.MT.bind("<Motion>", self._on_motion, add="+")
+        sheet.MT.bind("<Leave>", lambda _e: self._left(), add="+")
+
+    def pill_at(self, x: float, y: float) -> tuple[int, int, int] | None:
+        """The (row, column, index in its cell) of the pill at a point on the canvas, or None."""
+        return next(((row, column, index) for x1, y1, x2, y2, row, column, index in self._hits
+                     if x1 <= x <= x2 and y1 <= y <= y2), None)
+
+    def _on_motion(self, event) -> None:
+        canvas = self.sheet.MT
+        hit = self.pill_at(canvas.canvasx(event.x), canvas.canvasy(event.y))
+        if hit is None:
+            self._left()
+        elif self.on_hover is not None:
+            self.on_hover(*hit, event.x_root, event.y_root)
+
+    def _left(self) -> None:
+        if self.on_leave is not None:
+            self.on_leave()
 
     def show(self, pills: Mapping[tuple[int, int], str], bars: Mapping[tuple[int, int], float],
              colours: Mapping[str, tuple[str | None, str | None]], bar_colours: tuple[str, str]) -> None:
@@ -320,6 +344,8 @@ class SheetOverlay:
         canvas = self.sheet.MT
         canvas.delete(self.TAG)
         self.drawn_rows = set()
+        self._hits = []
+        self._left()                        # the pill under a still pointer may now be another match
         if not self._by_row:
             return
         start, end = self.sheet.visible_rows
@@ -331,18 +357,19 @@ class SheetOverlay:
                     continue
                 box = (columns[column], rows[row], columns[column + 1], rows[row + 1])
                 if isinstance(value, str):
-                    self._pills(canvas, box, value)
+                    self._pills(canvas, box, value, row, column)
                 else:
                     self._bar(canvas, box, value)
                 self.drawn_rows.add(row)
         canvas.tag_raise(self.TAG)
 
-    def _pills(self, canvas: tk.Canvas, box: tuple[float, ...], letters: str) -> None:
+    def _pills(self, canvas: tk.Canvas, box: tuple[float, ...], letters: str, row: int, column: int) -> None:
         x1, y1, x2, y2 = box
         width, height, gap = self.px(18), self.px(16), self.px(4)
         left = x1 + ((x2 - x1) - (len(letters) * (width + gap) - gap)) / 2
         top = (y1 + y2 - height) / 2
-        for letter in letters:
+        for index, letter in enumerate(letters):
+            self._hits.append((left, top, left + width, top + height, row, column, index))
             background, text = self._colours.get(letter, (None, None))
             canvas.create_polygon(rounded_box_coords(left, top, left + width, top + height, radius=height // 2),
                                   smooth=True, fill=background or "", outline="", tags=self.TAG)
@@ -707,6 +734,10 @@ class FMReviewApp(_Root):
             sheet.grid_remove()
         self.sheets[HUB].bind("<Double-Button-1>", lambda _e: self._open_from_hub())
         self.overlays = {name: SheetOverlay(self.sheets[name], self.px) for name in ("Table", ANALYSIS)}
+        self.tooltip = tooltip.Tooltip(self, theme=self.theme)        # over the form pills
+        for name, overlay in self.overlays.items():
+            overlay.on_hover = lambda row, column, index, x, y, n=name: self._on_pill_hover(n, row, column, index, x, y)
+            overlay.on_leave = self.tooltip.hide
         self.inspector = inspector.Inspector(content, px=self.px, font=(FONT, 10), theme=self.theme,
                                              on_close=self._inspector_closed)
         self.message = role("content", ctk.CTkFrame(content))
@@ -799,6 +830,8 @@ class FMReviewApp(_Root):
             self.command_palette.restyle(t)
         if getattr(self, "inspector", None) is not None:
             self.inspector.restyle(t)
+        if getattr(self, "tooltip", None) is not None:
+            self.tooltip.restyle(t)
         selected = t.selection[0]
         border = t.selection[1]
         for name, sheet in self.sheets.items():
@@ -2138,6 +2171,35 @@ class FMReviewApp(_Root):
         if self.focus != team_id:
             self.detail_label.configure(text=f"{name} has no matches in this competition and season.")
 
+    # ----------------------------------------------------------------- tooltips on the form pills
+
+    def _on_pill_hover(self, name: str, row: int, column: int, index: int, x_root: int, y_root: int) -> None:
+        text = self._pill_tip(name, row, column, index)
+        if text:
+            self.tooltip.show(text, x_root, y_root)
+        else:
+            self.tooltip.hide()
+
+    def _pill_tip(self, name: str, row: int, column: int, index: int) -> str | None:
+        """The match behind one form pill, in words; None when it cannot be told for certain."""
+        if name == "Table" and 0 <= row < len(self.table_rows) and self.table_rows[row] is not None:
+            letters = self.overlays["Table"].pills.get((row, column), "")
+            # The Table's form leaves out matches with no recoverable score, as its letters do.
+            # The Home and Away splits' form covers home or away matches only.
+            venue = {fd.SPLIT_HOME: True, fd.SPLIT_AWAY: False}.get(self.table_split)
+            steps = [s for s in fd.team_steps(self.fixtures, self.table_rows[row], self.labels)
+                     if s.outcome != fd.UNKNOWN_RESULT and venue in (None, s.home)][-len(letters):] if letters else []
+            if "".join(s.outcome for s in steps) == letters and index < len(steps):
+                return fd.describe_form_step(steps[index])
+        elif name == ANALYSIS and 0 <= row < len(self.analysis_rows) and self.analysis_rows[row] is not None:
+            # The Form panel draws one letter per cell, oldest first, '?' included.
+            pills = self.overlays[ANALYSIS].pills
+            columns = sorted(c for (r, c) in pills if r == row)
+            strip = fd.form_strip(fd.team_steps(self.fixtures, self.analysis_rows[row], self.labels))
+            if "".join(pills[(row, c)] for c in columns) == strip.letters and column in columns:
+                return fd.describe_form_step(strip.steps[columns.index(column)])
+        return None
+
     # ----------------------------------------------------------------- the inspector drawer
 
     def toggle_inspector(self) -> None:
@@ -2206,6 +2268,13 @@ class FMReviewApp(_Root):
     def _day(f: fd.Fixture, fmt: str = "%a {d} %b") -> str:
         return f.date.strftime(fmt.replace("{d}", str(f.date.day))) if f.date else "—"
 
+    @staticmethod
+    def _form_chips(steps) -> inspector.Chips:
+        """A team's last five as chips, its current run beside them, and each match in words for the tooltips."""
+        strip = fd.form_strip(steps)
+        return inspector.Chips(strip.letters, fd.streaks(steps).describe_current(),
+                               tuple(fd.describe_form_step(step) for step in strip.steps))
+
     def _form_blocks(self, team_id: int) -> list:
         """The team's last five results as chips, with its current run in words."""
         steps = fd.team_steps(self.fixtures, team_id, self.labels)
@@ -2213,7 +2282,7 @@ class FMReviewApp(_Root):
             return [inspector.Heading(f"{self._team_name(team_id)}: last 5"),
                     inspector.Line("No matches played yet.", muted=True)]
         return [inspector.Heading(f"{self._team_name(team_id)}: last 5"),
-                inspector.Chips(fd.form_strip(steps).letters, fd.streaks(steps).describe_current())]
+                self._form_chips(steps)]
 
     def _match_model(self, f: fd.Fixture) -> inspector.InspectorModel:
         ds = self.dataset
@@ -2258,7 +2327,7 @@ class FMReviewApp(_Root):
         steps = fd.team_steps(self.fixtures, team_id, self.labels)
         blocks: list = [inspector.Heading("Form")]
         if steps:
-            blocks.append(inspector.Chips(fd.form_strip(steps).letters, fd.streaks(steps).describe_current()))
+            blocks.append(self._form_chips(steps))
             totals = fd.team_totals(steps)
             blocks.append(inspector.Heading("Season so far"))
             blocks.append(inspector.Line(f"Played {totals.played}: won {totals.won}, drawn {totals.drawn}, "

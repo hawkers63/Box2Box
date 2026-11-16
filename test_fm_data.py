@@ -327,6 +327,23 @@ class FormStepTests(unittest.TestCase):
         self.assertEqual((step.venue, step.home, step.outcome), ("N", False, "L"))
 
 
+class FormStepTextTests(unittest.TestCase):
+    """One match of a form strip in words, for a tooltip."""
+
+    def test_a_home_win_reads_as_won_the_score_v_the_opponent_and_the_date(self):
+        self.assertEqual(fd.describe_form_step(hull_steps("W")[0]), "Won 1-0 v Leeds United, Sat 1 Aug")
+
+    def test_an_away_defeat_reads_as_lost_at_the_opponent(self):
+        self.assertEqual(fd.describe_form_step(hull_steps("WL")[1]), "Lost 0-1 at Sheffield United, Sat 8 Aug")
+
+    def test_a_draw_reads_as_drew(self):                   # a guard: the mapping arrived with the defeat's
+        self.assertEqual(fd.describe_form_step(hull_steps("D")[0]), "Drew 1-1 v Leeds United, Sat 1 Aug")
+
+    def test_a_match_with_no_recoverable_score_says_so(self):
+        self.assertEqual(fd.describe_form_step(hull_steps("?")[0]),
+                         "Played, score not recoverable (n/a), v Leeds United, Sat 1 Aug")
+
+
 class FormStripTests(unittest.TestCase):
     def test_strip_is_the_last_five_played_oldest_first(self):
         self.assertEqual(fd.form_strip(hull_steps("WWLDW?W")).letters, "LDW?W")

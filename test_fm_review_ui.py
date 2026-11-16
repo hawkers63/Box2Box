@@ -23,6 +23,7 @@ import club_colours
 import command_palette
 import fm_data as fd
 import fm_review
+import inspector
 import palette
 import test_fm_data
 from test_fm_data import LEAGUE, D, club, fx, info, match_stats, row, team, unresolved_away
@@ -1183,6 +1184,98 @@ class WindowTests(unittest.TestCase):
         self.assertIn("W W", " ".join(text))
         self.assertIn("Played 2: won 2, drawn 0, lost 0 · goals 5-2", text)
         self.assertIn("Next: Sheffield United (home), Sat 26 Sep", text)
+
+    def pill_points(self, name, row):
+        """The centre of each form pill drawn on a sheet's row, left to right, in the canvas's widget coordinates."""
+        sheet = self.app.sheets[name]
+        canvas = sheet.MT
+        top, bottom = canvas.row_positions[row], canvas.row_positions[row + 1]
+        boxes = sorted(canvas.bbox(i) for i in canvas.find_withtag(fm_review.SheetOverlay.TAG)
+                       if canvas.type(i) == "polygon" and top <= (canvas.bbox(i)[1] + canvas.bbox(i)[3]) / 2 <= bottom)
+        return [(int((x1 + x2) / 2 - canvas.canvasx(0)), int((y1 + y2) / 2 - canvas.canvasy(0)))
+                for x1, y1, x2, y2 in boxes]
+
+    def test_hovering_a_table_pill_shows_that_match_in_words(self):
+        app = self.app
+        self.widen()
+        app.install_dataset(dataset())
+        app.set_view("Table")
+        app.update()
+        row = app.table_rows.index(team(1))                      # Hull City: WW
+        x, y = self.pill_points("Table", row)[0]
+        app.sheets["Table"].MT.event_generate("<Motion>", x=x, y=y)
+        app.update()
+        self.assertTrue(app.tooltip.is_shown)
+        self.assertEqual(app.tooltip.text, "Won 2-1 v Leeds United, Sat 8 Aug")
+
+    def test_a_table_pill_in_the_home_split_names_the_home_match(self):
+        app = self.app
+        self.widen()
+        app.install_dataset(dataset())
+        app._palette_split("Table", fd.SPLIT_HOME)
+        app.update()
+        row = app.table_rows.index(team(1))                      # Hull's home form: W, Leeds at home
+        x, y = self.pill_points("Table", row)[0]
+        app.sheets["Table"].MT.event_generate("<Motion>", x=x, y=y)
+        app.update()
+        self.assertEqual(app.tooltip.text, "Won 2-1 v Leeds United, Sat 8 Aug")
+
+    def test_hovering_a_pill_in_the_analysis_form_panel_names_that_match(self):
+        app = self.app
+        self.widen()
+        app.install_dataset(dataset())
+        app._palette_split(fm_review.ANALYSIS, "Form")
+        app.update()
+        row = app.analysis_rows.index(team(1))
+        points = self.pill_points(fm_review.ANALYSIS, row)
+        self.assertEqual(len(points), 2)                          # Hull have played twice
+        for (x, y), expected in zip(points, ("Won 2-1 v Leeds United, Sat 8 Aug", "Won 3-1 at Derby County, Sat 15 Aug")):
+            app.sheets[fm_review.ANALYSIS].MT.event_generate("<Motion>", x=x, y=y)
+            app.update()
+            self.assertEqual(app.tooltip.text, expected)
+
+    def test_moving_off_a_pill_or_out_of_the_sheet_hides_the_tooltip(self):
+        app = self.app
+        self.widen()
+        app.install_dataset(dataset())
+        app.set_view("Table")
+        app.update()
+        canvas = app.sheets["Table"].MT
+        x, y = self.pill_points("Table", app.table_rows.index(team(1)))[0]
+        canvas.event_generate("<Motion>", x=x, y=y)
+        canvas.event_generate("<Motion>", x=3, y=y)            # the position column: no pill there
+        app.update()
+        self.assertFalse(app.tooltip.is_shown)
+        canvas.event_generate("<Motion>", x=x, y=y)
+        canvas.event_generate("<Leave>", x=x, y=y)
+        app.update()
+        self.assertFalse(app.tooltip.is_shown)
+
+    def test_a_redraw_under_a_still_pointer_takes_the_tooltip_away(self):
+        app = self.app
+        self.widen()
+        app.install_dataset(dataset())
+        app.set_view("Table")
+        app.update()
+        x, y = self.pill_points("Table", app.table_rows.index(team(1)))[0]
+        app.sheets["Table"].MT.event_generate("<Motion>", x=x, y=y)
+        self.assertTrue(app.tooltip.is_shown)
+        app.overlays["Table"].draw()                             # as after a scroll: the pill under it may change
+        self.assertFalse(app.tooltip.is_shown)
+
+    def test_a_theme_change_recolours_the_pill_tooltip(self):
+        app = self.app
+        app.set_theme("Cyber Pitch")
+        self.assertEqual(str(app.tooltip._label.cget("bg")), app.theme.panel)
+
+    def test_the_drawers_form_chips_carry_each_match_in_words(self):
+        app, drawer = self.inspector_app()
+        expected = ("Won 2-1 v Leeds United, Sat 8 Aug", "Won 3-1 at Derby County, Sat 15 Aug")
+        club_chips = next(b for b in app._club_model(team(1)).blocks if isinstance(b, inspector.Chips))
+        self.assertEqual(club_chips.tips, expected)
+        match = next(f for f in app.fixtures if (f.home_team_id, f.away_team_id) == (team(1), team(2)))
+        match_chips = next(b for b in app._match_model(match).blocks if isinstance(b, inspector.Chips))
+        self.assertEqual(match_chips.tips, expected)
 
     def test_the_hub_shows_the_selected_competition(self):
         app, drawer = self.inspector_app()

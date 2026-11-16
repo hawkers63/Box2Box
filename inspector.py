@@ -15,6 +15,7 @@ import customtkinter as ctk
 
 import fm_data as fd
 import palette
+import tooltip
 
 WIDTH = 320            # px at 100 percent
 
@@ -48,6 +49,7 @@ class Chips:
 
     letters: str
     note: str = ""
+    tips: tuple[str, ...] = ()        # each chip's match in words, shown on hover; may be shorter or empty
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +93,7 @@ class Inspector(ctk.CTkFrame):
         self._wheel_tag = f"InspectorWheel{id(self)}"
         self.bind_class(self._wheel_tag, "<MouseWheel>", self._on_wheel)
         self._paint_frame()
+        self.tooltip = tooltip.Tooltip(self.winfo_toplevel(), theme=theme)
 
     # ----------------------------------------------------------------- showing and hiding
 
@@ -103,6 +106,7 @@ class Inspector(ctk.CTkFrame):
     def close(self) -> None:
         was_open = self.is_open
         self.is_open = False
+        self.tooltip.hide()
         self.place_forget()
         if was_open:
             self._on_close()
@@ -120,6 +124,7 @@ class Inspector(ctk.CTkFrame):
     def restyle(self, theme: palette.Theme) -> None:
         self._theme = theme
         self._paint_frame()
+        self.tooltip.restyle(theme)
         if self._model is not None:
             self.show(self._model)
 
@@ -136,6 +141,7 @@ class Inspector(ctk.CTkFrame):
         """Draw a model, replacing whatever was shown. A new model starts at the top; the same model drawn
         again (a theme change, a re-render) keeps its scroll position."""
         where = self._viewport.yview()[0] if model == self._model else 0.0
+        self.tooltip.hide()                  # its chip is about to go, and a destroyed chip sends no <Leave>
         self._model = model
         for child in self._body.winfo_children():
             child.destroy()
@@ -202,10 +208,13 @@ class Inspector(ctk.CTkFrame):
         strip = tk.Frame(self._body, bg=t.panel, bd=0, highlightthickness=0)
         strip.pack(fill="x", pady=(self._px(2), self._px(2)))
         self._texts.append(" ".join(block.letters))
-        for letter in block.letters:
+        for index, letter in enumerate(block.letters):
             fill, ink = t.colours.get(letter, (t.field[0], t.text))
-            tk.Label(strip, text=letter, width=2, font=self._bold, bg=fill, fg=ink or t.text, bd=0).pack(
-                side="left", padx=(0, self._px(3)))
+            chip = tk.Label(strip, text=letter, width=2, font=self._bold, bg=fill, fg=ink or t.text, bd=0)
+            chip.pack(side="left", padx=(0, self._px(3)))
+            if index < len(block.tips):
+                chip.bind("<Enter>", lambda e, tip=block.tips[index]: self.tooltip.show(tip, e.x_root, e.y_root))
+                chip.bind("<Leave>", lambda _e: self.tooltip.hide())
         if block.note:
             self._texts.append(block.note)
             self._label(strip, block.note, fg=t.muted, bg=t.panel).pack(side="left", padx=(self._px(6), 0))
