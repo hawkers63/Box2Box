@@ -1233,3 +1233,22 @@ class TwoLeggedTieTests(unittest.TestCase):
         self.assertEqual(self.outcome(second_to_play), "Second leg to play")
         self.assertEqual(self.outcome(first_to_play), "First leg to play")
         self.assertEqual(self.outcome(no_score), "Not known: a leg has no recoverable score (n/a)")
+
+    def test_a_replay_is_not_a_second_leg(self):
+        # A cup round with a drawn tie that was replayed and another settled in one match: not a two-legged round.
+        round_one = [fx(D(2026, 11, 14), 1, 2, 1, 1, md=1), fx(D(2026, 11, 14), 3, 4, 2, 0, md=1),
+                     fx(D(2026, 11, 17), 2, 1, 1, 0, md=1)]       # the replay, three days later
+        self.assertEqual(self.ties(round_one), ())
+
+    def test_a_two_legged_pair_in_a_round_with_single_matches_is_still_a_tie(self):
+        # The European competitions in a save hold a league phase (single matches) and two-legged playoffs under
+        # one round index; the pair meeting a week apart, even after a drawn first leg, is a tie.
+        mixed = [fx(D(2026, 9, 16), 1, 2, 1, 1, md=1), fx(D(2026, 9, 23), 2, 1, 0, 2, md=1),
+                 fx(D(2026, 9, 16), 3, 4, 2, 0, md=1)]
+        (tie,) = self.ties(mixed)
+        self.assertEqual((tie.team_a, tie.team_b, tie.aggregate), (team(1), team(2), (3, 1)))
+
+    def test_a_round_where_every_pair_meets_twice_is_still_two_legged(self):    # a guard
+        legs = [fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 15), 2, 1, 0, 0, md=1),
+                fx(D(2026, 8, 8), 3, 4, 2, 2, md=1), fx(D(2026, 8, 15), 4, 3, 1, 0, md=1)]
+        self.assertEqual(len(self.ties(legs)), 2)

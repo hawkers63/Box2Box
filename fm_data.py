@@ -2074,15 +2074,32 @@ class Tie:
         return (self.first.home_goals + self.second.away_goals, self.first.away_goals + self.second.home_goals)
 
 
+REPLAY_DAYS = 4          # a replay follows a drawn match within this many days; a second leg comes later
+
+
+def is_replay(first: Fixture, second: Fixture) -> bool:
+    """Whether a pair's second meeting in a round is a replay of a drawn first match rather than a second leg.
+    Measured on a save with 26 replays (every one followed a draw within four days) and 214 second legs (none
+    within four days of the first leg)."""
+    drawn = first.played and has_score(first) and first.home_goals == first.away_goals
+    if not (drawn and first.date and second.date):
+        return False
+    return (second.date - first.date).days <= REPLAY_DAYS
+
+
 def two_legged_ties(fixtures: Iterable[Fixture], labels: Mapping[int, str]) -> tuple[Tie, ...]:
     """The ties among these fixtures, by round then date."""
-    by_pair: dict[tuple, list[Fixture]] = defaultdict(list)
+    by_round: dict[int | None, dict[frozenset, list[Fixture]]] = defaultdict(lambda: defaultdict(list))
     for f in fixtures:
-        by_pair[(frozenset((f.home_team_id, f.away_team_id)), f.round_index)].append(f)
+        by_round[f.round_index][frozenset((f.home_team_id, f.away_team_id))].append(f)
     ties = []
-    for (_, round_index), legs in by_pair.items():
-        if len(legs) == 2:
+    for round_index, pairs in by_round.items():
+        for legs in pairs.values():
+            if len(legs) != 2:
+                continue
             first, second = sorted(legs, key=_when)
+            if is_replay(first, second):
+                continue
             ties.append(Tie(round_index, first.home_team_id, first.away_team_id, first, second))
     return tuple(sorted(ties, key=lambda t: (t.round_index is None, t.round_index or 0, _when(t.first))))
 
