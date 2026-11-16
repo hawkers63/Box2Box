@@ -1178,3 +1178,58 @@ class MatchReportTests(unittest.TestCase):
         self.assertEqual(fd.next_match(fixtures, team(1)).date, D(2026, 9, 5))
         self.assertIsNone(fd.next_match(fixtures[1:2], team(1)))
         self.assertIsNone(fd.next_match(fixtures, team(5)))
+
+
+class TwoLeggedTieTests(unittest.TestCase):
+    """A tie: the same pair meeting twice in one round, home and away swapped."""
+
+    def ties(self, fixtures):
+        return fd.two_legged_ties(fixtures, fd.team_labels(fixtures))
+
+    def test_two_meetings_in_one_round_make_a_tie_with_an_aggregate(self):
+        legs = [fx(D(2026, 8, 8), 1, 2, 2, 0, comp=639, md=1), fx(D(2026, 8, 15), 2, 1, 0, 2, comp=639, md=1)]
+        (tie,) = self.ties(legs)
+        self.assertEqual((tie.team_a, tie.team_b), (team(1), team(2)))        # the first leg's home side is A
+        self.assertEqual((tie.first.date, tie.second.date), (D(2026, 8, 8), D(2026, 8, 15)))
+        self.assertEqual(tie.aggregate, (4, 0))
+
+    # Guards: these rules arrived with the first implementation.
+    def test_a_leagues_pairs_in_different_rounds_are_not_ties(self):
+        league = [fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 12, 12), 2, 1, 0, 0, md=20)]
+        self.assertEqual(self.ties(league), ())
+
+    def test_three_meetings_in_a_round_are_not_a_tie(self):
+        three = [fx(D(2026, 8, d), 1 + d % 2, 2 - d % 2, 1, 0, md=1) for d in (8, 9, 10)]
+        self.assertEqual(self.ties(three), ())
+
+    def test_an_unplayed_or_unscored_leg_gives_no_aggregate(self):
+        unplayed = [fx(D(2026, 8, 8), 1, 2, 2, 0, md=1), fx(D(2026, 8, 15), 2, 1, md=1)]
+        unscored = [fx(D(2026, 8, 8), 1, 2, 2, 0, md=1), fx(D(2026, 8, 15), 2, 1, None, None, played=True, md=1)]
+        self.assertIsNone(self.ties(unplayed)[0].aggregate)
+        self.assertIsNone(self.ties(unscored)[0].aggregate)
+
+    def test_ties_come_in_round_then_date_order(self):
+        legs = [fx(D(2026, 9, 20), 3, 4, 1, 1, md=2), fx(D(2026, 9, 27), 4, 3, 0, 0, md=2),
+                fx(D(2026, 8, 15), 2, 1, 0, 2, md=1), fx(D(2026, 8, 8), 1, 2, 2, 0, md=1)]
+        self.assertEqual([t.round_index for t in self.ties(legs)], [0, 1])
+
+    def outcome(self, legs):
+        (tie,) = self.ties(legs)
+        return fd.tie_outcome(tie, fd.team_labels(legs))
+
+    def test_the_aggregate_names_the_side_going_through(self):
+        legs = [fx(D(2026, 8, 8), 1, 2, 2, 0, md=1), fx(D(2026, 8, 15), 2, 1, 0, 2, md=1)]
+        self.assertEqual(self.outcome(legs), "Hull City go through")
+
+    def test_a_level_aggregate_says_the_save_does_not_decide_it(self):
+        legs = [fx(D(2026, 8, 8), 1, 2, 1, 1, md=1), fx(D(2026, 8, 15), 2, 1, 0, 0, md=1)]
+        self.assertEqual(self.outcome(legs),
+                         "Level on aggregate (the save stores no away goals, extra time or penalties)")
+
+    def test_a_tie_still_to_finish_says_what_is_missing(self):
+        second_to_play = [fx(D(2026, 8, 8), 1, 2, 2, 0, md=1), fx(D(2026, 8, 15), 2, 1, md=1)]
+        first_to_play = [fx(D(2026, 8, 8), 1, 2, md=1), fx(D(2026, 8, 15), 2, 1, md=1)]
+        no_score = [fx(D(2026, 8, 8), 1, 2, 2, 0, md=1), fx(D(2026, 8, 15), 2, 1, None, None, played=True, md=1)]
+        self.assertEqual(self.outcome(second_to_play), "Second leg to play")
+        self.assertEqual(self.outcome(first_to_play), "First leg to play")
+        self.assertEqual(self.outcome(no_score), "Not known: a leg has no recoverable score (n/a)")

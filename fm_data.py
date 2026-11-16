@@ -2056,6 +2056,59 @@ def describe_match_stats(stats: MatchStats) -> tuple[StatLine, ...]:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class Tie:
+    """Two meetings of the same pair in one round, home and away swapped. Side A is the first leg's home team."""
+
+    round_index: int | None
+    team_a: int
+    team_b: int
+    first: Fixture
+    second: Fixture
+
+    @property
+    def aggregate(self) -> tuple[int, int] | None:
+        """Goals (A, B) over both legs; None unless both were played with a recoverable score."""
+        if not (has_score(self.first) and has_score(self.second)):
+            return None
+        return (self.first.home_goals + self.second.away_goals, self.first.away_goals + self.second.home_goals)
+
+
+def two_legged_ties(fixtures: Iterable[Fixture], labels: Mapping[int, str]) -> tuple[Tie, ...]:
+    """The ties among these fixtures, by round then date."""
+    by_pair: dict[tuple, list[Fixture]] = defaultdict(list)
+    for f in fixtures:
+        by_pair[(frozenset((f.home_team_id, f.away_team_id)), f.round_index)].append(f)
+    ties = []
+    for (_, round_index), legs in by_pair.items():
+        if len(legs) == 2:
+            first, second = sorted(legs, key=_when)
+            ties.append(Tie(round_index, first.home_team_id, first.away_team_id, first, second))
+    return tuple(sorted(ties, key=lambda t: (t.round_index is None, t.round_index or 0, _when(t.first))))
+
+
+def tie_round_text(tie: Tie) -> str:
+    """A tie's round: its name where the save confirms one, otherwise 'Round N' from the stored round index."""
+    name = round_text(tie.first)
+    if name and not name.startswith("Md "):
+        return name
+    return f"Round {tie.round_index + 1}" if tie.round_index is not None else ""
+
+
+def tie_outcome(tie: Tie, labels: Mapping[int, str]) -> str:
+    """Where a tie stands, in words."""
+    a, b = (labels.get(tie.team_a, f"Team {tie.team_a}"), labels.get(tie.team_b, f"Team {tie.team_b}"))
+    for leg, name in ((tie.first, "First"), (tie.second, "Second")):
+        if not leg.played:
+            return f"{name} leg to play"
+    goals = tie.aggregate
+    if goals is None:
+        return "Not known: a leg has no recoverable score (n/a)"
+    if goals[0] == goals[1]:
+        return "Level on aggregate (the save stores no away goals, extra time or penalties)"
+    return f"{a if goals[0] > goals[1] else b} go through"
+
+
 def meetings(fixtures: Iterable[Fixture], team_a: int, team_b: int) -> tuple[Fixture, ...]:
     """The matches between two teams, either way round, in date order."""
     pair = {team_a, team_b}

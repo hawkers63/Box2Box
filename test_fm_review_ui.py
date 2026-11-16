@@ -1486,6 +1486,56 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(app._competition_detail(youth), f"Competition 60: {clubs} · {youth.team_count} teams")
         self.assertEqual(app._competition_detail(app.dataset.by_id[101]), "Championship · 2 teams")
 
+    # ----------------------------------------------------------------- v1.5 step 3: the Ties panel
+
+    TIE = [fx(D(2026, 9, 2), 5, 4, 2, 0, comp=102, md=1), fx(D(2026, 9, 9), 4, 5, 1, 0, comp=102, md=1)]
+
+    def ties_app(self, comp=102):
+        app = self.app
+        self.widen()
+        app.install_dataset(dataset(extra=self.TIE))
+        app.select_competition(comp)
+        app._palette_split(fm_review.ANALYSIS, "Ties")
+        app.update()
+        return app
+
+    def test_the_ties_panel_lists_each_tie_with_its_legs_and_aggregate(self):
+        app = self.ties_app()
+        data = app.sheets[fm_review.ANALYSIS].get_sheet_data()
+        self.assertEqual(data, [["Round 1", "Wrexham v Derby County", "2-0", "0-1", "2-1", "Wrexham go through"]])
+
+    def test_a_tie_of_the_followed_club_is_highlighted(self):
+        app = self.ties_app()
+        app.set_focus(team(5))                                           # Wrexham
+        app.update()
+        sheet = app.sheets[fm_review.ANALYSIS]
+        self.assertEqual(sheet.props(0, 1, "highlight").bg, app.view_theme.focus[0])
+        app.set_focus(team(1))                                           # a club not in the tie
+        app.update()
+        self.assertFalse(sheet.props(0, 1, "highlight"))
+
+    def test_a_competition_without_ties_says_so(self):                  # a guard: arrived with the panel
+        app = self.ties_app(comp=101)                                    # a league: no pair meets twice in a round
+        self.assertIn("no two-legged ties", app.message_label.cget("text"))
+
+    def test_a_tie_with_its_second_leg_still_to_play_shows_a_v_and_no_aggregate(self):
+        app = self.app
+        self.widen()
+        pending = [fx(D(2026, 9, 2), 5, 4, 2, 0, comp=102, md=1), fx(D(2026, 9, 9), 4, 5, comp=102, md=1)]
+        app.install_dataset(dataset(extra=pending))
+        app.select_competition(102)
+        app._palette_split(fm_review.ANALYSIS, "Ties")
+        app.update()
+        self.assertEqual(app.sheets[fm_review.ANALYSIS].get_sheet_data(),
+                         [["Round 1", "Wrexham v Derby County", "2-0", "v", "", "Second leg to play"]])
+
+    def test_the_analysis_switch_and_the_palette_offer_ties(self):
+        app = self.ties_app()
+        self.assertIn("Ties", app.analysis_switch.cget("values"))
+        app.open_palette()
+        app.command_palette.set_query("analysis ties")
+        self.assertEqual(app.command_palette.visible_titles(), ["Analysis: Ties"])
+
 
 class IconTests(unittest.TestCase):
     def test_the_icon_is_a_windows_icon(self):

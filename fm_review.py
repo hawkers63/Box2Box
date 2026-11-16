@@ -67,7 +67,7 @@ EXPORT_LABEL = "Export ▾"
 HUB = "Competitions"
 ANALYSIS = "Analysis"
 VIEWS = ("Results", "Grid", "Table", ANALYSIS, HUB)
-ANALYSES = ("Form", "Positions", "xG")
+ANALYSES = ("Form", "Positions", "xG", "Ties")
 GROUPINGS = (fd.GROUP_BY_WEEK, fd.GROUP_BY_MATCHDAY, fd.GROUP_BY_DATE)
 MAX_TEAM_CHOICES = 120
 RESULTS_XG_COLUMN = 4
@@ -1846,7 +1846,8 @@ class FMReviewApp(_Root):
 
     def _render_analysis(self) -> None:
         self.overlays[ANALYSIS].clear()          # the Form panel draws its pills again
-        {"Form": self._render_form, "Positions": self._render_positions, "xG": self._render_xg}[self.analysis]()
+        {"Form": self._render_form, "Positions": self._render_positions, "xG": self._render_xg,
+         "Ties": self._render_ties}[self.analysis]()
 
     def _table_order(self) -> tuple[int, ...]:
         """Teams in the order of this season's table: the game's own where it stores one."""
@@ -1993,6 +1994,37 @@ class FMReviewApp(_Root):
             "score. Goals − xG: scored more (+) or fewer (−) than expected. xGA − GA: conceded fewer (+) or more "
             f"(−) than expected. Green or red where that averages more than {fd.XG_DEAD_ZONE} a match either way. "
             "Click a team to follow it."))
+
+    def _render_ties(self) -> None:
+        ties = fd.two_legged_ties(self.fixtures, self.labels)
+        self.analysis_rows = []
+        if not ties:
+            self.note_label.configure(text="")
+            self._show_message("This competition has no two-legged ties.")
+            return
+        name = lambda t: self.labels.get(t, f"Team {t}")      # noqa: E731
+        data = []
+        for tie in ties:
+            first, second = tie.first, tie.second
+            leg = lambda f, a_home: (f"{f.home_goals if a_home else f.away_goals}-"      # noqa: E731
+                                     f"{f.away_goals if a_home else f.home_goals}" if fd.has_score(f)
+                                     else ("n/a" if f.played else "v"))
+            goals = tie.aggregate
+            data.append([fd.tie_round_text(tie), f"{name(tie.team_a)} v {name(tie.team_b)}", leg(first, True),
+                         leg(second, False), f"{goals[0]}-{goals[1]}" if goals else "", fd.tie_outcome(tie, self.labels)])
+            self.analysis_rows.append(None)
+        widths = [self.px(90), self._text_width([row[1] for row in data], minimum=240), self.px(70), self.px(70),
+                  self.px(90), self._text_width([row[5] for row in data], minimum=200)]
+        sheet = self._fill_analysis(["Round", "Tie", "Leg 1", "Leg 2", "Aggregate", "Outcome"], data, widths,
+                                    [0, 2, 3, 4])
+        theme = self.view_theme
+        for i, tie in enumerate(ties):
+            if self.focus in (tie.team_a, tie.team_b):
+                sheet.highlight_rows(i, bg=theme.focus[0], fg=theme.focus[1], redraw=False, end_of_screen=False)
+        sheet.refresh()
+        self.note_label.configure(text=(
+            "Both legs and the aggregate read the first-named side first. The save stores no away goals, extra time "
+            "or penalties, so a level aggregate is not decided here."))
 
     def _render_competitions(self) -> None:
         """Fill the hub once per save and set of names; after that only the highlighted row moves,
