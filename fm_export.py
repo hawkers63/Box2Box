@@ -317,6 +317,9 @@ THIN = Side(style="thin", color="FF9CA3AF")
 # --------------------------------------------------------------------------- copy for a post
 
 
+POST_ROW_LIMIT = 100          # a table longer than this is not a post: nobody pastes five thousand rows
+
+
 @dataclass(frozen=True, slots=True)
 class Post:
     """One "Copy for a post" item: the same content as Markdown (Reddit, Discord) and as HTML (rich editors)."""
@@ -341,9 +344,11 @@ def _html_cell(cell: object, tag: str = "td") -> str:
 
 
 def _post(title: str, header: Sequence[str], align: str, rows: Sequence[Sequence[object]], footer: str,
-          after: str = "") -> Post:
+          after: str = "") -> Post | None:
     """The same rows as a Markdown table and as a plain HTML table (no styles: forums strip them), with an
-    optional line after the table."""
+    optional line after the table. None when there are more rows than POST_ROW_LIMIT."""
+    if len(rows) > POST_ROW_LIMIT:
+        return None
     markdown = [f"**{title}**", "", "| " + " | ".join(header) + " |", align]
     markdown += ["| " + " | ".join(_md_cell(c) for c in row) + " |" for row in rows]
     markdown += (["", after] if after else []) + ["", f"*{footer}*"]
@@ -355,7 +360,7 @@ def _post(title: str, header: Sequence[str], align: str, rows: Sequence[Sequence
     return Post(title, "\n".join(markdown), "\n".join(page))
 
 
-def post_table(snap: Snapshot) -> Post:
+def post_table(snap: Snapshot) -> Post | None:
     """The league table, for a post."""
     rows = []
     for _, group in snap.standings.groups:

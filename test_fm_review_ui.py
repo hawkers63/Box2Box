@@ -1407,6 +1407,17 @@ class WindowTests(unittest.TestCase):
         app._on_season("2027")                                    # nothing played in that season yet
         self.assertCountEqual(offered(), ["Copy for a post: Table"])
 
+    def test_a_competition_too_large_for_a_post_says_so_and_is_greyed(self):
+        app = self.post_app()
+        with mock.patch.object(fm_review.fx, "POST_ROW_LIMIT", 3), \
+                mock.patch.object(fm_review.clipboard, "copy") as copy:
+            app._refresh_post_menu()
+            self.assertEqual(str(app.post_menu.entrycget(0, "state")), "disabled")       # four teams: too many
+            app.copy_for_post("table")
+        copy.assert_not_called()
+        self.assertEqual(app.detail_label.cget("text"),
+                         "Nothing to copy: this competition has more teams than a post can hold (3).")
+
     def test_when_only_the_text_could_be_copied_it_says_so(self):
         app = self.post_app()
         with mock.patch.object(fm_review.clipboard, "copy", return_value=False):

@@ -1452,11 +1452,18 @@ class FMReviewApp(_Root):
     def _show_export_menu(self) -> None:
         self._popup(self.export_menu, self.export_button)
 
-    # Each "Copy for a post" item: what it copies, how it is built, and why there may be nothing to copy.
-    POSTS = {"table": ("the table", fx.post_table, ""),
-             "team": ("your club's results", fx.post_team_results,
-                      "follow a club that has played this season to copy its results"),
-             "recent": ("the recent results", fx.post_recent_results, "no match this season has been played yet")}
+    # Each "Copy for a post" item: what it copies and how it is built.
+    POSTS = {"table": ("the table", fx.post_table), "team": ("your club's results", fx.post_team_results),
+             "recent": ("the recent results", fx.post_recent_results)}
+
+    def _post_missing(self, kind: str) -> str:
+        """Why a "Copy for a post" item has nothing to copy just now."""
+        if kind == "table":
+            return f"this competition has more teams than a post can hold ({fx.POST_ROW_LIMIT})"
+        if kind == "team":
+            return "follow a club that has played this season to copy its results"
+        return ("no match this season has been played yet, or the latest round is too large "
+                f"for a post (more than {fx.POST_ROW_LIMIT} matches)")
 
     def _post_applies(self, kind: str) -> bool:
         """Whether a "Copy for a post" item has something to copy just now."""
@@ -1467,7 +1474,7 @@ class FMReviewApp(_Root):
                 f.played and self.focus in (f.home_team_id, f.away_team_id) for f in self.fixtures)
         if kind == "recent":
             return any(f.played for f in self.fixtures)
-        return True
+        return len(self.labels) <= fx.POST_ROW_LIMIT
 
     def _refresh_post_menu(self) -> None:
         for index, kind in enumerate(("table", "team", "recent")):
@@ -1477,12 +1484,12 @@ class FMReviewApp(_Root):
         """Copy the competition and season as shown for a forum post: Markdown and HTML on one copy."""
         if not self.dataset or self.comp_id is None:
             return
-        what, build, missing = self.POSTS[kind]
+        what, build = self.POSTS[kind]
         request = fx.ExportRequest(self.dataset, self.comp_id, self.season, names=dict(self.names),
                                    focus=self.focus, group_by=self.group_by, theme=self.view_theme)
         post = build(fx.snapshot(request))
         if post is None:
-            self.detail_label.configure(text=f"Nothing to copy: {missing}.")
+            self.detail_label.configure(text=f"Nothing to copy: {self._post_missing(kind)}.")
             return
         try:
             both = clipboard.copy(post.markdown, post.html)

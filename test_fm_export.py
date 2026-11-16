@@ -357,3 +357,12 @@ class PostTests(unittest.TestCase):
 
     def test_a_club_that_has_played_nothing_has_no_results_post(self):
         self.assertIsNone(fx.post_team_results(self.snap(season=2027)))     # Hull followed, nothing played yet
+
+    def test_a_table_too_large_for_a_post_is_not_offered(self):
+        with mock.patch.object(fx, "POST_ROW_LIMIT", 3):             # the league has four teams
+            self.assertIsNone(fx.post_table(self.snap()))
+        self.assertIsNotNone(fx.post_table(self.snap()))              # and within the real limit it is made
+
+    def test_recent_results_too_large_for_a_post_are_not_offered(self):
+        with mock.patch.object(fx, "POST_ROW_LIMIT", 1):             # the latest round has two matches
+            self.assertIsNone(fx.post_recent_results(self.snap()))
