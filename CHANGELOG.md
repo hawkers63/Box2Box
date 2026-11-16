@@ -11,6 +11,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Tooltips on form.** Hover a W, D, L or ? badge in the Table's form, the Analysis Form panel or the inspector drawer to see that match in words, for example "Won 2-1 v Leeds United, Sat 8 Aug". Where a badge cannot be matched to its match for certain, it shows no tooltip rather than a wrong one.
+- **The inspector drawer scrolls** with the mouse wheel when its content is longer than the window. A new selection starts at the top; the same one redrawn (after a theme change, for example) keeps its place.
+
+### Changed
+
+- The window can no longer be made narrower than its controls need (about 1,410 pixels, or your screen's width if that is less), so the Standings, Group by and Show switches are never cut off.
+- The right-click menu follows the colour theme.
+- The command palette describes a competition you have not named by its best-known clubs and size, for example "Competition 124: Flamengo, Palmeiras · 20 teams".
+- A refused drop's reason clears itself after a few seconds.
+- The drawer's close mark is a solid ×.
+
+### Fixed
+
+- A failure while handing a newly read save to the window was reported as "Match statistics (xG) could not be read" and otherwise hidden; it is now reported as the error it is.
+- Closing the window cancels every pending timer, so nothing runs on a window that has gone.
+
 ## [1.4] - 2026-11-16
 
 Adds navigation: open a save by dropping it on the window, counts on the view switch, a command palette, a right-click menu and an inspector drawer.
