@@ -183,6 +183,7 @@ class Dataset:
     zone_rules: Mapping[int, ZoneRules] = field(default_factory=dict)
     tie_breaks: Mapping[int, tuple[int, ...]] = field(default_factory=dict)
     expected_goals: Mapping[tuple, ExpectedGoals] = field(default_factory=dict)   # keyed on fixture_key
+    match_reports: Mapping[tuple, MatchStats] = field(default_factory=dict)        # keyed on fixture_key
     xg_report: XgReport | None = None    # None until the match statistics have been read
 
     def fixtures_for(self, competition_id: int) -> tuple[Fixture, ...]:
@@ -1920,9 +1921,135 @@ def with_expected_goals(dataset: Dataset, stats: Iterable | None, failure: str =
     """The Dataset with the save's match statistics joined to its fixtures. `stats` is None when
     they could not be read, and `failure` says why; nothing else in the Dataset changes."""
     if stats is None:
-        return replace(dataset, expected_goals={}, xg_report=XgReport(failed=failure or "not read"))
-    expected, report = link_expected_goals(stats, dataset.fixtures)
-    return replace(dataset, expected_goals=expected, xg_report=report)
+        return replace(dataset, expected_goals={}, match_reports={}, xg_report=XgReport(failed=failure or "not read"))
+    rows = list(stats)
+    expected, report = link_expected_goals(rows, dataset.fixtures)
+    return replace(dataset, expected_goals=expected, match_reports=link_match_stats(rows, dataset.fixtures),
+                   xg_report=report)
+
+
+@dataclass(frozen=True, slots=True)
+class SideStats:
+    """One side's figures for a match, as the save's match report holds them. A figure the report does not
+    hold, or holds unreadably, is None: it is never shown as 0."""
+
+    shots: int | None = None
+    shots_on_target: int | None = None
+    possession_percent: float | None = None
+    passes_attempted: int | None = None
+    passes_completed: int | None = None
+    corners: int | None = None
+    fouls: int | None = None
+    yellow_cards: int | None = None
+    red_cards: int | None = None
+    expected_goals: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MatchStats:
+    home: SideStats
+    away: SideStats
+
+
+@dataclass(frozen=True, slots=True)
+class StatLine:
+    """One row of the match statistics as text: a label and each side's figure."""
+
+    label: str
+    home: str
+    away: str
+
+
+def _clean(value) -> float | int | None:
+    """The figure if it is a finite number of at least zero, else None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value if math.isfinite(value) and value >= 0 else None
+
+
+def _side_stats(row) -> SideStats:
+    return SideStats(
+        shots=_clean(row.shots), shots_on_target=_clean(row.shots_on_target),
+        possession_percent=_clean(row.possession_percent), passes_attempted=_clean(row.passes_attempted),
+        passes_completed=_clean(row.passes_completed), corners=_clean(row.corners), fouls=_clean(row.fouls_made),
+        yellow_cards=_clean(row.yellow_cards), red_cards=_clean(row.red_cards),
+        expected_goals=_clean(row.expected_goals))
+
+
+def link_match_stats(stats: Iterable, fixtures: Mapping[int, Sequence[Fixture]]) -> dict[tuple, MatchStats]:
+    """Join match report rows to fixtures as link_expected_goals does: a match joins only when its key
+    fits exactly one played fixture and its rows are one home and one away row for those teams. Unlike
+    expected goals it does not need every figure to be readable; the ones that are not are None."""
+    candidates: dict[tuple, list[Fixture]] = defaultdict(list)
+    for items in fixtures.values():
+        for f in items:
+            candidates[fixture_key(f)].append(f)
+    by_match: dict[tuple, list] = defaultdict(list)
+    for row in stats:
+        by_match[(row.competition_id, row.home_team_id, row.away_team_id, row.date)].append(row)
+    reports: dict[tuple, MatchStats] = {}
+    for key, items in by_match.items():
+        found = candidates.get(key, [])
+        if len(found) != 1 or not found[0].played or len(items) != 2:
+            continue
+        home = [r for r in items if r.is_home and r.team_id == key[1]]
+        away = [r for r in items if not r.is_home and r.team_id == key[2]]
+        if len(home) == 1 and len(away) == 1:
+            reports[key] = MatchStats(_side_stats(home[0]), _side_stats(away[0]))
+    return reports
+
+
+def match_stats_for(dataset: Dataset, f: Fixture) -> MatchStats | None:
+    """A match's statistics, or None when the save holds no usable report for it."""
+    return dataset.match_reports.get(fixture_key(f))
+
+
+def _count_text(value) -> str:
+    return "—" if value is None else str(int(value))
+
+
+def _passes_text(side: SideStats) -> str:
+    attempted, completed = side.passes_attempted, side.passes_completed
+    if attempted and completed is not None:
+        return f"{int(completed)} of {int(attempted)} ({round(100 * completed / attempted)}%)"
+    if completed:
+        return str(int(completed))
+    if attempted:
+        return str(int(attempted))
+    return "—"
+
+
+def describe_match_stats(stats: MatchStats) -> tuple[StatLine, ...]:
+    """The match statistics as rows of text, in the order the inspector shows them; '—' for a figure
+    the save does not hold."""
+    home, away = stats.home, stats.away
+
+    def line(label: str, text) -> StatLine:
+        return StatLine(label, text(home), text(away))
+
+    return (
+        line("xG", lambda s: "—" if s.expected_goals is None else f"{s.expected_goals:.2f}"),
+        line("Shots", lambda s: _count_text(s.shots)),
+        line("On target", lambda s: _count_text(s.shots_on_target)),
+        line("Possession", lambda s: "—" if s.possession_percent is None else f"{round(s.possession_percent)}%"),
+        line("Passes", _passes_text),
+        line("Corners", lambda s: _count_text(s.corners)),
+        line("Fouls", lambda s: _count_text(s.fouls)),
+        line("Yellow cards", lambda s: _count_text(s.yellow_cards)),
+        line("Red cards", lambda s: _count_text(s.red_cards)),
+    )
+
+
+def meetings(fixtures: Iterable[Fixture], team_a: int, team_b: int) -> tuple[Fixture, ...]:
+    """The matches between two teams, either way round, in date order."""
+    pair = {team_a, team_b}
+    return tuple(sorted((f for f in fixtures if {f.home_team_id, f.away_team_id} == pair), key=_when))
+
+
+def next_match(fixtures: Iterable[Fixture], team_id: int) -> Fixture | None:
+    """The team's earliest match still to play, or None."""
+    coming = [f for f in fixtures if not f.played and team_id in (f.home_team_id, f.away_team_id)]
+    return min(coming, key=_when) if coming else None
 
 
 def xg_for(dataset: Dataset, f: Fixture) -> ExpectedGoals | None:

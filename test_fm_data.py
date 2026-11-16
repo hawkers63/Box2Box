@@ -1060,3 +1060,94 @@ class ClubIndexTests(unittest.TestCase):
     def test_entries_are_ordered_by_competition_then_label(self):
         keys = [(e.competition_id, e.label.casefold()) for e in self.index()]
         self.assertEqual(keys, sorted(keys))
+
+
+class MatchReportTests(unittest.TestCase):
+    """Each side's statistics for a match, typed, beside its expected goals."""
+
+    MATCH = XG_SEASON[0]                                     # Hull 2-1 Leeds
+
+    def dataset(self, rows, fixtures=XG_SEASON):
+        return fd.build_dataset(info(), fixtures, match_stats=rows)
+
+    def test_a_report_gives_each_side_its_figures(self):
+        ds = self.dataset([stats_row(self.MATCH, True, 1.82, shots=14, possession_percent=57),
+                           stats_row(self.MATCH, False, 0.45, shots=6, possession_percent=43)])
+        report = fd.match_stats_for(ds, self.MATCH)
+        self.assertEqual((report.home.shots, report.away.shots), (14, 6))
+        self.assertEqual((report.home.possession_percent, report.away.possession_percent), (57, 43))
+        self.assertEqual((report.home.expected_goals, report.away.expected_goals), (1.82, 0.45))
+        self.assertEqual((report.home.corners, report.home.fouls, report.home.yellow_cards), (5, 11, 1))
+        self.assertEqual((report.home.passes_attempted, report.home.passes_completed), (400, 330))
+
+    def test_an_unreadable_figure_is_none_never_zero(self):
+        rows = [stats_row(self.MATCH, True, 1.0, shots=None, corners=-1, fouls_made=float("inf")),
+                stats_row(self.MATCH, False, 0.5)]
+        report = fd.match_stats_for(self.dataset(rows), self.MATCH)
+        self.assertEqual((report.home.shots, report.home.corners, report.home.fouls), (None, None, None))
+        self.assertEqual(report.away.shots, 10)
+
+    def test_a_report_without_readable_expected_goals_still_gives_its_other_figures(self):
+        rows = [stats_row(self.MATCH, True, float("nan")), stats_row(self.MATCH, False, 0.5)]
+        ds = self.dataset(rows)
+        report = fd.match_stats_for(ds, self.MATCH)
+        self.assertIsNone(report.home.expected_goals)
+        self.assertEqual(report.home.shots, 10)
+        self.assertIsNone(fd.xg_for(ds, self.MATCH))                  # expected goals behave exactly as before
+        self.assertEqual(ds.xg_report.rejected, 1)
+
+    def test_a_match_that_does_not_join_has_no_report(self):
+        one_row = [stats_row(self.MATCH, True, 1.0)]
+        two_home = [stats_row(self.MATCH, True, 1.0), stats_row(self.MATCH, True, 1.0)]
+        unplayed = match_stats(XG_SEASON[3], 1.0, 1.0)
+        for rows, fixture in ((one_row, self.MATCH), (two_home, self.MATCH), (unplayed, XG_SEASON[3])):
+            self.assertIsNone(fd.match_stats_for(self.dataset(rows), fixture))
+
+    def test_a_key_that_fits_two_fixtures_has_no_report(self):
+        twin = fx(D(2026, 8, 8), 1, 2, 0, 0, md=1)
+        ds = self.dataset(match_stats(self.MATCH, 1.0, 1.0), fixtures=[self.MATCH, twin])
+        self.assertIsNone(fd.match_stats_for(ds, self.MATCH))
+
+    def test_statistics_that_could_not_be_read_leave_no_reports(self):
+        ds = fd.with_expected_goals(fd.build_dataset(info(), XG_SEASON), None, "boom")
+        self.assertEqual(dict(ds.match_reports), {})
+
+    def test_a_dataset_built_without_statistics_has_none(self):
+        self.assertIsNone(fd.match_stats_for(fd.build_dataset(info(), XG_SEASON), self.MATCH))
+
+    def lines(self, rows):
+        report = fd.match_stats_for(self.dataset(rows), self.MATCH)
+        return {line.label: (line.home, line.away) for line in fd.describe_match_stats(report)}
+
+    def test_the_lines_are_formatted_for_reading(self):
+        lines = self.lines([stats_row(self.MATCH, True, 1.82, shots=14, possession_percent=57),
+                            stats_row(self.MATCH, False, 0.45, passes_attempted=300, passes_completed=240)])
+        self.assertEqual(lines["xG"], ("1.82", "0.45"))
+        self.assertEqual(lines["Shots"], ("14", "10"))
+        self.assertEqual(lines["Possession"], ("57%", "50%"))
+        self.assertEqual(lines["Passes"], ("330 of 400 (82%)", "240 of 300 (80%)"))
+        self.assertEqual([line.label for line in fd.describe_match_stats(fd.match_stats_for(
+            self.dataset([stats_row(self.MATCH, True, 1.0), stats_row(self.MATCH, False, 1.0)]), self.MATCH))],
+            ["xG", "Shots", "On target", "Possession", "Passes", "Corners", "Fouls", "Yellow cards", "Red cards"])
+
+    def test_missing_figures_show_a_dash_and_passes_degrade(self):
+        lines = self.lines([stats_row(self.MATCH, True, float("nan"), shots=None, possession_percent=None,
+                                      passes_attempted=0, passes_completed=0),
+                            stats_row(self.MATCH, False, 0.5, passes_attempted=None, passes_completed=200)])
+        self.assertEqual(lines["xG"], ("—", "0.50"))
+        self.assertEqual(lines["Shots"], ("—", "10"))
+        self.assertEqual(lines["Possession"], ("—", "50%"))
+        self.assertEqual(lines["Passes"], ("—", "200"))          # only the completed figure is known
+
+    def test_meetings_are_the_matches_between_two_teams_in_date_order(self):
+        fixtures = [fx(D(2026, 12, 12), 2, 1, md=4), fx(D(2026, 8, 8), 1, 2, 2, 1, md=1), fx(D(2026, 9, 5), 1, 3, md=2),
+                    fx(D(2026, 10, 3), 3, 2, md=3)]
+        found = fd.meetings(fixtures, team(1), team(2))
+        self.assertEqual([f.date for f in found], [D(2026, 8, 8), D(2026, 12, 12)])
+        self.assertEqual(fd.meetings(fixtures, team(1), team(4)), ())
+
+    def test_the_next_match_is_the_earliest_one_still_to_play(self):
+        fixtures = [fx(D(2026, 9, 5), 1, 3, md=2), fx(D(2026, 8, 8), 1, 2, 2, 1, md=1), fx(D(2026, 10, 3), 4, 1, md=3)]
+        self.assertEqual(fd.next_match(fixtures, team(1)).date, D(2026, 9, 5))
+        self.assertIsNone(fd.next_match(fixtures[1:2], team(1)))
+        self.assertIsNone(fd.next_match(fixtures, team(5)))
