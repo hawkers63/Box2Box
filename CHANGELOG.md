@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Command palette** (Ctrl+K or Ctrl+P): find any competition, club, view, split or action by typing, and run it with Enter. Clubs come from the open competition and every senior league and cup in the save (never youth, reserve or friendly competitions); a club opens in its main league and is followed. `utd` finds *United*; case and accents are ignored.
 - **Right-click menu** on Results, Grid, Table and Analysis rows: follow a club, **Show only** the meetings of the two clubs in a match (with a **Clear** button), export, copy, and a greyed **Head-to-head…** until saves from several seasons can feed it. The Competitions hub keeps its own menu.
 
+- **Inspector drawer** (the **Inspector** button, or Ctrl+I): a drawer over the right edge of the sheet, shut until opened, describing what you select. A match shows its score, the statistics from the save's match report (xG, shots, shots on target, possession, passes, corners, fouls, cards), the form of the followed club and this season's meetings between the two clubs; a club shows its form, record, points per game, next match and expected goals; the Competitions hub shows the selected competition. A figure the save does not hold shows as a dash, never 0. The statistics are kept when the save's expected goals are read, so nothing is read from the save again.
+
 ### Fixed
 
 - The "Unverified build" notice keeps its amber, on a small dark chip. With a club followed, 1.3 turned the notice white on the club's tinted title band (in the default theme, for every built-in club), which on a red club looked like an error. Its colour no longer depends on the club.

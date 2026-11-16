@@ -1192,6 +1192,7 @@ class WindowTests(unittest.TestCase):
         self.select(fm_review.HUB, app.comp_row_ids.index(101))
         text = drawer.rendered_text()
         self.assertEqual(text[0], "Championship")
+        self.assertEqual(text[1], "Competition 101")                              # named: the id goes in the subtitle
         self.assertIn("2 teams", text)                                           # the hub's own count, from the latest season
 
     def test_selecting_with_the_drawer_shut_does_not_open_it(self):

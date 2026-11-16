@@ -2264,7 +2264,9 @@ class FMReviewApp(_Root):
             inspector.Line(f"{plural(comp.fixture_count, 'fixture')}, {comp.played_count} played"),
             inspector.Line(", ".join(comp.top_clubs) or "No clubs named", muted=True),
         )
-        return inspector.InspectorModel(fd.competition_title(comp, self.names), f"Competition {comp.id}", blocks)
+        title = fd.competition_title(comp, self.names)
+        return inspector.InspectorModel(title, "" if title == f"Competition {comp.id}" else f"Competition {comp.id}",
+                                        blocks)
 
     # ----------------------------------------------------------------- the right-click menu
 
