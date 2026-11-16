@@ -24,7 +24,7 @@ import time
 import tkinter as tk
 import traceback
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox
 from tkinter import font as tkfont
@@ -32,6 +32,11 @@ from typing import NamedTuple
 
 import customtkinter as ctk
 from tksheet import Sheet, rounded_box_coords
+
+try:        # an optional extra: without it, a save cannot be dropped onto the window, and nothing else changes
+    from tkinterdnd2 import COPY, DND_FILES, REFUSE_DROP, TkinterDnD
+except ImportError:
+    COPY, DND_FILES, REFUSE_DROP, TkinterDnD = "copy", "DND_Files", "refuse_drop", None
 
 import club_colours
 import fm_data as fd
@@ -66,6 +71,7 @@ GD_COLUMN, FORM_COLUMN = 8, 10            # in the Table view
 
 FONT = "Segoe UI"
 THEME_LABEL = "Theme ▾"
+DROP_HINT = "Drop a .fm save to open it"
 
 # Every colour belongs to a theme in palette.py, shared with the exports.
 
@@ -116,6 +122,23 @@ def default_save_folder() -> Path:
         if games.is_dir():
             return games
     return documents
+
+
+def accept_dropped_save(paths: Sequence[str]) -> tuple[Path | None, str]:
+    """The save to open from what was dropped onto the window, with an empty reason; or None and why
+    not. Exactly one existing file ending in .fm (in any case) is a save."""
+    if not paths:
+        return None, "Drop one .fm save to open it."
+    if len(paths) > 1:
+        return None, "Drop one .fm save at a time."
+    path = Path(paths[0])
+    if path.is_dir():
+        return None, f"{path.name} is a folder, not a .fm save."
+    if path.suffix.lower() != ".fm":
+        return None, f"{path.name} is not a .fm save."
+    if not path.is_file():
+        return None, f"{path.name} could not be found."
+    return path, ""
 
 
 # ----------------------------------------------------------------- About
@@ -410,7 +433,15 @@ class ClubColoursDialog(ctk.CTkToplevel):
         self.destroy()
 
 
-class FMReviewApp(ctk.CTk):
+if TkinterDnD is not None:
+    class _Root(ctk.CTk, TkinterDnD.DnDWrapper):
+        """CustomTkinter's window, with tkinterdnd2's drag-and-drop methods."""
+else:
+    class _Root(ctk.CTk):
+        """CustomTkinter's window (tkinterdnd2 is not installed)."""
+
+
+class FMReviewApp(_Root):
     """The main window: competitions on the left, the selected season's views on the right."""
 
     def __init__(self) -> None:
@@ -430,6 +461,7 @@ class FMReviewApp(ctk.CTk):
         self._shown: str | None = None            # the sheet on screen, if any
         self.loading_since: float | None = None
         self.loading_step = ""
+        self._loading_file = ""                   # the save being read, for the drop refusal's wording
         self._reading_xg = False          # the save is open and its expected goals are on their way
         self._exporting = False
         self.about_window: AboutWindow | None = None
@@ -469,6 +501,7 @@ class FMReviewApp(ctk.CTk):
 
         self._load_names()
         self._build()
+        self._enable_file_drop()
         self._poll_job: str | None = self.after(100, self._poll)
 
     def destroy(self) -> None:
@@ -955,6 +988,46 @@ class FMReviewApp(ctk.CTk):
             self.note_label.configure(text=self._results_note())
         elif self.view == ANALYSIS and self.analysis == "xG":
             self.render()
+
+    # ----------------------------------------------------------------- dropping a save onto the window
+
+    def _enable_file_drop(self) -> None:
+        """Let a .fm save be dropped onto the window. tkinterdnd2 is an optional extra: without it, or if
+        its native part cannot load, the window works as before and says so."""
+        self.drop_enabled = False
+        try:
+            if TkinterDnD is None:
+                raise ImportError("the tkinterdnd2 package is not installed")
+            TkinterDnD._require(self)                    # loads the native tkdnd library into this window's Tcl
+            self.drop_target_register(DND_FILES)
+            self.dnd_bind("<<DropEnter>>", self._on_drop_enter)
+            self.dnd_bind("<<DropLeave>>", self._on_drop_leave)
+            self.dnd_bind("<<Drop>>", self._on_file_drop)
+        except Exception as exc:  # an optional extra must never stop the window opening
+            self.detail_label.configure(
+                text=f"Dropping a save onto the window is not available ({exc}); Open save… still works.")
+            return
+        self.drop_enabled = True
+
+    def _on_drop_enter(self, event) -> str:
+        self.status_label.configure(text=DROP_HINT)
+        return event.action
+
+    def _on_drop_leave(self, _event) -> None:
+        self._refresh_status()
+
+    def _on_file_drop(self, event) -> str:
+        """A drop: open it when it is one .fm save, otherwise say why not. Returns the action tkdnd needs."""
+        self._refresh_status()                           # the drag-over hint ends with the drop
+        if self.loading_since is not None:
+            self.detail_label.configure(text=f"Still reading {self._loading_file}; drop again when it has finished.")
+            return REFUSE_DROP
+        path, why = accept_dropped_save(self.tk.splitlist(event.data))
+        if path is None:
+            self.detail_label.configure(text=why)
+            return REFUSE_DROP
+        self.open_save(path)
+        return COPY
 
     def _refresh_status(self) -> None:
         if not self.dataset:

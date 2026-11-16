@@ -51,7 +51,7 @@ The four themes on the same made-up league: Midnight Emerald, Cyber Pitch, Deep 
 
 ## Quick start
 
-Double-click the **Box2Box** shortcut on the desktop (see below) or **Box2Box.bat**, then **Open save…**. Saves live in `Documents\Sports Interactive\Football Manager 27\games`. Reading one takes around half a minute. The save opens as soon as it has been read; its expected goals follow about 12 seconds later, while you browse. You can also drag a `.fm` save file onto the launcher to open it straight away.
+Double-click the **Box2Box** shortcut on the desktop (see below) or **Box2Box.bat**, then **Open save…**. Saves live in `Documents\Sports Interactive\Football Manager 27\games`. Reading one takes around half a minute. The save opens as soon as it has been read; its expected goals follow about 12 seconds later, while you browse. You can also drag a `.fm` save file onto the launcher to open it straight away, or onto the open window to switch to it: one save at a time, and not while another is still being read. Dropping onto the window uses `tkinterdnd2` (installed from `requirements.txt`); without it the window works as before and says so.
 
 From a terminal:
 

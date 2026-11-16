@@ -453,6 +453,52 @@ class WindowTests(unittest.TestCase):
     def test_status_bar_shows_the_copyright_until_a_save_is_open(self):
         self.assertIn(COPYRIGHT, self.app.status_label.cget("text"))
 
+    def make_save(self, name="My Career (v02).fm"):
+        path = Path(self.folder.name) / name
+        path.write_bytes(b"x")
+        return path
+
+    def test_the_window_accepts_drops_when_the_library_is_there(self):
+        self.assertTrue(self.app.drop_enabled)
+
+    def test_dropping_one_save_opens_it_and_anything_else_is_refused(self):
+        app, save, other = self.app, self.make_save(), self.make_save("notes.txt")
+        with mock.patch.object(app, "open_save") as opened:
+            action = app._on_file_drop(NS(data="{%s}" % save.as_posix(), action="copy"))   # braces round a path with spaces
+        self.assertEqual((action, opened.call_args.args), ("copy", (save,)))
+        with mock.patch.object(app, "open_save") as opened:
+            action = app._on_file_drop(NS(data=other.as_posix(), action="copy"))      # tkdnd's format: forward slashes
+        self.assertEqual((action, opened.call_count), ("refuse_drop", 0))
+        self.assertIn("notes.txt is not a .fm save", app.detail_label.cget("text"))
+
+    def test_a_drop_while_a_save_is_being_read_is_refused(self):
+        app, save = self.app, self.make_save()
+        app.loading_since, app._loading_file = time.monotonic(), "other.fm"
+        with mock.patch.object(app, "open_save") as opened:
+            action = app._on_file_drop(NS(data="{%s}" % save.as_posix(), action="copy"))
+        app.loading_since = None
+        self.assertEqual((action, opened.call_count), ("refuse_drop", 0))
+        self.assertIn("Still reading other.fm", app.detail_label.cget("text"))
+
+    def test_dragging_over_the_window_shows_a_hint_that_ends_with_the_drag(self):
+        app = self.app
+        self.assertEqual(app._on_drop_enter(NS(data="", action="copy")), "copy")
+        self.assertEqual(app.status_label.cget("text"), fm_review.DROP_HINT)
+        app._on_drop_leave(NS(data="", action="copy"))
+        self.assertIn(COPYRIGHT, app.status_label.cget("text"))
+
+    def test_the_window_opens_without_drop_support_when_the_library_is_missing_or_fails(self):
+        for patcher in (mock.patch.object(fm_review, "TkinterDnD", None),
+                        mock.patch.object(fm_review.TkinterDnD, "_require", side_effect=RuntimeError("no native library"))):
+            self.app.destroy()
+            with patcher:
+                self.app = fm_review.FMReviewApp()          # tearDown closes the last one
+                self.app.geometry("1300x800+-4000+0")
+                self.app.update()
+                self.assertFalse(self.app.drop_enabled)
+                self.assertIn("Dropping a save onto the window is not available", self.app.detail_label.cget("text"))
+                self.assertEqual(self.app.open_button.cget("state"), "normal")        # the window works as before
+
     def test_the_main_window_wears_the_box2box_icon(self):
         self.app.destroy()
         with mock.patch.object(fm_review.FMReviewApp, "iconbitmap", autospec=True) as icon:
@@ -640,6 +686,32 @@ class IconTests(unittest.TestCase):
             self.assertEqual(found.value, "hawkers63.Box2Box")
         finally:
             ctypes.windll.ole32.CoTaskMemFree(found)
+
+
+class DropAcceptanceTests(unittest.TestCase):
+    """What dropping files onto the window means, decided without a window."""
+
+    def test_one_save_is_accepted_whatever_the_case_or_the_name(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for name in ("a.fm", "B.FM", "My Career (v02) [copy].fm", "Saison été.fm"):
+                path = Path(folder) / name
+                path.write_bytes(b"x")
+                self.assertEqual(fm_review.accept_dropped_save([str(path)]), (path, ""), name)
+
+    def test_anything_else_is_refused_with_its_reason(self):
+        with tempfile.TemporaryDirectory() as folder:
+            save, other, directory = Path(folder) / "a.fm", Path(folder) / "notes.txt", Path(folder) / "dir.fm"
+            save.write_bytes(b"x")
+            other.write_bytes(b"x")
+            directory.mkdir()
+            for paths, message in (
+                ([], "Drop one .fm save to open it."),
+                ([str(save), str(save)], "Drop one .fm save at a time."),
+                ([str(other)], "notes.txt is not a .fm save."),
+                ([str(directory)], "dir.fm is a folder, not a .fm save."),
+                ([str(Path(folder) / "gone.fm")], "gone.fm could not be found."),
+            ):
+                self.assertEqual(fm_review.accept_dropped_save(paths), (None, message), paths)
 
 
 class AboutTextTests(unittest.TestCase):
