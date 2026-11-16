@@ -74,13 +74,22 @@ class Inspector(ctk.CTkFrame):
         self._title = tk.Label(self._header, text="", anchor="w", justify="left", font=(font[0], font[1] + 2, "bold"),
                                wraplength=px(WIDTH - 70), bd=0)
         self._title.pack(side="left", fill="x", expand=True)
-        self._close = tk.Label(self._header, text="✕", font=font, bd=0, cursor="hand2")
+        self._close = tk.Label(self._header, text="×", font=font, bd=0, cursor="hand2")
         self._close.pack(side="right")
         self._close.bind("<Button-1>", lambda _e: self.close())
         self._subtitle = tk.Label(self, text="", anchor="w", justify="left", font=font, wraplength=px(WIDTH - 30), bd=0)
         self._subtitle.pack(fill="x", padx=px(10), pady=(px(2), px(6)))
-        self._body = tk.Frame(self, bd=0, highlightthickness=0)
-        self._body.pack(fill="both", expand=True, padx=px(10), pady=(0, px(8)))
+        # The body sits in a canvas so that content taller than the drawer can scroll.
+        self._viewport = tk.Canvas(self, bd=0, highlightthickness=0)
+        self._viewport.pack(fill="both", expand=True, padx=px(10), pady=(0, px(8)))
+        self._body = tk.Frame(self._viewport, bd=0, highlightthickness=0)
+        self._window = self._viewport.create_window(0, 0, window=self._body, anchor="nw")
+        self._body.bind("<Configure>", lambda _e: self._viewport.configure(scrollregion=self._viewport.bbox("all")))
+        self._viewport.bind("<Configure>", lambda e: self._viewport.itemconfigure(self._window, width=e.width))
+        self._viewport.bind("<MouseWheel>", self._on_wheel)
+        # Windows sends the wheel to the widget under the pointer: every line in the body carries this tag.
+        self._wheel_tag = f"InspectorWheel{id(self)}"
+        self.bind_class(self._wheel_tag, "<MouseWheel>", self._on_wheel)
         self._paint_frame()
 
     # ----------------------------------------------------------------- showing and hiding
@@ -98,6 +107,10 @@ class Inspector(ctk.CTkFrame):
         if was_open:
             self._on_close()
 
+    def _on_wheel(self, event) -> str:
+        self._viewport.yview_scroll(-1 if event.delta > 0 else 1, "units")
+        return "break"
+
     # ----------------------------------------------------------------- content
 
     def rendered_text(self) -> list[str]:
@@ -113,14 +126,16 @@ class Inspector(ctk.CTkFrame):
     def _paint_frame(self) -> None:
         t = self._theme
         self.configure(fg_color=t.panel, border_color=t.field[1])
-        for widget in (self._header, self._body):
+        for widget in (self._header, self._viewport, self._body):
             widget.configure(bg=t.panel)
         self._title.configure(bg=t.panel, fg=t.text)
         self._close.configure(bg=t.panel, fg=t.muted)
         self._subtitle.configure(bg=t.panel, fg=t.muted)
 
     def show(self, model: InspectorModel) -> None:
-        """Draw a model, replacing whatever was shown."""
+        """Draw a model, replacing whatever was shown. A new model starts at the top; the same model drawn
+        again (a theme change, a re-render) keeps its scroll position."""
+        where = self._viewport.yview()[0] if model == self._model else 0.0
         self._model = model
         for child in self._body.winfo_children():
             child.destroy()
@@ -128,7 +143,7 @@ class Inspector(ctk.CTkFrame):
         self._title.configure(text=model.title)
         self._subtitle.configure(text=model.subtitle)
         if model.subtitle:
-            self._subtitle.pack(fill="x", padx=self._px(10), pady=(self._px(2), self._px(6)), before=self._body)
+            self._subtitle.pack(fill="x", padx=self._px(10), pady=(self._px(2), self._px(6)), before=self._viewport)
         else:
             self._subtitle.pack_forget()
         for block in model.blocks:
@@ -140,6 +155,12 @@ class Inspector(ctk.CTkFrame):
                 self._add_stats(block)
             elif isinstance(block, Chips):
                 self._add_chips(block)
+        widgets = list(self._body.winfo_children())
+        while widgets:
+            widget = widgets.pop()
+            widget.bindtags((self._wheel_tag, *widget.bindtags()))
+            widgets.extend(widget.winfo_children())
+        self._viewport.yview_moveto(where)
 
     def _label(self, parent, text: str, *, fg: str, bg: str, bold: bool = False, anchor: str = "w",
                justify: str = "left", **options):

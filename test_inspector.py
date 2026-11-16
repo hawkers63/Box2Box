@@ -107,6 +107,63 @@ class InspectorTests(unittest.TestCase):
         self.root.update()
         self.assertIs(self.root.focus_get(), other._entry)
 
+    def long_model(self, lines=60):
+        return inspector.InspectorModel("Long", "", tuple(inspector.Line(f"line {n}") for n in range(lines)))
+
+    def test_a_model_taller_than_the_drawer_scrolls_with_the_wheel(self):
+        self.root.geometry("900x300+-4000+0")
+        self.drawer.open()
+        self.drawer.show(self.long_model())
+        self.root.update()
+        view = self.drawer._viewport
+        self.assertEqual(view.yview()[0], 0.0)
+        view.event_generate("<MouseWheel>", delta=-120, x=10, y=10)
+        self.root.update()
+        self.assertGreater(view.yview()[0], 0.0)
+
+    def test_the_wheel_over_a_line_scrolls_the_drawer_too(self):
+        self.root.geometry("900x300+-4000+0")
+        self.drawer.open()
+        self.drawer.show(self.long_model())
+        self.root.update()
+        self.drawer._body.winfo_children()[3].event_generate("<MouseWheel>", delta=-120, x=5, y=5)
+        self.root.update()
+        self.assertGreater(self.drawer._viewport.yview()[0], 0.0)
+
+    def test_a_new_model_starts_at_the_top(self):
+        self.root.geometry("900x300+-4000+0")
+        self.drawer.open()
+        self.drawer.show(self.long_model())
+        self.root.update()
+        self.drawer._viewport.yview_moveto(0.5)
+        self.drawer.show(self.long_model(70))
+        self.root.update()
+        self.assertEqual(self.drawer._viewport.yview()[0], 0.0)
+
+    def test_redrawing_the_same_model_keeps_the_scroll_position(self):
+        self.root.geometry("900x300+-4000+0")
+        self.drawer.open()
+        self.drawer.show(self.long_model())
+        self.root.update()
+        self.drawer._viewport.yview_moveto(0.5)
+        where = self.drawer._viewport.yview()[0]
+        self.drawer.restyle(palette.theme_by_name("Cyber Pitch"))      # redraws the same model
+        self.drawer.show(self.long_model())                              # an equal model, as a re-render sends
+        self.root.update()
+        self.assertAlmostEqual(self.drawer._viewport.yview()[0], where, places=3)
+
+    def test_a_short_model_does_not_scroll(self):
+        self.root.geometry("900x700+-4000+0")
+        self.drawer.open()
+        self.drawer.show(self.long_model(3))
+        self.root.update()
+        self.drawer._viewport.event_generate("<MouseWheel>", delta=-120, x=10, y=10)
+        self.root.update()
+        self.assertEqual(self.drawer._viewport.yview()[0], 0.0)
+
+    def test_the_close_mark_is_a_solid_cross(self):
+        self.assertEqual(self.drawer._close.cget("text"), "×")
+
     def test_a_model_with_no_subtitle_shows_none(self):
         self.drawer.show(inspector.InspectorModel("Title only"))
         self.assertEqual(self.drawer.rendered_text(), ["Title only"])
