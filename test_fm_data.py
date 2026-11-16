@@ -1252,3 +1252,94 @@ class TwoLeggedTieTests(unittest.TestCase):
         legs = [fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 15), 2, 1, 0, 0, md=1),
                 fx(D(2026, 8, 8), 3, 4, 2, 2, md=1), fx(D(2026, 8, 15), 4, 3, 1, 0, md=1)]
         self.assertEqual(len(self.ties(legs)), 2)
+
+
+class CupRoundTests(unittest.TestCase):
+    """A knockout competition as rounds of ties, with each tie's winner."""
+
+    def rounds(self, fixtures):
+        return fd.cup_rounds(fixtures, fd.team_labels(fixtures))
+
+    def test_single_matches_make_ties_in_round_order_with_the_winner_by_score(self):
+        cup = [fx(D(2026, 11, 14), 1, 2, 2, 0, comp=151, md=1), fx(D(2026, 11, 14), 3, 4, 0, 1, comp=151, md=1),
+               fx(D(2027, 1, 16), 1, 4, 1, 0, comp=151, md=2)]
+        first, final = self.rounds(cup)
+        self.assertEqual([r.index for r in (first, final)], [0, 1])
+        self.assertEqual([(t.team_a, t.team_b, t.winner, t.how) for t in first.ties],
+                         [(team(1), team(2), team(1), "score"), (team(3), team(4), team(4), "score")])
+        self.assertEqual((final.ties[0].winner, final.ties[0].how), (team(1), "score"))
+
+    def test_a_drawn_match_is_decided_by_who_appears_in_the_next_round(self):
+        cup = [fx(D(2026, 11, 14), 1, 2, 1, 1, comp=151, md=1), fx(D(2026, 11, 14), 3, 4, 0, 1, comp=151, md=1),
+               fx(D(2027, 1, 16), 2, 4, 1, 0, comp=151, md=2)]               # 2 went through after the draw
+        first, _ = self.rounds(cup)
+        self.assertEqual([(t.winner, t.how) for t in first.ties],
+                         [(team(2), "next round"), (team(4), "score")])
+
+    def test_a_replay_belongs_to_its_tie_and_its_score_decides_it(self):
+        cup = [fx(D(2026, 11, 14), 1, 2, 1, 1, comp=151, md=1), fx(D(2026, 11, 14), 3, 4, 0, 1, comp=151, md=1),
+               fx(D(2026, 11, 17), 2, 1, 2, 0, comp=151, md=1)]              # 2 won the replay at home
+        (first,) = self.rounds(cup)
+        self.assertEqual(len(first.ties), 2)                                  # the replay is not a third tie
+        drawn = next(t for t in first.ties if t.team_a == team(1))
+        self.assertEqual([f.date for f in drawn.fixtures], [D(2026, 11, 14), D(2026, 11, 17)])
+        self.assertEqual((drawn.winner, drawn.how), (team(2), "score"))
+
+    def test_two_legs_are_decided_on_aggregate_even_when_the_second_leg_goes_the_other_way(self):
+        cup = [fx(D(2027, 1, 12), 1, 2, 3, 0, comp=662, md=1), fx(D(2027, 2, 2), 2, 1, 1, 0, comp=662, md=1),
+               fx(D(2027, 3, 21), 1, 3, 1, 0, comp=662, md=2)]               # 2 won the second leg, 1 the tie 3-1
+        first, _ = self.rounds(cup)
+        (tie,) = first.ties
+        self.assertEqual((len(tie.fixtures), tie.winner, tie.how), (2, team(1), "aggregate"))
+
+    # Guards: these follow from the winner logic above.
+    def test_a_level_aggregate_is_settled_by_the_next_round(self):
+        cup = [fx(D(2027, 1, 12), 1, 2, 1, 1, comp=662, md=1), fx(D(2027, 1, 19), 2, 1, 0, 0, comp=662, md=1),
+               fx(D(2027, 3, 21), 2, 3, 1, 0, comp=662, md=2)]
+        (tie,) = self.rounds(cup)[0].ties
+        self.assertEqual((tie.winner, tie.how), (team(2), "next round"))
+
+    def test_a_drawn_final_or_an_unplayed_tie_has_no_winner(self):
+        cup = [fx(D(2027, 1, 12), 1, 2, 1, 1, comp=662, md=1), fx(D(2027, 3, 21), 3, 4, comp=662, md=2)]
+        first, final = self.rounds(cup)
+        self.assertEqual((first.ties[0].winner, first.ties[0].how), (None, ""))
+        self.assertEqual((final.ties[0].winner, final.ties[0].how), (None, ""))
+
+    def names(self, fixtures):
+        return [r.name for r in self.rounds(fixtures)]
+
+    def test_a_round_the_save_names_keeps_its_name_and_one_it_does_not_is_named_from_its_size(self):
+        def matches(md, n, rnd=None):                              # n different pairs in round md
+            return [fx(D(2026, 9, 1 + md), 2 * i + 1, 2 * i + 2, 1, 0, comp=151, md=md, rnd=rnd) for i in range(n)]
+
+        final = CodedValue(CompetitionRound.FINAL, 19)
+        with mock.patch.dict(CLUBS, {n: (f"Club {n}", f"C{n}") for n in range(6, 17)}):
+            cup = matches(1, 8) + matches(2, 4) + matches(3, 1, final)
+            self.assertEqual(self.names(cup), ["Last 16", "Last 8", "Final"])
+            odd = matches(1, 3) + matches(2, 2)                    # three ties is no power of two: no size to name it by
+            self.assertEqual(self.names(odd), ["Round 1", "Last 4"])
+
+    def test_a_round_where_a_side_plays_more_than_twice_is_a_group_phase_not_a_knockout(self):
+        group = [fx(D(2026, 9, 1), 1, 2, 1, 0, comp=664, md=1), fx(D(2026, 9, 8), 1, 3, 0, 0, comp=664, md=1),
+                 fx(D(2026, 9, 15), 1, 4, 2, 1, comp=664, md=1), fx(D(2026, 9, 1), 3, 4, 1, 1, comp=664, md=1)]
+        knockout = [fx(D(2026, 10, 1), 1, 3, 1, 0, comp=664, md=2)]
+        first, second = self.rounds(group + knockout)
+        self.assertFalse(first.knockout)                 # team 1 plays three times in the round
+        self.assertTrue(second.knockout)
+
+    @staticmethod
+    def matches(md, n, rnd=None):                              # n different pairs in round md
+        return [fx(D(2026, 9, 1 + md), 2 * i + 1, 2 * i + 2, 1, 0, comp=151, md=md, rnd=rnd) for i in range(n)]
+
+    def test_the_last_rounds_that_halve_down_to_a_single_final_are_the_tree_and_the_rest_the_list(self):
+        with mock.patch.dict(CLUBS, {n: (f"Club {n}", f"C{n}") for n in range(6, 17)}):
+            cup = self.matches(1, 5) + self.matches(2, 4) + self.matches(3, 2) + self.matches(4, 1)
+            earlier, tree = fd.bracket_split(self.rounds(cup))
+        self.assertEqual([len(r.ties) for r in earlier], [5])           # five does not halve into four: stop there
+        self.assertEqual([len(r.ties) for r in tree], [4, 2, 1])
+
+    def test_a_competition_not_ending_in_a_single_final_has_no_tree(self):
+        with mock.patch.dict(CLUBS, {n: (f"Club {n}", f"C{n}") for n in range(6, 17)}):
+            cup = self.matches(1, 4) + self.matches(2, 3)                # ends in three ties: no one final
+            earlier, tree = fd.bracket_split(self.rounds(cup))
+        self.assertEqual((len(earlier), tree), (2, ()))

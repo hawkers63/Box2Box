@@ -2074,6 +2074,91 @@ class Tie:
         return (self.first.home_goals + self.second.away_goals, self.first.away_goals + self.second.home_goals)
 
 
+@dataclass(frozen=True, slots=True)
+class CupTie:
+    """A pairing in one round of a knockout competition: one match, a replay, or two legs. `winner` is the side
+    that went through, or None when it cannot be told; `how` says on what evidence: 'score' (a single match or
+    the replay), 'aggregate' (two legs) or 'next round' (the side appears in a later round)."""
+
+    round_index: int
+    team_a: int
+    team_b: int
+    fixtures: tuple[Fixture, ...]
+    winner: int | None
+    how: str
+
+
+@dataclass(frozen=True, slots=True)
+class CupRound:
+    index: int
+    name: str
+    ties: tuple[CupTie, ...]
+    knockout: bool = True          # False for a group or league phase, where a side plays more than twice
+
+
+def cup_rounds(fixtures: Iterable[Fixture], labels: Mapping[int, str]) -> tuple[CupRound, ...]:
+    """The fixtures as rounds of ties, in round-index order."""
+    by_round: dict[int, dict[frozenset, list[Fixture]]] = defaultdict(lambda: defaultdict(list))
+    for f in fixtures:
+        if f.round_index is not None:
+            by_round[f.round_index][frozenset((f.home_team_id, f.away_team_id))].append(f)
+    appears_after: dict[int, set[int]] = {}          # round index -> teams playing in any later round
+    seen: set[int] = set()
+    for index in sorted(by_round, reverse=True):
+        appears_after[index] = set(seen)
+        for legs in by_round[index].values():
+            for f in legs:
+                seen.update((f.home_team_id, f.away_team_id))
+    rounds = []
+    for index in sorted(by_round):
+        ties = []
+        for legs in by_round[index].values():
+            legs = sorted(legs, key=_when)
+            winner, how = None, ""
+            decider = legs[-1] if len(legs) == 1 or (len(legs) == 2 and is_replay(*legs)) else None
+            if decider is not None and has_score(decider) and decider.home_goals != decider.away_goals:
+                f = decider
+                winner, how = (f.home_team_id if f.home_goals > f.away_goals else f.away_team_id), "score"
+            if len(legs) == 2 and decider is None:                     # two legs: the aggregate decides
+                goals = Tie(index, legs[0].home_team_id, legs[0].away_team_id, legs[0], legs[1]).aggregate
+                if goals is not None and goals[0] != goals[1]:
+                    winner = legs[0].home_team_id if goals[0] > goals[1] else legs[0].away_team_id
+                    how = "aggregate"
+            if winner is None:
+                went_on = [t for t in (legs[0].home_team_id, legs[0].away_team_id) if t in appears_after[index]]
+                if len(went_on) == 1:
+                    winner, how = went_on[0], "next round"
+            ties.append(CupTie(index, legs[0].home_team_id, legs[0].away_team_id, tuple(legs), winner, how))
+        named = round_text(by_round[index][next(iter(by_round[index]))][0])
+        if named and not named.startswith("Md "):
+            name = named                                      # a name the save confirms
+        elif len(ties) >= 2 and len(ties) & (len(ties) - 1) == 0:
+            name = f"Last {2 * len(ties)}"                      # a power of two: named by how many sides are left
+        else:
+            name = f"Round {index + 1}"
+        plays = Counter(t for legs in by_round[index].values() for f in legs for t in (f.home_team_id, f.away_team_id))
+        rounds.append(CupRound(index, name, tuple(sorted(ties, key=lambda t: _when(t.fixtures[0]))),
+                               knockout=max(plays.values()) <= 2))
+    return tuple(rounds)
+
+
+TREE_ROUNDS = 4          # the bracket draws at most this many rounds: the final back to the last 16
+
+
+def bracket_split(rounds: Sequence[CupRound]) -> tuple[tuple[CupRound, ...], tuple[CupRound, ...]]:
+    """(earlier rounds, the rounds to draw as a tree). The tree is the final, which must be a single tie, and
+    the knockout rounds before it while each has twice the ties of the next, up to TREE_ROUNDS. A competition
+    that does not end in a single final has no tree."""
+    if not rounds or len(rounds[-1].ties) != 1 or not rounds[-1].knockout:
+        return tuple(rounds), ()
+    tree = [rounds[-1]]
+    for earlier in reversed(rounds[:-1]):
+        if len(tree) == TREE_ROUNDS or not earlier.knockout or len(earlier.ties) != 2 * len(tree[0].ties):
+            break
+        tree.insert(0, earlier)
+    return tuple(rounds[:len(rounds) - len(tree)]), tuple(tree)
+
+
 REPLAY_DAYS = 4          # a replay follows a drawn match within this many days; a second leg comes later
 
 
