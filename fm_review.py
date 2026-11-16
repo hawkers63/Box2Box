@@ -38,6 +38,7 @@ try:        # an optional extra: without it, a save cannot be dropped onto the w
 except ImportError:
     COPY, DND_FILES, REFUSE_DROP, TkinterDnD = "copy", "DND_Files", "refuse_drop", None
 
+import bracket
 import clipboard
 import club_colours
 import command_palette
@@ -67,7 +68,7 @@ EXPORT_LABEL = "Export ▾"
 HUB = "Competitions"
 ANALYSIS = "Analysis"
 VIEWS = ("Results", "Grid", "Table", ANALYSIS, HUB)
-ANALYSES = ("Form", "Positions", "xG", "Ties")
+ANALYSES = ("Form", "Positions", "xG", "Ties", "Bracket")
 GROUPINGS = (fd.GROUP_BY_WEEK, fd.GROUP_BY_MATCHDAY, fd.GROUP_BY_DATE)
 MAX_TEAM_CHOICES = 120
 RESULTS_XG_COLUMN = 4
@@ -739,6 +740,9 @@ class FMReviewApp(_Root):
             sheet.grid_remove()
         self.sheets[HUB].bind("<Double-Button-1>", lambda _e: self._open_from_hub())
         self.overlays = {name: SheetOverlay(self.sheets[name], self.px) for name in ("Table", ANALYSIS)}
+        self.bracket_view = bracket.BracketView(content, px=self.px, font=(FONT, 10), theme=self.theme)
+        self.bracket_view.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
+        self.bracket_view.grid_remove()                                  # the Analysis view's Bracket panel shows it
         self.tooltip = tooltip.Tooltip(self, theme=self.theme)        # over the form pills
         for name, overlay in self.overlays.items():
             overlay.on_hover = lambda row, column, index, x, y, n=name: self._on_pill_hover(n, row, column, index, x, y)
@@ -837,6 +841,8 @@ class FMReviewApp(_Root):
             self.inspector.restyle(t)
         if getattr(self, "tooltip", None) is not None:
             self.tooltip.restyle(t)
+        if getattr(self, "bracket_view", None) is not None:
+            self.bracket_view.use_theme(t)
         selected = t.selection[0]
         border = t.selection[1]
         for name, sheet in self.sheets.items():
@@ -1583,6 +1589,7 @@ class FMReviewApp(_Root):
 
     def _show_sheet(self, name: str) -> Sheet:
         self.message.grid_remove()
+        self.bracket_view.grid_remove()
         self._shown = name
         for key, sheet in self.sheets.items():
             if key == name:
@@ -1593,6 +1600,7 @@ class FMReviewApp(_Root):
 
     def _show_message(self, text: str) -> None:
         self._shown = None
+        self.bracket_view.grid_remove()
         for sheet in self.sheets.values():
             sheet.grid_remove()
         self.message_label.configure(text=text)
@@ -1847,7 +1855,7 @@ class FMReviewApp(_Root):
     def _render_analysis(self) -> None:
         self.overlays[ANALYSIS].clear()          # the Form panel draws its pills again
         {"Form": self._render_form, "Positions": self._render_positions, "xG": self._render_xg,
-         "Ties": self._render_ties}[self.analysis]()
+         "Ties": self._render_ties, "Bracket": self._render_bracket}[self.analysis]()
 
     def _table_order(self) -> tuple[int, ...]:
         """Teams in the order of this season's table: the game's own where it stores one."""
@@ -1994,6 +2002,27 @@ class FMReviewApp(_Root):
             "score. Goals − xG: scored more (+) or fewer (−) than expected. xGA − GA: conceded fewer (+) or more "
             f"(−) than expected. Green or red where that averages more than {fd.XG_DEAD_ZONE} a match either way. "
             "Click a team to follow it."))
+
+    def _render_bracket(self) -> None:
+        comp = self.dataset.by_id[self.comp_id]
+        if fd.underlying_category(comp, self.dataset) != fd.COMP_CAT_CUP:
+            self.note_label.configure(text="")
+            self._show_message("The bracket is for knockout cups; this competition is not one.")
+            return
+        rounds = fd.cup_rounds(self.fixtures, self.labels)
+        if not rounds:
+            self.note_label.configure(text="")
+            self._show_message("This cup has no rounds this season.")
+            return
+        self.analysis_rows = []
+        self.message.grid_remove()
+        for sheet in self.sheets.values():
+            sheet.grid_remove()
+        self._shown = None
+        self.bracket_view.grid()
+        self.bracket_view.use_theme(self.view_theme)                     # with the followed club's tint, as the sheets
+        self.bracket_view.show(rounds, self.labels, self.focus)
+        self.note_label.configure(text="")
 
     def _render_ties(self) -> None:
         ties = fd.two_legged_ties(self.fixtures, self.labels)

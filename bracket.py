@@ -137,6 +137,10 @@ class BracketView(tk.Frame):
         self._rounds: tuple = ()
         self._shown: tuple | None = None            # what was last drawn, to draw it again in a new theme
 
+    def use_theme(self, theme: palette.Theme) -> None:
+        """Take a theme (the window's, with the followed club's tint) for the next drawing."""
+        self._theme = theme
+
     def restyle(self, theme: palette.Theme) -> None:
         self._theme = theme
         if self._shown is not None:

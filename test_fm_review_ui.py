@@ -1536,6 +1536,68 @@ class WindowTests(unittest.TestCase):
         app.command_palette.set_query("analysis ties")
         self.assertEqual(app.command_palette.visible_titles(), ["Analysis: Ties"])
 
+    # ----------------------------------------------------------------- v1.6 step 1: the cup bracket
+
+    def cup_fixtures(self):
+        """Eight sides in a knockout cup (competition 106): four quarter-finals, two semi-finals, a final."""
+        coded = test_fm_data.CodedValue
+        rounds = test_fm_data.CompetitionRound
+        qf, sf, final = (coded(rounds.QUARTER_FINAL, 16), coded(rounds.SEMI_FINAL, 17), coded(rounds.FINAL, 19))
+        with mock.patch.dict(test_fm_data.CLUBS, {n: (f"Club {n}", f"C{n}") for n in range(6, 9)}):
+            return [fx(D(2026, 9, 1), 1, 2, 1, 0, comp=106, md=1, rnd=qf), fx(D(2026, 9, 1), 3, 4, 0, 1, comp=106, md=1, rnd=qf),
+                    fx(D(2026, 9, 1), 5, 6, 2, 0, comp=106, md=1, rnd=qf), fx(D(2026, 9, 1), 7, 8, 0, 3, comp=106, md=1, rnd=qf),
+                    fx(D(2026, 10, 1), 1, 4, 1, 0, comp=106, md=2, rnd=sf), fx(D(2026, 10, 1), 5, 8, 0, 1, comp=106, md=2, rnd=sf),
+                    fx(D(2026, 11, 1), 1, 8, 2, 1, comp=106, md=3, rnd=final)]
+
+    def bracket_app(self, comp=106):
+        app = self.app
+        self.widen()
+        app.install_dataset(dataset(extra=self.cup_fixtures()))
+        app.select_competition(comp)
+        app._palette_split(fm_review.ANALYSIS, "Bracket")
+        app.update()
+        return app
+
+    def test_the_bracket_panel_replaces_the_sheet_with_the_cups_tree(self):
+        app = self.bracket_app()
+        self.assertTrue(app.bracket_view.winfo_ismapped())
+        self.assertFalse(app.sheets[fm_review.ANALYSIS].winfo_ismapped())
+        text = app.bracket_view.rendered_text()
+        for heading in ("Quarter-final", "Semi-final", "Final"):
+            self.assertIn(heading, text)
+
+    def test_a_theme_change_recolours_the_bracket(self):
+        app = self.bracket_app()
+        app.set_theme("Cyber Pitch")
+        app.update()
+        self.assertEqual(str(app.bracket_view._canvas.cget("bg")), app.theme.table[0])
+        self.assertTrue(app.bracket_view.winfo_ismapped())
+
+    # Guards: these follow from the wiring above.
+    def test_a_league_says_the_bracket_is_for_cups(self):
+        app = self.bracket_app(comp=101)
+        self.assertFalse(app.bracket_view.winfo_ismapped())
+        self.assertIn("not one", app.message_label.cget("text"))
+
+    def test_leaving_the_bracket_panel_brings_the_sheet_back(self):
+        app = self.bracket_app()
+        app._palette_split(fm_review.ANALYSIS, "Form")
+        app.update()
+        self.assertFalse(app.bracket_view.winfo_ismapped())
+        self.assertTrue(app.sheets[fm_review.ANALYSIS].winfo_ismapped())
+
+    def test_following_a_club_outlines_its_boxes_and_the_palette_offers_the_panel(self):
+        app = self.bracket_app()
+        app.set_focus(team(1))
+        app.update()
+        canvas = app.bracket_view._canvas
+        outlined = [i for i in canvas.find_all() if canvas.type(i) == "rectangle"
+                    and canvas.itemcget(i, "outline") == app.view_theme.focus[0]]
+        self.assertEqual(len(outlined), 3)
+        app.open_palette()
+        app.command_palette.set_query("analysis bracket")
+        self.assertEqual(app.command_palette.visible_titles(), ["Analysis: Bracket"])
+
 
 class IconTests(unittest.TestCase):
     def test_the_icon_is_a_windows_icon(self):

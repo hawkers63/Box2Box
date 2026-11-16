@@ -1343,3 +1343,16 @@ class CupRoundTests(unittest.TestCase):
             cup = self.matches(1, 4) + self.matches(2, 3)                # ends in three ties: no one final
             earlier, tree = fd.bracket_split(self.rounds(cup))
         self.assertEqual((len(earlier), tree), (2, ()))
+
+
+class UnderlyingCategoryTests(unittest.TestCase):
+    """What a competition is, whoever manages in it: the hub files the user's own competitions as Your Club."""
+
+    def test_a_managed_league_and_a_managed_cup_keep_their_own_kind(self):
+        league = LEAGUE                                                # Hull (managed) play in it
+        cup = [fx(D(2026, 11, 14), 1, 2, 2, 0, comp=151, md=1, rnd=CodedValue(CompetitionRound.THIRD_ROUND, 7)),
+               fx(D(2027, 1, 16), 1, 3, 1, 0, comp=151, md=2, rnd=CodedValue(CompetitionRound.FOURTH_ROUND, 8))]
+        ds = fd.build_dataset(info(), league + cup, clubs=[club(n) for n in range(1, 5)])
+        kinds = {c.id: fd.underlying_category(c, ds) for c in ds.competitions}
+        self.assertEqual(kinds, {101: fd.COMP_CAT_LEAGUE, 151: fd.COMP_CAT_CUP})
+        self.assertEqual(fd.competition_category(ds.by_id[101], ds), fd.COMP_CAT_YOURS)     # the hub's own view

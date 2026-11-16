@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Cup bracket** (Analysis → Bracket): for a knockout cup, the last rounds drawn as a tree, with each tie's two sides, their goals in each match (or leg), the winner in bold and a line to the tie it fed, then the earlier rounds listed below. Two-legged ties are decided on aggregate and a replay belongs to its tie. A drawn match whose winner the save does not store (it keeps no extra time or penalties) shows the side that plays in the next round, starred, with the star explained. A competition that does not end in a single final says so and lists its rounds; a group or league phase is counted, not drawn as ties. Your followed club's boxes are outlined.
+
+### Fixed
+
+- The Ties panel no longer shows a replay (a drawn cup match played again within days) as a two-legged tie with a made-up aggregate. A replay is recognised by a drawn first match followed within four days; every second leg in the observer save came later.
+
 ## [1.5] - 2026-11-16
 
 Adds copy for a post, a Ties panel and form tooltips, and clears the loose ends 1.4 left.

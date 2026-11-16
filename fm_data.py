@@ -807,6 +807,12 @@ def team_club_names(fixtures: Iterable[Fixture]) -> dict[int, str]:
     return names
 
 
+def underlying_category(comp: CompetitionInfo, dataset: Dataset) -> str:
+    """What a competition is by its fixtures alone: the hub files a competition the user manages in as Your
+    Club, which says nothing about whether it is a league or a cup."""
+    return competition_category(replace(comp, managed_fixtures=0), dataset)
+
+
 @dataclass(frozen=True, slots=True)
 class ClubEntry:
     """A team as a command palette offers it: its label and the competition it would be opened in."""
@@ -825,7 +831,7 @@ def club_index(dataset: Dataset) -> tuple[ClubEntry, ...]:
     team the save cannot resolve has no club name and is left out. Ordered by competition, then label."""
     entries: list[ClubEntry] = []
     for comp in dataset.competitions:
-        category = competition_category(replace(comp, managed_fixtures=0), dataset)
+        category = underlying_category(comp, dataset)
         if category not in (COMP_CAT_LEAGUE, COMP_CAT_CUP):
             continue
         seen: dict[int, tuple[str, int]] = {}
