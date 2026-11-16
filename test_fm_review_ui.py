@@ -820,7 +820,7 @@ class WindowTests(unittest.TestCase):
         app.select_competition(60)                           # a youth league: not a senior competition
         app.open_palette()
         pal.set_query("derby")
-        self.assertEqual((pal.results[0].title, pal.results[0].detail), ("Derby County", "Competition 60 · 2 teams"))
+        self.assertEqual((pal.results[0].title, pal.results[0].detail), ("Derby County", app._competition_detail(app.dataset.by_id[60])))
         pal.run_selected()
         self.assertEqual((app.comp_id, app.labels[app.focus]), (60, "Derby County"))
 
@@ -1064,7 +1064,7 @@ class WindowTests(unittest.TestCase):
         app.open_palette()
         pal.set_query("wrexham")
         clubs = [i.detail for i in pal.results if i.kind == "Club"]
-        self.assertEqual(clubs, ["League One · 2 teams", "Competition 103 · 2 teams"])
+        self.assertEqual(clubs, ["League One · 2 teams", app._competition_detail(app.dataset.by_id[103])])
         pal.run_selected()
         self.assertEqual(app.comp_id, 102)
 
@@ -1246,6 +1246,69 @@ class WindowTests(unittest.TestCase):
         app.open_inspector()
         app.update()
         self.assertIs(app.focus_get(), sheet.MT)
+
+    # ----------------------------------------------------------------- v1.5 step 1: loose ends
+
+    def test_closing_the_window_leaves_no_timer_behind(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.open_palette()
+        app.open_inspector()
+        app.after(60_000, lambda: None)                     # stands in for any timer the window did not track
+        app.update()
+        pending = []
+
+        def capture(window):                                # in place of Tk's own destroy, just look
+            pending.extend(window.tk.splitlist(window.tk.call("after", "info")))
+
+        with mock.patch.object(ctk.CTk, "destroy", capture):
+            app.destroy()
+        self.assertEqual(pending, [])
+
+    def test_closing_the_window_with_a_child_widgets_timer_pending_closes_cleanly(self):
+        other = fm_review.FMReviewApp()                       # a window of its own: this one is really destroyed
+        other.geometry("1300x800+-4000+0")
+        child = ctk.CTkTextbox(other)                         # a child widget whose own timer is pending at close
+        child.after(60_000, lambda: None)
+        other.update()
+        other.destroy()                                       # must not raise "can't delete Tcl command"
+
+    def test_the_window_cannot_be_made_narrower_than_the_controls_row_needs(self):
+        app = self.app
+        wanted = min(app.px(fm_review.MIN_WINDOW_WIDTH), app.winfo_screenwidth())
+        self.assertEqual(app.wm_minsize()[0], wanted)
+        self.assertGreaterEqual(fm_review.MIN_WINDOW_WIDTH, 1407)
+
+    def test_a_refused_drops_reason_clears_itself_but_not_a_newer_message(self):
+        app = self.app
+        with mock.patch.object(fm_review, "DROP_NOTE_MS", 40):
+            app._on_file_drop(NS(data="C:/nowhere/notes.txt"))
+            self.assertIn("not a .fm save", app.detail_label.cget("text"))
+            self.assertTrue(self.wait_until(lambda: app.detail_label.cget("text") == ""))
+            app._on_file_drop(NS(data="C:/nowhere/notes.txt"))
+            app.detail_label.configure(text="something newer")
+            time.sleep(0.15)
+            app.update()
+            self.assertEqual(app.detail_label.cget("text"), "something newer")
+
+    def test_the_right_click_menu_and_its_submenu_follow_the_theme(self):
+        app = self.menu_app()
+        app.set_theme("Cyber Pitch")
+        menu = app._build_menu(app._row_menu("Results", self.match_row(app), 2))
+        t = app.theme
+        colours = lambda m, *names: tuple(str(m.cget(name)) for name in names)      # noqa: E731
+        self.assertEqual(colours(menu, "bg", "fg"), (t.panel, t.text))
+        self.assertEqual(colours(menu, "activebackground", "activeforeground"), tuple(t.list_selected))
+        self.assertEqual(colours(menu, "disabledforeground"), (t.muted,))
+        export = next(i for i in range(menu.index("end") + 1) if menu.type(i) == "cascade")
+        self.assertEqual(colours(menu.nametowidget(menu.entrycget(export, "menu")), "bg"), (t.panel,))
+
+    def test_an_unnamed_competition_is_described_by_its_clubs_in_the_palette(self):
+        app, pal = self.palette_app()
+        youth = app.dataset.by_id[60]
+        clubs = ", ".join(youth.top_clubs[:2])
+        self.assertEqual(app._competition_detail(youth), f"Competition 60: {clubs} · {youth.team_count} teams")
+        self.assertEqual(app._competition_detail(app.dataset.by_id[101]), "Championship · 2 teams")
 
 
 class IconTests(unittest.TestCase):

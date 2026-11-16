@@ -74,6 +74,8 @@ RUN_LETTERS = {fd.STREAK_WINNING: "W", fd.STREAK_UNBEATEN: "U", fd.STREAK_WINLES
 RUN_NAMED_FROM = 3                        # the Table tab names a followed team's run once it is this long
 CLUB_OPEN_PRIORITY = 10_000                 # the palette ranks the open competition's own teams first,
 CLUB_LEAGUE_PRIORITY = 1_000                # then a club's leagues, then its cups, each by prominence
+MIN_WINDOW_WIDTH = 1410                   # the controls row needs about 1407 px (px at 100%); capped at the screen
+DROP_NOTE_MS = 8000                       # a refused drop's reason stays this long on the detail line
 COUNTS_MIN_WIDTH = 1540                   # the switch shows counts only in a window at least this wide (px at 100%);
 #                                           the controls need 1532 with the longest counts, as a test measures
 
@@ -510,6 +512,7 @@ class FMReviewApp(_Root):
         self._list_job: str | None = None
         self._search_job: str | None = None
         self._resize_job: str | None = None       # the view switch's counts follow the window's width
+        self._drop_note_job: str | None = None    # clears a refused drop's reason after a while
         self._dataset_serial = 0                  # bumped per installed save
         self._club_cache: tuple[int, tuple[fd.ClubEntry, ...]] | None = None    # the palette's clubs, per save
         self.opponent_filter: tuple[int, int] | None = None   # Results shows only matches between these two teams
@@ -519,10 +522,12 @@ class FMReviewApp(_Root):
         self._hub_categories: list[str] = []      # the hub's category on each row, for painting
 
         self.scale = ctk.ScalingTracker.get_window_scaling(self)
-        width = min(1560, int(self.winfo_screenwidth() / self.scale * 0.92))
+        screen_width = int(self.winfo_screenwidth() / self.scale)
+        minimum = min(MIN_WINDOW_WIDTH, screen_width)       # never wider than a small screen
+        width = max(min(1560, int(screen_width * 0.92)), minimum)
         height = min(940, int(self.winfo_screenheight() / self.scale * 0.85))
         self.geometry(f"{width}x{height}")
-        self.minsize(1050, 620)
+        self.minsize(minimum, 620)
         self.cell_font = tkfont.Font(family=FONT, size=10)
 
         self._load_names()
@@ -531,10 +536,15 @@ class FMReviewApp(_Root):
         self._poll_job: str | None = self.after(100, self._poll)
 
     def destroy(self) -> None:
-        for job in (self._poll_job, self._list_job, self._search_job, self._resize_job):
+        for job in (self._poll_job, self._list_job, self._search_job, self._resize_job, self._drop_note_job):
             if job:
                 self.after_cancel(job)
         self._poll_job = None
+        # Every other timer too (the palette's, the drawer's, CustomTkinter's own): none may fire on a dead window.
+        # Tcl's own `after cancel`, not tkinter's after_cancel: that also deletes the timer's command, which a
+        # child widget still lists as its own and would try to delete again as it is destroyed.
+        for job in self.tk.splitlist(self.tk.call("after", "info")):
+            self.tk.call("after", "cancel", job)
         super().destroy()
 
     # ----------------------------------------------------------------- layout
@@ -1081,14 +1091,27 @@ class FMReviewApp(_Root):
         """A drop: open it when it is one .fm save, otherwise say why not. Returns the action tkdnd needs."""
         self._refresh_status()                           # the drag-over hint ends with the drop
         if self.loading_since is not None:
-            self.detail_label.configure(text=f"Still reading {self._loading_file}; drop again when it has finished.")
+            self._note_drop(f"Still reading {self._loading_file}; drop again when it has finished.")
             return REFUSE_DROP
         path, why = accept_dropped_save(self.tk.splitlist(event.data))
         if path is None:
-            self.detail_label.configure(text=why)
+            self._note_drop(why)
             return REFUSE_DROP
         self.open_save(path)
         return COPY
+
+    def _note_drop(self, text: str) -> None:
+        """Say why a drop was refused, on the detail line, and take it away again after DROP_NOTE_MS (unless
+        something newer has replaced it by then)."""
+        self.detail_label.configure(text=text)
+        if self._drop_note_job:
+            self.after_cancel(self._drop_note_job)
+        self._drop_note_job = self.after(DROP_NOTE_MS, lambda: self._clear_drop_note(text))
+
+    def _clear_drop_note(self, text: str) -> None:
+        self._drop_note_job = None
+        if self.detail_label.cget("text") == text:
+            self.detail_label.configure(text="")
 
     def _refresh_status(self) -> None:
         if not self.dataset:
@@ -2077,7 +2100,8 @@ class FMReviewApp(_Root):
                 if (entry.team_id, entry.competition_id) not in shown:
                     # A club's league outranks its cups, and the more prominent competition outranks another,
                     # so Enter on a club name opens its main league.
-                    priority = (CLUB_LEAGUE_PRIORITY if entry.category == fd.COMP_CAT_LEAGUE else 0)                         + len(order) - order[entry.competition_id]
+                    league = CLUB_LEAGUE_PRIORITY if entry.category == fd.COMP_CAT_LEAGUE else 0
+                    priority = league + len(order) - order[entry.competition_id]
                     add(cp.CLUB, entry.label,
                         lambda e=entry: self._follow_club_in(e.competition_id, e.team_id, e.label),
                         self._competition_detail(ds.by_id[entry.competition_id]), priority)
@@ -2085,7 +2109,11 @@ class FMReviewApp(_Root):
 
     def _competition_detail(self, comp: fd.CompetitionInfo) -> str:
         """Which competition a palette row is in: its name (or id) and size, so two of a club's rows differ."""
-        return f"{fd.competition_title(comp, self.names)} · {comp.team_count} teams"
+        size = f"{comp.team_count} teams"
+        if comp.database_id is not None and comp.database_id in self.names:
+            return f"{self.names[comp.database_id]} · {size}"
+        clubs = ", ".join(comp.top_clubs[:2])      # unnamed: its best-known clubs say more than its id
+        return f"Competition {comp.id}: {clubs} · {size}" if clubs else f"Competition {comp.id} · {size}"
 
     def _palette_split(self, view: str, value: str) -> None:
         """Go to a view and set the switch it uses (the table's split, results' grouping or analysis panel)."""
@@ -2334,7 +2362,9 @@ class FMReviewApp(_Root):
             menu.grab_release()
 
     def _build_menu(self, entries: Sequence[MenuEntry]) -> tk.Menu:
-        menu = tk.Menu(self, tearoff=False)
+        t = self.theme                                        # plain theme colours: no club tint on a menu
+        menu = tk.Menu(self, tearoff=False, bg=t.panel, fg=t.text, activebackground=t.list_selected[0],
+                       activeforeground=t.list_selected[1], disabledforeground=t.muted, bd=0)
         for entry in entries:
             if entry is MENU_SEPARATOR:
                 menu.add_separator()
