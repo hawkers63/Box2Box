@@ -799,6 +799,37 @@ def team_club_names(fixtures: Iterable[Fixture]) -> dict[int, str]:
     return names
 
 
+@dataclass(frozen=True, slots=True)
+class ClubEntry:
+    """A team as a command palette offers it: its label and the competition it would be opened in."""
+
+    team_id: int
+    label: str
+    competition_id: int
+
+
+def club_index(dataset: Dataset) -> tuple[ClubEntry, ...]:
+    """The clubs of every senior league and cup competition, once for each competition they play in,
+    from the competition's default season. Youth, reserve and friendly competitions are left out, so
+    one friendlies competition's thousands of teams do not bury the real clubs. A competition the user
+    manages is sorted by its fixtures like any other (a managed friendly is still a friendly), and a
+    team the save cannot resolve has no club name and is left out. Ordered by competition, then label."""
+    entries: list[ClubEntry] = []
+    for comp in dataset.competitions:
+        if competition_category(replace(comp, managed_fixtures=0), dataset) not in (COMP_CAT_LEAGUE, COMP_CAT_CUP):
+            continue
+        seen: dict[int, tuple[str, int]] = {}
+        for f in season_fixtures(dataset, comp.id, default_season(dataset, comp.id)):
+            for team_id, name, slot in ((f.home_team_id, f.home_club_name, f.home_team_slot),
+                                        (f.away_team_id, f.away_club_name, f.away_team_slot)):
+                if name and team_id not in seen:
+                    seen[team_id] = (name, slot or 0)
+        entries.extend(ClubEntry(team_id, name if slot == 0 else f"{name} (team {slot + 1})", comp.id)
+                       for team_id, (name, slot) in seen.items())
+    entries.sort(key=lambda e: (e.competition_id, e.label.casefold(), e.team_id))
+    return tuple(entries)
+
+
 def describe_fixture(f: Fixture, labels: Mapping[int, str]) -> str:
     """One line about a match, for a details bar."""
     home = labels.get(f.home_team_id, f"Team {f.home_team_id}")

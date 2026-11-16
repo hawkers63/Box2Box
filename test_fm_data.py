@@ -1005,3 +1005,52 @@ class NameFileTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClubIndexTests(unittest.TestCase):
+    """The clubs a command palette offers: those of senior league and cup competitions."""
+
+    @staticmethod
+    def index():
+        fixtures = LEAGUE + [
+            fx(D(2026, 8, 8), 2, 3, 1, 0, comp=102, md=1),                               # another league
+            fx(D(2026, 8, 15), 3, 2, 0, 0, comp=102, md=2, away_slot=1),                  # Leeds' second team
+            fx(D(2026, 8, 20), 4, 5, 2, 0, comp=103, rnd=CompetitionRound.FINAL),         # a cup
+            fx(D(2026, 7, 20), 1, 5, 2, 2, comp=131, season=None),                       # a friendly Hull play in
+            fx(D(2026, 8, 10), 3, 4, 1, 0, comp=60, home_slot=1, away_slot=1),            # youth league
+            unresolved_away(fx(D(2026, 8, 9), 2, 3, 1, 0, comp=104, md=1)),               # an unresolved team
+        ]
+        dataset = fd.build_dataset(info(), fixtures, clubs=[club(n) for n in range(1, 6)])
+        return fd.club_index(dataset)
+
+    def pairs(self):
+        return {(e.team_id, e.competition_id) for e in self.index()}
+
+    def test_clubs_of_other_leagues_and_cups_are_listed(self):
+        pairs = self.pairs()
+        self.assertIn((team(3), 102), pairs)
+        self.assertIn((team(5), 103), pairs)
+
+    def test_the_users_own_league_is_listed_but_not_its_friendlies(self):
+        pairs = self.pairs()
+        self.assertIn((team(1), 101), pairs)
+        self.assertFalse([p for p in pairs if p[1] == 131])      # Hull's friendly: a managed competition, still a friendly
+
+    def test_youth_and_reserve_competitions_are_left_out(self):
+        self.assertFalse([p for p in self.pairs() if p[1] == 60])
+
+    def test_a_club_in_two_competitions_appears_once_in_each(self):
+        entries = [e for e in self.index() if e.team_id == team(2)]
+        self.assertEqual(sorted(e.competition_id for e in entries), [101, 102, 104])
+
+    def test_a_team_the_save_cannot_resolve_is_left_out(self):
+        self.assertNotIn(999, {e.team_id for e in self.index()})
+
+    def test_a_second_team_is_told_apart(self):
+        labels = {e.team_id: e.label for e in self.index() if e.competition_id == 102}
+        self.assertEqual(labels[team(2, 1)], "Leeds United (team 2)")
+        self.assertEqual(labels[team(2)], "Leeds United")
+
+    def test_entries_are_ordered_by_competition_then_label(self):
+        keys = [(e.competition_id, e.label.casefold()) for e in self.index()]
+        self.assertEqual(keys, sorted(keys))
