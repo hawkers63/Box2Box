@@ -7,9 +7,11 @@ The matching is pure and has no window code, so it is tested on its own. The ove
 from __future__ import annotations
 
 import re
+import tkinter as tk
 import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from functools import lru_cache
 
 import customtkinter as ctk
 
@@ -33,6 +35,7 @@ class PaletteItem:
     priority: int = 0
 
 
+@lru_cache(maxsize=65536)          # every keystroke folds the same few thousand titles again
 def fold(text: str) -> str:
     """Text folded for matching: accents, case and punctuation gone, words separated by one space.
     Unlike the club-colour matching it keeps every word ('FC' and 'United' included)."""
@@ -54,6 +57,8 @@ def _tier(query: str, words: list[str], title: str) -> int | None:
     or abbreviates one ('utd'), 3 the query occurs inside the title; None for no match."""
     if title == query:
         return 0
+    if any(word[0] not in title for word in words):
+        return None                   # a cheap rejection: every tier needs each word's first letter in the title
     title_words = title.split()
     if all(any(t.startswith(q) for t in title_words) for q in words):
         return 1
@@ -77,6 +82,8 @@ def search(items: Sequence[PaletteItem], query: str, limit: int = RESULT_LIMIT) 
         title = fold(entry.title)
         tier = _tier(folded, words, title)
         if tier is not None:
+            if entry.kind == COMPETITION:
+                tier += 1             # an unnamed competition's label lists its clubs: a weaker hit than a club
             ranked.append(((tier, -entry.priority, _KIND_ORDER.get(entry.kind, len(_KIND_ORDER)), title), entry))
     ranked.sort(key=lambda pair: pair[0])
     return [entry for _, entry in ranked[:limit]]
@@ -88,7 +95,7 @@ class CommandPalette(ctk.CTkFrame):
     Up and Down move, Enter runs the selected item, Escape closes. The window gives it the items each
     time it opens (`open`), so they always describe the save and view as they are then."""
 
-    def __init__(self, parent, *, px: Callable[[float], int], on_error: Callable[[Exception], None],
+    def __init__(self, parent, *, px: Callable[[float], int], font: tuple, on_error: Callable[[Exception], None],
                  theme: colour_themes.Theme) -> None:
         super().__init__(parent, corner_radius=px(10), border_width=1, width=px(620))
         self.pack_propagate(False)                # the width is fixed; _paint sets the height to fit the rows
@@ -104,20 +111,23 @@ class CommandPalette(ctk.CTkFrame):
         self.entry = ctk.CTkEntry(self, textvariable=self._query, height=px(34),
                                   placeholder_text="Type to find a competition, club, view or action")
         self.entry.pack(fill="x", padx=px(10), pady=(px(10), px(6)))
+        # The rows are plain Tk widgets: CustomTkinter's redraw a canvas on every change, which made each
+        # keystroke take a few hundred milliseconds with twelve rows.
         self._rows = []
+        self._painted: list[tuple | None] = [None] * RESULT_LIMIT      # what each row shows now, to skip repaints
         for index in range(RESULT_LIMIT):
-            row = ctk.CTkFrame(self, corner_radius=px(6), height=px(30))
+            row = tk.Frame(self, height=px(30), highlightthickness=0, bd=0)
             row.pack_propagate(False)
-            title = ctk.CTkLabel(row, text="", anchor="w")
-            detail = ctk.CTkLabel(row, text="", anchor="w")
-            tag = ctk.CTkLabel(row, text="", anchor="e")
+            title = tk.Label(row, text="", anchor="w", font=font, bd=0)
+            detail = tk.Label(row, text="", anchor="w", font=font, bd=0)
+            tag = tk.Label(row, text="", anchor="e", font=font, bd=0)
             tag.pack(side="right", padx=(px(8), px(10)))
             title.pack(side="left", padx=(px(10), 0))
             detail.pack(side="left", padx=(px(8), 0), fill="x", expand=True)
             for widget in (row, title, detail, tag):
                 widget.bind("<Button-1>", lambda _e, i=index: self._click(i))
             self._rows.append((row, title, detail, tag))
-        self._empty = ctk.CTkLabel(self, text="Nothing matches.", anchor="w")
+        self._empty = tk.Label(self, text="Nothing matches.", anchor="w", font=font, bd=0)
         self._query.trace_add("write", lambda *_: self._refresh())
         for key, step in (("<Up>", -1), ("<Down>", 1)):
             self.entry.bind(key, lambda _e, s=step: self._move(s))
@@ -205,24 +215,31 @@ class CommandPalette(ctk.CTkFrame):
         self._theme = theme
         self.configure(fg_color=theme.panel, border_color=theme.field[1])
         self.entry.configure(fg_color=theme.field[0], border_color=theme.field[1], text_color=theme.text)
-        self._empty.configure(text_color=theme.muted)
+        self._empty.configure(bg=theme.panel, fg=theme.muted)
+        self._painted = [None] * RESULT_LIMIT
         self._paint()
 
     def _paint(self) -> None:
         theme = self._theme
         for index, (row, title, detail, tag) in enumerate(self._rows):
             if index >= len(self.results):
-                row.pack_forget()
+                if self._painted[index] is not None:
+                    row.pack_forget()
+                    self._painted[index] = None
                 continue
             item = self.results[index]
             selected = index == self.selected_index
+            state = (item.title, item.detail, item.kind, selected)
+            if self._painted[index] == state:
+                continue                          # unchanged since the last paint (and still packed)
+            self._painted[index] = state
             fill = theme.list_selected[0] if selected else theme.panel
             main = theme.list_selected[1] if selected else theme.text
             quiet = theme.list_selected[1] if selected else theme.muted
-            row.configure(fg_color=fill)
-            title.configure(text=item.title, text_color=main, fg_color=fill)
-            detail.configure(text=item.detail, text_color=quiet, fg_color=fill)
-            tag.configure(text=item.kind, text_color=quiet, fg_color=fill)
+            row.configure(bg=fill)
+            title.configure(text=item.title, fg=main, bg=fill)
+            detail.configure(text=item.detail, fg=quiet, bg=fill)
+            tag.configure(text=item.kind, fg=quiet, bg=fill)
             row.pack(fill="x", padx=self._px(10), pady=(0, self._px(2)))
         nothing = not self.results and bool(self._query.get().strip())
         if nothing:

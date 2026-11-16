@@ -806,6 +806,7 @@ class ClubEntry:
     team_id: int
     label: str
     competition_id: int
+    category: str          # COMP_CAT_LEAGUE or COMP_CAT_CUP: the kind of competition it is listed under
 
 
 def club_index(dataset: Dataset) -> tuple[ClubEntry, ...]:
@@ -816,7 +817,8 @@ def club_index(dataset: Dataset) -> tuple[ClubEntry, ...]:
     team the save cannot resolve has no club name and is left out. Ordered by competition, then label."""
     entries: list[ClubEntry] = []
     for comp in dataset.competitions:
-        if competition_category(replace(comp, managed_fixtures=0), dataset) not in (COMP_CAT_LEAGUE, COMP_CAT_CUP):
+        category = competition_category(replace(comp, managed_fixtures=0), dataset)
+        if category not in (COMP_CAT_LEAGUE, COMP_CAT_CUP):
             continue
         seen: dict[int, tuple[str, int]] = {}
         for f in season_fixtures(dataset, comp.id, default_season(dataset, comp.id)):
@@ -824,7 +826,7 @@ def club_index(dataset: Dataset) -> tuple[ClubEntry, ...]:
                                         (f.away_team_id, f.away_club_name, f.away_team_slot)):
                 if name and team_id not in seen:
                     seen[team_id] = (name, slot or 0)
-        entries.extend(ClubEntry(team_id, name if slot == 0 else f"{name} (team {slot + 1})", comp.id)
+        entries.extend(ClubEntry(team_id, name if slot == 0 else f"{name} (team {slot + 1})", comp.id, category)
                        for team_id, (name, slot) in seen.items())
     entries.sort(key=lambda e: (e.competition_id, e.label.casefold(), e.team_id))
     return tuple(entries)

@@ -67,6 +67,16 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(titles(cp.search(items, "tab")),
                          ["Table Rovers", "Table", "Table Town", "Table cup"])
 
+    def test_a_club_outranks_a_competition_whose_label_merely_lists_it(self):
+        items = [item(cp.COMPETITION, "[5] Ayr Utd, Raith"), item(cp.CLUB, "Sheffield United")]
+        self.assertEqual(titles(cp.search(items, "utd")), ["Sheffield United", "[5] Ayr Utd, Raith"])
+        items = [item(cp.COMPETITION, "[5] Treaty Utd"), item(cp.CLUB, "Utd Rovers")]
+        self.assertEqual(titles(cp.search(items, "utd")), ["Utd Rovers", "[5] Treaty Utd"])
+
+    def test_a_competition_named_exactly_still_comes_first_among_competitions(self):
+        items = [item(cp.COMPETITION, "League One Play-offs"), item(cp.COMPETITION, "League One")]
+        self.assertEqual(titles(cp.search(items, "league one")), ["League One", "League One Play-offs"])
+
     def test_the_result_is_capped(self):
         many = [item(cp.CLUB, f"Town {n:02}") for n in range(30)]
         self.assertEqual(len(cp.search(many, "town")), cp.RESULT_LIMIT)

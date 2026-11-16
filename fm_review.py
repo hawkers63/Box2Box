@@ -71,6 +71,8 @@ RESULTS_XG_COLUMN = 4
 GD_COLUMN, FORM_COLUMN = 8, 10            # in the Table view
 RUN_LETTERS = {fd.STREAK_WINNING: "W", fd.STREAK_UNBEATEN: "U", fd.STREAK_WINLESS: "N", fd.STREAK_LOSING: "L"}
 RUN_NAMED_FROM = 3                        # the Table tab names a followed team's run once it is this long
+CLUB_OPEN_PRIORITY = 10_000                 # the palette ranks the open competition's own teams first,
+CLUB_LEAGUE_PRIORITY = 1_000                # then a club's leagues, then its cups, each by prominence
 COUNTS_MIN_WIDTH = 1540                   # the switch shows counts only in a window at least this wide (px at 100%);
 #                                           the controls need 1532 with the longest counts, as a test measures
 
@@ -722,7 +724,7 @@ class FMReviewApp(_Root):
         self._show_welcome()
         self._refresh_status()
         self.bind("<Configure>", self._on_resize, add="+")
-        self.command_palette = command_palette.CommandPalette(self, px=self.px, on_error=self._palette_failed,
+        self.command_palette = command_palette.CommandPalette(self, px=self.px, font=(FONT, 11), on_error=self._palette_failed,
                                                               theme=self.theme)
         for key in ("<Control-k>", "<Control-K>", "<Control-p>", "<Control-P>"):
             self.bind(key, self._on_palette_key)
@@ -2036,17 +2038,25 @@ class FMReviewApp(_Root):
                     1 if comp.id == self.comp_id else 0)
             shown: set[tuple[int, int]] = set()
             if self.comp_id is not None:
-                open_title = fd.competition_title(ds.by_id[self.comp_id], self.names)
+                open_detail = self._competition_detail(ds.by_id[self.comp_id])
                 for team_id, label in self.labels.items():          # the open competition's own teams, any kind
                     shown.add((team_id, self.comp_id))
                     add(cp.CLUB, label, lambda c=self.comp_id, t=team_id, n=label: self._follow_club_in(c, t, n),
-                        open_title, 1)
+                        open_detail, CLUB_OPEN_PRIORITY)
+            order = {comp.id: place for place, comp in enumerate(ds.competitions)}   # most prominent first
             for entry in self._club_entries():
                 if (entry.team_id, entry.competition_id) not in shown:
-                    title = fd.competition_title(ds.by_id[entry.competition_id], self.names)
+                    # A club's league outranks its cups, and the more prominent competition outranks another,
+                    # so Enter on a club name opens its main league.
+                    priority = (CLUB_LEAGUE_PRIORITY if entry.category == fd.COMP_CAT_LEAGUE else 0)                         + len(order) - order[entry.competition_id]
                     add(cp.CLUB, entry.label,
-                        lambda e=entry: self._follow_club_in(e.competition_id, e.team_id, e.label), title)
+                        lambda e=entry: self._follow_club_in(e.competition_id, e.team_id, e.label),
+                        self._competition_detail(ds.by_id[entry.competition_id]), priority)
         return items
+
+    def _competition_detail(self, comp: fd.CompetitionInfo) -> str:
+        """Which competition a palette row is in: its name (or id) and size, so two of a club's rows differ."""
+        return f"{fd.competition_title(comp, self.names)} · {comp.team_count} teams"
 
     def _palette_split(self, view: str, value: str) -> None:
         """Go to a view and set the switch it uses (the table's split, results' grouping or analysis panel)."""

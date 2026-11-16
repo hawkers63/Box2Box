@@ -1046,6 +1046,12 @@ class ClubIndexTests(unittest.TestCase):
     def test_a_team_the_save_cannot_resolve_is_left_out(self):
         self.assertNotIn(999, {e.team_id for e in self.index()})
 
+    def test_each_entry_says_whether_its_competition_is_a_league_or_a_cup(self):
+        kinds = {(e.team_id, e.competition_id): e.category for e in self.index()}
+        self.assertEqual(kinds[(team(3), 102)], fd.COMP_CAT_LEAGUE)
+        self.assertEqual(kinds[(team(5), 103)], fd.COMP_CAT_CUP)
+        self.assertEqual(kinds[(team(1), 101)], fd.COMP_CAT_LEAGUE)          # the user's own league
+
     def test_a_second_team_is_told_apart(self):
         labels = {e.team_id: e.label for e in self.index() if e.competition_id == 102}
         self.assertEqual(labels[team(2, 1)], "Leeds United (team 2)")

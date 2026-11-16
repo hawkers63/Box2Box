@@ -804,7 +804,7 @@ class WindowTests(unittest.TestCase):
         app.open_palette()
         pal.set_query("wrexham")
         clubs = [(i.title, i.detail) for i in pal.results if i.kind == "Club"]
-        self.assertEqual(clubs, [("Wrexham", "League One")])
+        self.assertEqual(clubs, [("Wrexham", "League One · 2 teams")])
         pal.run_selected()
         self.assertEqual(app.comp_id, 102)
         self.assertEqual(app.labels[app.focus], "Wrexham")
@@ -820,7 +820,7 @@ class WindowTests(unittest.TestCase):
         app.select_competition(60)                           # a youth league: not a senior competition
         app.open_palette()
         pal.set_query("derby")
-        self.assertEqual((pal.results[0].title, pal.results[0].detail), ("Derby County", "Competition 60"))
+        self.assertEqual((pal.results[0].title, pal.results[0].detail), ("Derby County", "Competition 60 · 2 teams"))
         pal.run_selected()
         self.assertEqual((app.comp_id, app.labels[app.focus]), (60, "Derby County"))
 
@@ -899,7 +899,7 @@ class WindowTests(unittest.TestCase):
         app, pal = self.palette_app()
         app.open_palette()
         app.set_theme("Cyber Pitch")
-        self.assertEqual(pal._rows[0][0].cget("fg_color"), app.theme.list_selected[0])
+        self.assertEqual(pal._rows[0][0].cget("bg"), app.theme.list_selected[0])
         self.assertEqual(pal.cget("fg_color"), app.theme.panel)
 
     def test_up_and_down_move_the_selection_and_wrap(self):
@@ -1057,6 +1057,16 @@ class WindowTests(unittest.TestCase):
             app.update()
         popup.assert_called_once()
         self.assertEqual(sheet.get_currently_selected().row, row)
+
+    def test_enter_on_a_club_opens_its_league_before_its_cups(self):
+        cup = [fx(D(2026, 8, 20), 4, 5, 2, 0, comp=103, rnd=fm_review.fd.CompetitionRound.FINAL)]
+        app, pal = self.palette_app(self.OTHER_LEAGUE + cup)
+        app.open_palette()
+        pal.set_query("wrexham")
+        clubs = [i.detail for i in pal.results if i.kind == "Club"]
+        self.assertEqual(clubs, ["League One · 2 teams", "Competition 103 · 2 teams"])
+        pal.run_selected()
+        self.assertEqual(app.comp_id, 102)
 
 
 class IconTests(unittest.TestCase):
