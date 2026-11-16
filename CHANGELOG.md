@@ -1,8 +1,8 @@
 # Changelog
 
-**Release:** 1.4  
+**Release:** 1.5  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 1.4), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 1.5), launched with `Box2Box.bat`
 
 All notable changes to this project will be documented in this file.
 
@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [1.5] - 2026-11-16
+
+Adds copy for a post, a Ties panel and form tooltips, and clears the loose ends 1.4 left.
 
 ### Added
 
@@ -22,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The window can no longer be made narrower than its controls need (about 1,410 pixels, or your screen's width if that is less), so the Standings, Group by and Show switches are never cut off.
 - The right-click menu follows the colour theme.
-- The command palette describes a competition you have not named by its best-known clubs and size, for example "Competition 124: Flamengo, Palmeiras · 20 teams".
+- The command palette describes a competition you have not named by its best-known clubs and size, for example "Competition 12: Northbridge, Eastmoor · 20 teams".
 - A refused drop's reason clears itself after a few seconds.
 - The drawer's close mark is a solid ×.
 
