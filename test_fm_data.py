@@ -833,6 +833,16 @@ class StagedLoadTests(unittest.TestCase):
         self.assertEqual(final.xg_report.joined, 2)
         self.assertEqual(final.fixture_total, 4)
 
+    def test_a_failure_in_the_ready_callback_is_raised_not_blamed_on_the_statistics(self):
+        save = FakeSave(XG_SEASON, XG_STATS)
+
+        def broken(_dataset):
+            raise ValueError("the window could not take it")
+
+        with mock.patch.object(fd.fmsave, "open", return_value=save):
+            with self.assertRaisesRegex(ValueError, "the window could not take it"):
+                fd.load_dataset("career.fm", ready=broken)
+
     def test_a_failure_to_read_expected_goals_keeps_everything_else(self):
         save = FakeSave(XG_SEASON, stats_error=RuntimeError("the report index does not walk"))
         with mock.patch.object(fd.fmsave, "open", return_value=save):

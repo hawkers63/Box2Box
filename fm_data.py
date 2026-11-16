@@ -332,6 +332,7 @@ def load_dataset(
     dataset: Dataset | None = None
     stats: list | None = None
     failure = ""
+    caller_error: Exception | None = None      # raised by `ready`: the caller's failure, never the save's
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         try:
@@ -354,13 +355,19 @@ def load_dataset(
                 dataset = build_dataset(info, fixtures, clubs=clubs, competitions=competitions, tables=tables,
                                         rules=rules)
                 if ready is not None:
-                    ready(dataset)
+                    try:
+                        ready(dataset)
+                    except Exception as exc:
+                        caller_error = exc
+                        raise
                 progress("Reading match statistics (xG)")
                 try:
                     stats = list(save.team_match_stats())
                 except Exception as exc:  # the match reports can fail on their own on an unverified build
                     failure = f"{type(exc).__name__}: {exc}"
         except Exception as exc:
+            if exc is caller_error:
+                raise
             if dataset is None:
                 failed = _import_failure(path, exc)
                 if failed is None:
