@@ -38,6 +38,7 @@ try:        # an optional extra: without it, a save cannot be dropped onto the w
 except ImportError:
     COPY, DND_FILES, REFUSE_DROP, TkinterDnD = "copy", "DND_Files", "refuse_drop", None
 
+import clipboard
 import club_colours
 import command_palette
 import fm_data as fd
@@ -668,6 +669,10 @@ class FMReviewApp(_Root):
         for kind, label in ((fx.EXCEL, "Excel workbook (.xlsx)"), (fx.HTML, "Web page (.html)"),
                             (fx.CSV, "CSV files (.csv)")):
             self.export_menu.add_command(label=label, command=lambda k=kind: self.export(k))
+        self.post_menu = tk.Menu(self.export_menu, tearoff=False, postcommand=self._refresh_post_menu)
+        for kind, label in (("table", "Table"), ("team", "My club's results"), ("recent", "Recent results")):
+            self.post_menu.add_command(label=label, command=lambda k=kind: self.copy_for_post(k))
+        self.export_menu.add_cascade(label="Copy for a post", menu=self.post_menu)
         self.export_menu.add_separator()
         self.export_menu.add_command(label="Open the export folder", command=self.open_export_folder)
         self.hint_label = role("muted", ctk.CTkLabel(header, text="", anchor="w"))
@@ -1447,6 +1452,50 @@ class FMReviewApp(_Root):
     def _show_export_menu(self) -> None:
         self._popup(self.export_menu, self.export_button)
 
+    # Each "Copy for a post" item: what it copies, how it is built, and why there may be nothing to copy.
+    POSTS = {"table": ("the table", fx.post_table, ""),
+             "team": ("your club's results", fx.post_team_results,
+                      "follow a club that has played this season to copy its results"),
+             "recent": ("the recent results", fx.post_recent_results, "no match this season has been played yet")}
+
+    def _post_applies(self, kind: str) -> bool:
+        """Whether a "Copy for a post" item has something to copy just now."""
+        if not self.dataset or self.comp_id is None:
+            return False
+        if kind == "team":
+            return self.focus is not None and any(
+                f.played and self.focus in (f.home_team_id, f.away_team_id) for f in self.fixtures)
+        if kind == "recent":
+            return any(f.played for f in self.fixtures)
+        return True
+
+    def _refresh_post_menu(self) -> None:
+        for index, kind in enumerate(("table", "team", "recent")):
+            self.post_menu.entryconfigure(index, state="normal" if self._post_applies(kind) else "disabled")
+
+    def copy_for_post(self, kind: str) -> None:
+        """Copy the competition and season as shown for a forum post: Markdown and HTML on one copy."""
+        if not self.dataset or self.comp_id is None:
+            return
+        what, build, missing = self.POSTS[kind]
+        request = fx.ExportRequest(self.dataset, self.comp_id, self.season, names=dict(self.names),
+                                   focus=self.focus, group_by=self.group_by, theme=self.view_theme)
+        post = build(fx.snapshot(request))
+        if post is None:
+            self.detail_label.configure(text=f"Nothing to copy: {missing}.")
+            return
+        try:
+            both = clipboard.copy(post.markdown, post.html)
+        except clipboard.ClipboardError:          # Tk's own clipboard still takes the text
+            self.clipboard_clear()
+            self.clipboard_append(post.markdown)
+            both = False
+        if both:
+            self.detail_label.configure(text=f"Copied {what} for a post, as Markdown and as HTML.")
+        else:
+            self.detail_label.configure(
+                text=f"Copied {what} for a post as Markdown only: the HTML version could not be written.")
+
     def export(self, kind: str) -> None:
         """Export the selected competition and season, as shown, on a background thread."""
         if not self.dataset or self.comp_id is None or self._exporting:
@@ -2102,6 +2151,9 @@ class FMReviewApp(_Root):
                 for kind, label in ((fx.EXCEL, "Excel workbook"), (fx.HTML, "web page"), (fx.CSV, "CSV files")):
                     add(cp.ACTION, f"Export as {label}", lambda k=kind: self.export(k))
             add(cp.ACTION, "Name this competition…", self.rename_competition)
+            for kind, label in (("table", "Table"), ("team", "My club's results"), ("recent", "Recent results")):
+                if self._post_applies(kind):
+                    add(cp.ACTION, f"Copy for a post: {label}", lambda k=kind: self.copy_for_post(k))
         add(cp.ACTION, "Open the export folder", self.open_export_folder)
         if self.loading_since is None:
             add(cp.ACTION, "Open save…", self.choose_save)

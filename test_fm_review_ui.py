@@ -1340,7 +1340,79 @@ class WindowTests(unittest.TestCase):
         app.update()
         self.assertIs(app.focus_get(), sheet.MT)
 
-    # ----------------------------------------------------------------- v1.5 step 1: loose ends
+    # ----------------------------------------------------------------- v1.5 step 2: copy for a post
+
+    def post_app(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.names = {12: "Championship"}
+        app.update()
+        return app
+
+    def test_copying_the_table_for_a_post_puts_both_formats_on_the_clipboard_and_says_so(self):
+        app = self.post_app()
+        with mock.patch.object(fm_review.clipboard, "copy", return_value=True) as copy:
+            app.copy_for_post("table")
+        text, html = copy.call_args.args
+        self.assertTrue(text.startswith("**Championship "))
+        self.assertIn("<table>", html)
+        self.assertEqual(app.detail_label.cget("text"), "Copied the table for a post, as Markdown and as HTML.")
+
+    def test_when_the_windows_clipboard_fails_the_text_still_goes_through_tk(self):
+        app = self.post_app()
+        with mock.patch.object(fm_review.clipboard, "copy", side_effect=fm_review.clipboard.ClipboardError("busy")), \
+                mock.patch.object(app, "clipboard_clear") as clear, mock.patch.object(app, "clipboard_append") as append:
+            app.copy_for_post("table")
+        clear.assert_called_once()
+        self.assertTrue(append.call_args.args[0].startswith("**Championship "))
+        self.assertIn("as Markdown only", app.detail_label.cget("text"))
+
+    def test_a_post_that_cannot_be_made_says_why_instead_of_copying_nothing(self):
+        app = self.post_app()
+        app.set_focus(None)
+        with mock.patch.object(fm_review.clipboard, "copy") as copy:
+            app.copy_for_post("team")
+        copy.assert_not_called()
+        self.assertEqual(app.detail_label.cget("text"), "Nothing to copy: follow a club that has played this season to copy its results.")
+
+    def test_the_export_menu_offers_copy_for_a_post_and_greys_what_cannot_apply(self):
+        app = self.post_app()
+        cascades = [app.export_menu.entrycget(i, "label") for i in range(app.export_menu.index("end") + 1)
+                    if app.export_menu.type(i) == "cascade"]
+        self.assertEqual(cascades, ["Copy for a post"])
+        menu = app.post_menu
+        labels = [menu.entrycget(i, "label") for i in range(menu.index("end") + 1)]
+        self.assertEqual(labels, ["Table", "My club's results", "Recent results"])
+        app._refresh_post_menu()
+        self.assertEqual(str(menu.entrycget(1, "state")), "normal")
+        app.set_focus(None)
+        app._refresh_post_menu()
+        self.assertEqual(str(menu.entrycget(1, "state")), "disabled")
+
+    def test_the_palette_offers_the_copies_that_apply(self):
+        app = self.post_app()
+        pal = app.command_palette
+
+        def offered():
+            app.open_palette()
+            pal.set_query("copy for a post")
+            titles = pal.visible_titles()
+            app.close_palette()
+            return titles
+
+        self.assertCountEqual(offered(), ["Copy for a post: Table", "Copy for a post: My club's results",
+                                          "Copy for a post: Recent results"])     # the palette ranks by title
+        app.set_focus(None)
+        self.assertCountEqual(offered(), ["Copy for a post: Table", "Copy for a post: Recent results"])
+        app._on_season("2027")                                    # nothing played in that season yet
+        self.assertCountEqual(offered(), ["Copy for a post: Table"])
+
+    def test_when_only_the_text_could_be_copied_it_says_so(self):
+        app = self.post_app()
+        with mock.patch.object(fm_review.clipboard, "copy", return_value=False):
+            app.copy_for_post("table")
+        self.assertEqual(app.detail_label.cget("text"),
+                         "Copied the table for a post as Markdown only: the HTML version could not be written.")
 
     def test_closing_the_window_leaves_no_timer_behind(self):
         app = self.app

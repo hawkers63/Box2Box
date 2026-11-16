@@ -381,6 +381,8 @@ def post_team_results(snap: Snapshot) -> Post | None:
         mine, theirs = (f.home_goals, f.away_goals) if home else (f.away_goals, f.home_goals)
         score = f"{mine}-{theirs}" if fd.has_score(f) else "n/a"
         rows.append([r.date, r.away if home else r.home, "H" if home else "A", score, r.result, r.points])
+    if not rows:
+        return None                       # nothing played yet: an empty table is not a post
     after = ""
     coming = fd.next_match(snap.fixtures, snap.focus)
     if coming is not None:

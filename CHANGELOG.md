@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Copy for a post** (Export ▾ → Copy for a post ▸, or the command palette): copies the Table, your club's results (with your next match) or the latest round of results, ready for a career update on Reddit or the SI forums. One copy puts both Markdown (for Reddit and Discord) and an HTML table (for rich editors) on the clipboard. Every copy ends with the in-game date and how complete the data is, and a match with no recoverable score reads "n/a". If the HTML version cannot be written, the Markdown still is, and the line under the sheet says so.
 - **Tooltips on form.** Hover a W, D, L or ? badge in the Table's form, the Analysis Form panel or the inspector drawer to see that match in words, for example "Won 2-1 v Leeds United, Sat 8 Aug". Where a badge cannot be matched to its match for certain, it shows no tooltip rather than a wrong one.
 - **The inspector drawer scrolls** with the mouse wheel when its content is longer than the window. A new selection starts at the top; the same one redrawn (after a theme change, for example) keeps its place.
 

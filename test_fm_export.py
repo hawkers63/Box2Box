@@ -354,3 +354,6 @@ class PostTests(unittest.TestCase):
 
     def test_a_season_with_nothing_played_has_no_recent_results(self):     # a guard: arrived with the builder
         self.assertIsNone(fx.post_recent_results(self.snap(season=2027)))
+
+    def test_a_club_that_has_played_nothing_has_no_results_post(self):
+        self.assertIsNone(fx.post_team_results(self.snap(season=2027)))     # Hull followed, nothing played yet
