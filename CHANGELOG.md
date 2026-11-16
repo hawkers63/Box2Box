@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Drop a save onto the window.** Drag one `.fm` file from Explorer onto the open window and it opens as **Open save…** does; the status bar says so while you drag. Anything else is refused with a reason (several files, a folder, a file that is not a `.fm` save), and so is a drop while a save is still being read. It uses the new `tkinterdnd2` library; if that is missing or cannot load, the window opens without drop support and says so.
+- **Counts on the view switch**: `Results (254)` for matches still to play in the competition and season, `Competitions (500)` for how many the save holds, and `Table (N11)` for the followed team's current run once it is three or longer (W won, U unbeaten, N without a win, L lost; a + when a match with no recoverable score could make it longer). They show only in a window wide enough for them (about 1540 pixels); in a narrower one the switch shows plain names, as before.
 
 ### Fixed
 

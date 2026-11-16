@@ -499,6 +499,89 @@ class WindowTests(unittest.TestCase):
                 self.assertIn("Dropping a save onto the window is not available", self.app.detail_label.cget("text"))
                 self.assertEqual(self.app.open_button.cget("state"), "normal")        # the window works as before
 
+    def widen(self, width=1700):
+        """A window wide enough for the view switch's counts to show (the test window is 1300 px wide)."""
+        self.app.geometry(f"{width}x800+-4000+0")
+        self.app.update()
+
+    def view_button(self, label):
+        """The view switch's button with this label."""
+        return next(b for b in self.app.view_switch.winfo_children()
+                    if isinstance(b, ctk.CTkButton) and b.cget("text") == label)
+
+    def click_view(self, label):
+        """Press the view switch's button with this label, as a person does."""
+        self.view_button(label).invoke()
+
+    def test_the_view_switch_counts_what_is_still_to_play_and_the_competitions(self):
+        app = self.app
+        self.assertEqual(list(app.view_labels.values()), list(fm_review.VIEWS))        # no save: plain names
+        self.widen()
+        app.install_dataset(dataset())
+        self.assertEqual(list(app.view_labels.values()),
+                         ["Results (2)", "Grid", "Table", "Analysis", "Competitions (4)"])
+        self.assertEqual(app.view_switch.get(), "Results (2)")
+
+    def test_the_table_label_names_a_followed_run_of_three_or_more(self):
+        app = self.app
+        self.widen()
+        wins = [fx(D(2026, 8, 1 + 7 * i), 1, 2 + i, 1, 0, comp=105, md=i + 1) for i in range(3)]      # Hull win three
+        app.install_dataset(fd.build_dataset(info(), wins, clubs=[club(n) for n in range(1, 6)]))
+        self.assertEqual(app.view_labels["Table"], "Table (W3)")
+        app.set_focus(None)
+        self.assertEqual(app.view_labels["Table"], "Table")                                    # nobody followed
+        unscored = fx(D(2026, 7, 25), 1, 5, played=True, comp=105)       # played, no score, same competition
+        app.install_dataset(fd.build_dataset(info(), [unscored, *wins], clubs=[club(n) for n in range(1, 6)]))
+        self.assertEqual(app.view_labels["Table"], "Table (W3+)")        # a missing score could make it longer
+
+    def test_a_followed_team_with_no_results_adds_no_count_and_no_error(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.select_competition(70)
+        app.set_focus(999)                                       # a team the save cannot resolve
+        self.assertEqual(app.view_labels["Table"], "Table")
+
+    def test_clicking_a_label_with_a_count_opens_its_view(self):
+        app = self.app
+        self.widen()
+        app.install_dataset(dataset())
+        self.click_view("Competitions (4)")
+        self.assertEqual((app.view, app.view_switch.get()), (fm_review.HUB, "Competitions (4)"))
+        self.click_view("Results (2)")
+        self.assertEqual((app.view, app.view_switch.get()), ("Results", "Results (2)"))
+
+    def test_the_counts_give_way_when_the_window_is_too_narrow(self):
+        # They add about 100 px to the controls row, so a window too narrow for the whole row shows plain names.
+        app = self.app
+        app.install_dataset(dataset())                           # the test window is 1300 px wide: too narrow
+        self.assertEqual(list(app.view_labels.values()), list(fm_review.VIEWS))
+        self.widen()
+        self.assertTrue(self.wait_until(lambda: app.view_labels["Results"] == "Results (2)"), "no counts when wide")
+        app.geometry("1300x800+-4000+0")
+        self.assertTrue(self.wait_until(lambda: app.view_labels["Results"] == "Results"), "counts stayed when narrow")
+
+    def test_the_controls_fit_the_room_the_counts_ask_for_at_their_longest(self):
+        app = self.app
+        self.widen()
+        app.install_dataset(dataset())
+        longest = {"Results": "9999", "Table": "W99+", fm_review.HUB: "9999"}
+        with mock.patch.object(app, "_view_count", side_effect=lambda view: longest.get(view, "")):
+            app.set_view("Table")                                # the widest controls: the Standings switch too
+            app.update()
+            self.assertEqual(app.view_labels["Competitions"], "Competitions (9999)")
+            self.assertLessEqual(app.winfo_reqwidth(), app.px(fm_review.COUNTS_MIN_WIDTH))
+
+    def test_changing_the_labels_keeps_the_switch_enabled_and_tinted(self):
+        app = self.app
+        self.widen()
+        app.install_dataset(dataset())                           # Hull City followed: its colours tint the selection
+        tint = app.club_tint
+        app.set_view("Table")
+        app.select_competition(60)                               # Results (2) becomes Results: the buttons are rebuilt
+        self.assertEqual(app.view_labels["Results"], "Results")
+        self.assertEqual(app.view_switch.cget("state"), "normal")
+        self.assertEqual(self.view_button(app.view_switch.get()).cget("fg_color"), tint.selected[0])
+
     def test_the_main_window_wears_the_box2box_icon(self):
         self.app.destroy()
         with mock.patch.object(fm_review.FMReviewApp, "iconbitmap", autospec=True) as icon:

@@ -68,6 +68,10 @@ GROUPINGS = (fd.GROUP_BY_WEEK, fd.GROUP_BY_MATCHDAY, fd.GROUP_BY_DATE)
 MAX_TEAM_CHOICES = 120
 RESULTS_XG_COLUMN = 4
 GD_COLUMN, FORM_COLUMN = 8, 10            # in the Table view
+RUN_LETTERS = {fd.STREAK_WINNING: "W", fd.STREAK_UNBEATEN: "U", fd.STREAK_WINLESS: "N", fd.STREAK_LOSING: "L"}
+RUN_NAMED_FROM = 3                        # the Table tab names a followed team's run once it is this long
+COUNTS_MIN_WIDTH = 1540                   # the switch shows counts only in a window at least this wide (px at 100%);
+#                                           the controls need 1532 with the longest counts, as a test measures
 
 FONT = "Segoe UI"
 THEME_LABEL = "Theme ▾"
@@ -471,6 +475,7 @@ class FMReviewApp(_Root):
         self.focus: int | None = None
         self.view = VIEWS[0]
         self.last_comp_view = VIEWS[0]     # the view a competition opens in from the hub
+        self.view_labels = {view: view for view in VIEWS}     # each view's label on the switch, with its count
         self.group_by = fd.GROUP_BY_WEEK
         self.table_split = fd.SPLIT_OVERALL
         self.analysis = ANALYSES[0]
@@ -487,6 +492,7 @@ class FMReviewApp(_Root):
         self.comp_row_ids: list[int] = []
         self._list_job: str | None = None
         self._search_job: str | None = None
+        self._resize_job: str | None = None       # the view switch's counts follow the window's width
         self._dataset_serial = 0                  # bumped per installed save
         self._hub_key: tuple | None = None        # what the Competitions sheet was last filled from
         self._hub_summary = ""
@@ -505,7 +511,7 @@ class FMReviewApp(_Root):
         self._poll_job: str | None = self.after(100, self._poll)
 
     def destroy(self) -> None:
-        for job in (self._poll_job, self._list_job, self._search_job):
+        for job in (self._poll_job, self._list_job, self._search_job, self._resize_job):
             if job:
                 self.after_cancel(job)
         self._poll_job = None
@@ -617,7 +623,8 @@ class FMReviewApp(_Root):
         self.team_box = role("combo", ctk.CTkComboBox(controls, values=[ALL_TEAMS], width=250, command=self._on_team))
         self.team_box.pack(side="left", padx=(0, 16))
         self.team_box.bind("<Return>", self._on_team_typed)
-        self.view_switch = role("switch", ctk.CTkSegmentedButton(controls, values=list(VIEWS), command=self.set_view))
+        self.view_switch = role("switch", ctk.CTkSegmentedButton(controls, values=list(VIEWS),
+                                                                 command=self._on_view_label))
         self.view_switch.set(self.view)
         self.view_switch.pack(side="left", padx=(0, 16))
         self.group_label = role("text", ctk.CTkLabel(controls, text="Group by"))
@@ -691,6 +698,7 @@ class FMReviewApp(_Root):
         self._set_controls_state("disabled")
         self._show_welcome()
         self._refresh_status()
+        self.bind("<Configure>", self._on_resize, add="+")
 
     def _make_sheet(self, parent, **options) -> Sheet:
         """A sheet in the shared style; its colours come from the theme (see _recolour)."""
@@ -1229,13 +1237,59 @@ class FMReviewApp(_Root):
         if disabled:
             self.team_box.configure(state="disabled")
 
+    def _view_count(self, view: str) -> str:
+        """The count shown beside a view's name on the switch, or ''. Cheap: one coverage count, or one team's
+        results. The followed team's run is named once it is RUN_NAMED_FROM long, with a + when a match with
+        no recoverable score could make it longer."""
+        if not self.dataset:
+            return ""
+        if view == HUB:
+            return str(len(self.dataset.competitions))
+        if self.comp_id is None:
+            return ""
+        if view == "Results":
+            to_play = fd.coverage(self.fixtures).to_play
+            return str(to_play) if to_play else ""
+        if view == "Table" and self.focus is not None:
+            run = fd.streaks(fd.team_steps(self.fixtures, self.focus, self.labels)).headline
+            if run is not None and run.length >= RUN_NAMED_FROM:
+                return RUN_LETTERS[run.kind] + run.short()
+        return ""
+
+    def _on_resize(self, event) -> None:
+        """The window's width changed: once it has settled, show or hide the counts to match."""
+        if event.widget is self:
+            if self._resize_job:
+                self.after_cancel(self._resize_job)
+            self._resize_job = self.after(120, self._after_resize)
+
+    def _after_resize(self) -> None:
+        self._resize_job = None
+        self._refresh_view_labels()
+
+    def _refresh_view_labels(self) -> None:
+        """Put each view's count on the switch, if the window is wide enough for them: they must never squeeze
+        the controls beside them. The buttons are rebuilt only when a label has changed."""
+        room = self.winfo_width() >= self.px(COUNTS_MIN_WIDTH)
+        labels = {}
+        for view in VIEWS:
+            count = self._view_count(view) if room else ""
+            labels[view] = f"{view} ({count})" if count else view
+        if labels != self.view_labels:
+            self.view_labels = labels
+            self.view_switch.configure(values=list(labels.values()))
+        self.view_switch.set(self.view_labels[self.view])
+
+    def _on_view_label(self, label: str) -> None:
+        """A press on the switch: its label stands for a view."""
+        self.set_view(next(view for view, text in self.view_labels.items() if text == label))
+
     def set_view(self, view: str) -> None:
         self.view = view
         if view != HUB:
             self.last_comp_view = view
-        self.view_switch.set(view)
         self._sync_view_controls()
-        self.render()
+        self.render()                          # which also selects the view's label on the switch
 
     def _sync_view_controls(self) -> None:
         """Show the grouping or standings switch the view uses, and enable the season and team
@@ -1334,6 +1388,7 @@ class FMReviewApp(_Root):
     # ----------------------------------------------------------------- rendering
 
     def render(self) -> None:
+        self._refresh_view_labels()            # the counts follow the competition, season, team and save
         self._show_zone_key()                  # the Table and Positions views put it back
         if not self.dataset:
             return
