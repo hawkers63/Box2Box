@@ -41,3 +41,6 @@ fm27_probe_report.txt
 
 # Private agent instructions
 AGENTS.md
+
+# Private observer-game saves used for local testing
+games/
