@@ -1805,6 +1805,121 @@ def positions_by_matchday(
     )
 
 
+# --------------------------------------------------------------------------- season comparison
+
+
+@dataclass(frozen=True, slots=True)
+class SeasonColumn:
+    """One season's column in a SeasonComparison: its label and completion state."""
+
+    season: int
+    label: str
+    finished: bool
+    note: str          # "final" or "in progress, X of Y"
+
+
+@dataclass(frozen=True, slots=True)
+class CompareCell:
+    """One club's place in one season, as the stored or calculated standings show it."""
+
+    position: int
+    points: int
+    zone: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class CompareRow:
+    """One club's row in a SeasonComparison: a cell per column, newest first, None if absent."""
+
+    team_id: int
+    team: str
+    cells: tuple[CompareCell | None, ...]
+    delta: int | None = None     # previous season's position minus latest's; None if either absent
+
+
+@dataclass(frozen=True, slots=True)
+class SeasonComparison:
+    """Side-by-side standings across the seasons a league has a usable snapshot for.
+
+    Columns are ordered newest season first.
+    """
+
+    columns: tuple[SeasonColumn, ...]
+    rows: tuple[CompareRow, ...] = ()
+
+
+def _comparison_rows_for_season(
+    dataset: Dataset, competition_id: int, season: int, labels: Mapping[int, str]
+):
+    """The rows of the group that lists every team for this season's standings, or () when the
+    season has no usable snapshot."""
+    fixtures = season_fixtures(dataset, competition_id, season)
+    snapshot = standings(dataset, competition_id, season, fixtures, labels)
+    if not snapshot.groups:
+        return ()
+    all_teams = {r.team_id for _, rows in snapshot.groups for r in rows}
+    for _, rows in sorted(snapshot.groups, key=lambda g: len(g[1]), reverse=True):
+        if {r.team_id for r in rows} == all_teams:
+            return rows
+    return ()
+
+
+def season_comparison(
+    dataset: Dataset,
+    competition_id: int,
+    labels: Mapping[int, str],
+) -> SeasonComparison | None:
+    """Side-by-side standings for a league across every season the save holds a usable snapshot
+    for. Returns None until at least two seasons yield one."""
+    competition = dataset.by_id.get(competition_id)
+    if competition is None:
+        return None
+    columns: list[SeasonColumn] = []
+    cells_by_team: dict[int, dict[int, CompareCell]] = defaultdict(dict)
+    team_names: dict[int, str] = {}
+    for season in sorted(competition.seasons, reverse=True):
+        fixtures = season_fixtures(dataset, competition_id, season)
+        league = [f for f in fixtures if f.round is None and f.round_index is not None]
+        if not league:
+            continue
+        scored = sum(1 for f in league if f.played and has_score(f))
+        if not scored:
+            continue
+        rows = _comparison_rows_for_season(dataset, competition_id, season, labels)
+        if not rows:
+            continue
+        finished = scored == len(league)
+        note = "final" if finished else f"in progress, {scored} of {len(league)}"
+        columns.append(SeasonColumn(
+            season=season,
+            label=season_label(season, fixtures),
+            finished=finished,
+            note=note,
+        ))
+        for row in rows:
+            cells_by_team[row.team_id][season] = CompareCell(
+                position=row.position, points=row.points, zone=row.zone)
+            team_names.setdefault(row.team_id, row.team)
+    if len(columns) < 2:
+        return None
+    seasons = [column.season for column in columns]
+    rows_out = tuple(
+        _compare_row(
+            team_id,
+            team_names.get(team_id, labels.get(team_id, f"Team {team_id}")),
+            tuple(cells_by_team[team_id].get(season) for season in seasons),
+        )
+        for team_id in cells_by_team
+    )
+    return SeasonComparison(columns=tuple(columns), rows=rows_out)
+
+
+def _compare_row(team_id: int, team: str, cells: tuple[CompareCell | None, ...]) -> CompareRow:
+    latest, previous = (cells[0], cells[1]) if len(cells) >= 2 else (None, None)
+    delta = previous.position - latest.position if latest and previous else None
+    return CompareRow(team_id=team_id, team=team, cells=cells, delta=delta)
+
+
 # --------------------------------------------------------------------------- expected goals
 
 XG_DEAD_ZONE = 0.25      # goals within this of expected goals are neither over nor under

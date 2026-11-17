@@ -678,6 +678,146 @@ class PositionTests(unittest.TestCase):
         self.assertIsNone(self.chart([final]))
 
 
+TWO_SEASON_LEAGUE = [
+    # 2026: three clubs, home-and-away, all six fixtures played and scored (final).
+    fx(D(2026, 8, 1), 1, 2, 2, 0, md=1, season=2026),
+    fx(D(2026, 8, 8), 3, 1, 0, 1, md=2, season=2026),
+    fx(D(2026, 8, 15), 2, 3, 1, 1, md=3, season=2026),
+    fx(D(2026, 8, 22), 2, 1, 0, 3, md=4, season=2026),
+    fx(D(2026, 8, 29), 1, 3, 2, 2, md=5, season=2026),
+    fx(D(2026, 9, 5), 3, 2, 1, 0, md=6, season=2026),
+    # 2027: same three clubs, two of six played, the other four still to come (in progress).
+    fx(D(2027, 8, 1), 1, 2, 1, 1, md=1, season=2027),
+    fx(D(2027, 8, 8), 3, 1, 2, 0, md=2, season=2027),
+    fx(D(2027, 8, 15), 2, 3, md=3, season=2027),
+    fx(D(2027, 8, 22), 2, 1, md=4, season=2027),
+    fx(D(2027, 8, 29), 1, 3, md=5, season=2027),
+    fx(D(2027, 9, 5), 3, 2, md=6, season=2027),
+]
+
+
+class SeasonComparisonTests(unittest.TestCase):
+    """Side-by-side standings for a league across every season the save holds."""
+
+    def _comparison(self, fixtures=TWO_SEASON_LEAGUE, **build):
+        ds = fd.build_dataset(info(), fixtures, **build)
+        return fd.season_comparison(ds, 101, fd.team_labels(fixtures))
+
+    def test_returns_none_when_only_one_season_has_a_snapshot(self):
+        ds = fd.build_dataset(info(), LEAGUE)
+        self.assertIsNone(fd.season_comparison(ds, 101, fd.team_labels(LEAGUE)))
+
+    def test_two_seasons_give_two_columns_newest_first_with_state_notes(self):
+        comparison = self._comparison()
+        self.assertIsNotNone(comparison)
+        self.assertEqual(tuple(column.season for column in comparison.columns), (2027, 2026))
+        self.assertEqual(comparison.columns[0].label, "2027")
+        self.assertFalse(comparison.columns[0].finished)
+        self.assertEqual(comparison.columns[0].note, "in progress, 2 of 6")
+        self.assertEqual(comparison.columns[1].label, "2026")
+        self.assertTrue(comparison.columns[1].finished)
+        self.assertEqual(comparison.columns[1].note, "final")
+
+    def _cells_by_team(self, comparison):
+        return {r.team: r.cells for r in comparison.rows}
+
+    def test_latest_season_uses_stored_table_earlier_season_is_calculated(self):
+        # A stored table for 2027 (the latest played season) that reverses the calculated order:
+        # Leeds 1st, Hull 2nd, Sheffield 3rd. The calculated order would have Sheffield (3 pts) 1st.
+        stored_2027 = NS(competition_id=101, rows=(
+            row(2, 1, played=1, drawn=1, gf=1, ga=1, points=1),
+            row(1, 2, played=2, drawn=1, lost=1, gf=1, ga=3, points=1),
+            row(3, 3, played=1, won=1, gf=2, ga=0, points=3),
+        ))
+        comparison = self._comparison(tables=[stored_2027])
+        cells = self._cells_by_team(comparison)
+        # Column 0 is 2027 and follows the stored table.
+        self.assertEqual((cells["Hull City"][0].position, cells["Hull City"][0].points), (2, 1))
+        self.assertEqual((cells["Leeds United"][0].position, cells["Leeds United"][0].points), (1, 1))
+        self.assertEqual((cells["Sheffield United"][0].position, cells["Sheffield United"][0].points), (3, 3))
+        # Column 1 is 2026 and is calculated from the fully-scored fixtures:
+        #   Hull 10pts (W3 D1), Sheffield 5pts (W1 D2 L1), Leeds 1pt (D1 L3).
+        self.assertEqual((cells["Hull City"][1].position, cells["Hull City"][1].points), (1, 10))
+        self.assertEqual((cells["Sheffield United"][1].position, cells["Sheffield United"][1].points), (2, 5))
+        self.assertEqual((cells["Leeds United"][1].position, cells["Leeds United"][1].points), (3, 1))
+
+    def test_rows_order_by_latest_season_position(self):
+        # 2027 calculated (no stored table): Sheffield 3pts (best), Leeds 1pt GD 0, Hull 1pt GD -2.
+        comparison = self._comparison()
+        self.assertEqual([row.team for row in comparison.rows],
+                         ["Sheffield United", "Leeds United", "Hull City"])
+
+    def test_a_club_absent_from_a_season_has_none_for_that_cell_and_still_has_a_row(self):
+        # Wrexham joins 2027 (promoted) and did not play in 2026.
+        fixtures = TWO_SEASON_LEAGUE + [
+            fx(D(2027, 9, 12), 5, 1, 0, 2, md=7, season=2027),
+            fx(D(2027, 9, 19), 5, 2, 1, 1, md=8, season=2027),
+        ]
+        comparison = self._comparison(fixtures)
+        cells = self._cells_by_team(comparison)
+        self.assertIn("Wrexham", cells)
+        self.assertIsNotNone(cells["Wrexham"][0])      # 2027: Wrexham has a cell
+        self.assertIsNone(cells["Wrexham"][1])         # 2026: Wrexham was absent
+
+    def test_stored_table_whose_teams_arent_all_in_the_season_is_ignored(self):
+        # Stored table for 2027 includes Wrexham, who does not play in 2027.
+        untrusted = NS(competition_id=101, rows=(
+            row(5, 1, points=99), row(1, 2), row(2, 3), row(3, 4),
+        ))
+        comparison = self._comparison(tables=[untrusted])
+        cells = self._cells_by_team(comparison)
+        # The stored table is dropped; 2027 falls back to calculated (Sheffield 1st, 3 pts).
+        self.assertEqual((cells["Sheffield United"][0].position, cells["Sheffield United"][0].points), (1, 3))
+        self.assertNotIn("Wrexham", cells)
+
+    def test_delta_is_previous_position_minus_latest_and_none_when_either_absent(self):
+        # Base TWO_SEASON_LEAGUE: 2026 Hull=1 Sheffield=2 Leeds=3; 2027 Sheffield=1 Leeds=2 Hull=3.
+        comparison = self._comparison()
+        deltas = {row.team: row.delta for row in comparison.rows}
+        self.assertEqual(deltas["Hull City"], -2)         # 1st → 3rd
+        self.assertEqual(deltas["Sheffield United"], 1)   # 2nd → 1st
+        self.assertEqual(deltas["Leeds United"], 1)       # 3rd → 2nd
+
+        # A club absent from a season has None for delta.
+        fixtures = TWO_SEASON_LEAGUE + [
+            fx(D(2027, 9, 12), 5, 1, 0, 2, md=7, season=2027),
+            fx(D(2027, 9, 19), 5, 2, 1, 1, md=8, season=2027),
+        ]
+        wrexham = {r.team: r.delta for r in self._comparison(fixtures).rows}["Wrexham"]
+        self.assertIsNone(wrexham)
+
+    def test_a_cup_returns_none(self):
+        cup_round = CodedValue(CompetitionRound.FINAL, 19)
+        fixtures = [
+            fx(D(2026, 5, 20), 1, 2, 1, 0, rnd=cup_round, season=2026),
+            fx(D(2027, 5, 20), 3, 4, 2, 1, rnd=cup_round, season=2027),
+        ]
+        self.assertIsNone(self._comparison(fixtures))
+
+    def test_clubs_absent_from_the_latest_season_fall_below_those_present(self):
+        # 2026: Hull, Leeds, Wrexham complete. 2027: Hull, Leeds, Sheffield (Wrexham relegated).
+        fixtures = [
+            fx(D(2026, 8, 1), 1, 2, 2, 0, md=1, season=2026),
+            fx(D(2026, 8, 8), 5, 1, 0, 1, md=2, season=2026),
+            fx(D(2026, 8, 15), 2, 5, 1, 1, md=3, season=2026),
+            fx(D(2026, 8, 22), 2, 1, 0, 3, md=4, season=2026),
+            fx(D(2026, 8, 29), 1, 5, 2, 2, md=5, season=2026),
+            fx(D(2026, 9, 5), 5, 2, 1, 0, md=6, season=2026),
+            fx(D(2027, 8, 1), 1, 2, 1, 1, md=1, season=2027),
+            fx(D(2027, 8, 8), 3, 1, 2, 0, md=2, season=2027),
+            fx(D(2027, 8, 15), 2, 3, md=3, season=2027),
+            fx(D(2027, 8, 22), 2, 1, md=4, season=2027),
+            fx(D(2027, 8, 29), 1, 3, md=5, season=2027),
+            fx(D(2027, 9, 5), 3, 2, md=6, season=2027),
+        ]
+        comparison = self._comparison(fixtures)
+        teams_in_order = [row.team for row in comparison.rows]
+        # Sheffield, Leeds, Hull all play 2027 (listed by 2027 position);
+        # Wrexham (2026 only) comes last.
+        self.assertEqual(teams_in_order[:3], ["Sheffield United", "Leeds United", "Hull City"])
+        self.assertEqual(teams_in_order[3], "Wrexham")
+
+
 def stats_row(f, home, xg, npxg=None, **changes):
     """One side's statistics for a match, as fmsave reads them: a real TeamMatchStats record whose
     figures other than expected goals are made up."""
