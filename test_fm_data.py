@@ -1166,6 +1166,35 @@ class MatchReportTests(unittest.TestCase):
         self.assertEqual(lines["Possession"], ("—", "50%"))
         self.assertEqual(lines["Passes"], ("—", "200"))          # only the completed figure is known
 
+
+class AllMeetingsTests(unittest.TestCase):
+
+    def test_all_meetings_across_competitions_and_seasons(self):
+        league_s1 = [fx(D(2026, 8, 8), 1, 2, 2, 1, comp=101, season=2026, md=1),
+                     fx(D(2026, 12, 12), 2, 1, 0, 0, comp=101, season=2026, md=20)]
+        league_s2 = [fx(D(2027, 8, 7), 1, 2, 1, 0, comp=101, season=2027, md=1)]
+        cup_match = [fx(D(2027, 1, 5), 1, 2, 2, 1, comp=202, season=2026, md=1)]
+        ds = fd.build_dataset(info(), league_s1 + league_s2 + cup_match)
+        groups = fd.all_meetings(ds, team(1), team(2))
+        self.assertEqual(len(groups), 3)             # two seasons in league + one in cup
+        dates_by_comp = {(g.competition_id, g.season): [f.date for f in g.fixtures] for g in groups}
+        self.assertEqual(dates_by_comp[(101, 2026)], [D(2026, 8, 8), D(2026, 12, 12)])
+        self.assertEqual(dates_by_comp[(101, 2027)], [D(2027, 8, 7)])
+        self.assertEqual(dates_by_comp[(202, 2026)], [D(2027, 1, 5)])
+
+    def test_all_meetings_no_pair_gives_empty(self):
+        ds = fd.build_dataset(info(), LEAGUE)
+        self.assertEqual(fd.all_meetings(ds, team(1), team(5)), ())
+
+    def test_all_meetings_groups_sorted_by_season_then_competition(self):
+        s1_comp101 = [fx(D(2026, 8, 8), 1, 2, 2, 1, comp=101, season=2026, md=1)]
+        s1_comp202 = [fx(D(2026, 9, 1), 1, 2, 1, 0, comp=202, season=2026, md=1)]
+        s2_comp101 = [fx(D(2027, 8, 7), 1, 2, 0, 0, comp=101, season=2027, md=1)]
+        ds = fd.build_dataset(info(), s1_comp101 + s1_comp202 + s2_comp101)
+        groups = fd.all_meetings(ds, team(1), team(2))
+        self.assertEqual([(g.competition_id, g.season) for g in groups],
+                         [(101, 2026), (202, 2026), (101, 2027)])
+
     def test_meetings_are_the_matches_between_two_teams_in_date_order(self):
         fixtures = [fx(D(2026, 12, 12), 2, 1, md=4), fx(D(2026, 8, 8), 1, 2, 2, 1, md=1), fx(D(2026, 9, 5), 1, 3, md=2),
                     fx(D(2026, 10, 3), 3, 2, md=3)]

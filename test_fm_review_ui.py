@@ -1142,9 +1142,9 @@ class WindowTests(unittest.TestCase):
         self.assertIn("xG\t1.82\t0.45", text)
         self.assertIn("Shots\t10\t10", text)
         self.assertIn("Hull City: last 5", text)
-        self.assertIn("Meetings this season", text)
+        self.assertIn("Meetings (2)", text)
         meeting = next(w for w in drawer._body.winfo_children()
-                       if isinstance(w, tk.Label) and w.cget("text") == "08 Aug  Hull City 2-1 Leeds United")
+                       if isinstance(w, tk.Label) and w.cget("text") == "  08 Aug  Hull City 2-1 Leeds United")
         self.assertEqual(meeting.cget("bg"), app.theme.list_selected[0])         # the selected one is marked
 
     def test_a_played_match_with_no_report_says_so(self):

@@ -2223,6 +2223,34 @@ def meetings(fixtures: Iterable[Fixture], team_a: int, team_b: int) -> tuple[Fix
     return tuple(sorted((f for f in fixtures if {f.home_team_id, f.away_team_id} == pair), key=_when))
 
 
+@dataclass(frozen=True, slots=True)
+class MeetingGroup:
+    """All matches between two teams in one competition and season, in date order."""
+
+    competition_id: int
+    season: int | None
+    fixtures: tuple[Fixture, ...]
+
+
+def all_meetings(dataset: Dataset, team_a: int, team_b: int) -> tuple[MeetingGroup, ...]:
+    """Every match between two teams across all competitions and seasons in the save.
+
+    Groups by (competition_id, season), sorted by season then competition id.
+    """
+    pair = {team_a, team_b}
+    groups: dict[tuple[int, int | None], list[Fixture]] = defaultdict(list)
+    for comp_id, fixtures in dataset.fixtures.items():
+        for f in fixtures:
+            if {f.home_team_id, f.away_team_id} == pair:
+                groups[(comp_id, season_key(f))].append(f)
+    result = []
+    for (comp_id, season), group_fixtures in groups.items():
+        group_fixtures.sort(key=_when)
+        result.append(MeetingGroup(comp_id, season, tuple(group_fixtures)))
+    result.sort(key=lambda g: (g.season is None, g.season or 0, g.competition_id))
+    return tuple(result)
+
+
 def next_match(fixtures: Iterable[Fixture], team_id: int) -> Fixture | None:
     """The team's earliest match still to play, or None."""
     coming = [f for f in fixtures if not f.played and team_id in (f.home_team_id, f.away_team_id)]

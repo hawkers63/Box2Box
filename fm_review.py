@@ -2433,12 +2433,19 @@ class FMReviewApp(_Root):
                 blocks.append(inspector.Line("No match report stored for this match", muted=True))
         form_team = self.focus if self.focus in (f.home_team_id, f.away_team_id) else f.home_team_id
         blocks += self._form_blocks(form_team)
-        blocks.append(inspector.Heading("Meetings this season"))
-        for meeting in fd.meetings(self.fixtures, f.home_team_id, f.away_team_id)[:12]:
-            score = "to play" if fd.result_kind(meeting) == fd.SCHEDULED else fd.score_text(meeting)
-            blocks.append(inspector.Line(
-                f"{self._day(meeting, '%d %b')}  {self._team_name(meeting.home_team_id)} {score} "
-                f"{self._team_name(meeting.away_team_id)}", marked=meeting == f))
+        all_groups = fd.all_meetings(self.dataset, f.home_team_id, f.away_team_id)
+        total = sum(len(g.fixtures) for g in all_groups)
+        blocks.append(inspector.Heading(f"Meetings ({total})"))
+        for group in all_groups:
+            comp_info = self.dataset.by_id.get(group.competition_id)
+            comp_name = fd.competition_title(comp_info, self.names) if comp_info else f"Competition {group.competition_id}"
+            season_lbl = fd.season_label(group.season, group.fixtures)
+            blocks.append(inspector.Line(f"{comp_name}  {season_lbl}", muted=True))
+            for meeting in group.fixtures:
+                score = "to play" if fd.result_kind(meeting) == fd.SCHEDULED else fd.score_text(meeting)
+                blocks.append(inspector.Line(
+                    f"  {self._day(meeting, '%d %b')}  {self._team_name(meeting.home_team_id)} {score} "
+                    f"{self._team_name(meeting.away_team_id)}", marked=meeting == f))
         return inspector.InspectorModel(f"{home} v {away}", " · ".join(when), tuple(blocks))
 
     def _club_model(self, team_id: int) -> inspector.InspectorModel:
