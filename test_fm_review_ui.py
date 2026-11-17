@@ -145,6 +145,117 @@ class WindowTests(unittest.TestCase):
         app._on_sheet_select(fm_review.ANALYSIS)
         self.assertEqual(app.focus, team(4))                 # a click follows the team, as in the table
 
+    def test_positions_mode_switch_is_hidden_when_only_one_season(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_view(fm_review.ANALYSIS)
+        app._on_analysis("Positions")
+        app.update()
+        self.assertEqual(app.positions_mode_switch.winfo_manager(), "")
+
+    def _install_two_season_dataset(self):
+        ds = fd.build_dataset(
+            info(),
+            test_fm_data.TWO_SEASON_LEAGUE,
+            clubs=[club(1), club(2), club(3)],
+            competitions=[NS(id=101, database_id=12)],
+        )
+        self.app.install_dataset(ds)
+        return ds
+
+    def test_positions_mode_switch_is_shown_with_both_segments_when_a_comparison_is_available(self):
+        app = self.app
+        self._install_two_season_dataset()
+        app.set_view(fm_review.ANALYSIS)
+        app._on_analysis("Positions")
+        app.update()
+        self.assertEqual(app.positions_mode_switch.winfo_manager(), "pack")
+        self.assertEqual(list(app.positions_mode_switch.cget("values")), list(fm_review.POSITIONS_MODES))
+        self.assertEqual(app.positions_mode_switch.get(), "Matchday chart")
+
+    def test_season_vs_season_fills_the_sheet_with_the_expected_headers_and_first_row(self):
+        app = self.app
+        self._install_two_season_dataset()
+        app.set_view(fm_review.ANALYSIS)
+        app._on_analysis("Positions")
+        app._on_positions_mode("Season vs season")
+        app.update()
+        sheet = app.sheets[fm_review.ANALYSIS]
+        self.assertEqual(list(sheet.headers()),
+                         ["Team", "2027 Pos", "2027 Pts", "2026 Pos", "2026 Pts", "Δ Pos"])
+        # Row 0: Sheffield United finished 2nd in 2026 (5 pts) and leads 2027 on 3 pts, a one-place climb.
+        self.assertEqual([sheet.get_cell_data(0, c) for c in range(6)],
+                         ["Sheffield United", 1, 3, 2, 5, "+1"])
+
+    def test_switching_away_from_positions_hides_the_mode_switch(self):
+        app = self.app
+        self._install_two_season_dataset()
+        app.set_view(fm_review.ANALYSIS)
+        app._on_analysis("Positions")
+        app.update()
+        self.assertEqual(app.positions_mode_switch.winfo_manager(), "pack")
+        app._on_analysis("Form")
+        app.update()
+        self.assertEqual(app.positions_mode_switch.winfo_manager(), "")
+
+    def test_single_season_competition_still_shows_the_existing_matchday_panel(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_view(fm_review.ANALYSIS)
+        app._on_analysis("Positions")
+        app.update()
+        self.assertEqual(app.positions_mode_switch.winfo_manager(), "")
+        self.assertIn("after each matchday", app.note_label.cget("text"))
+
+    def test_switching_positions_mode_keeps_competition_season_and_followed_club(self):
+        app = self.app
+        self._install_two_season_dataset()
+        app.set_focus(team(2))                 # follow Leeds
+        app._on_season("2027")
+        app.set_view(fm_review.ANALYSIS)
+        app._on_analysis("Positions")
+        app.update()
+        self.assertEqual((app.comp_id, app.season, app.focus), (101, 2027, team(2)))
+        app._on_positions_mode("Season vs season")
+        app.update()
+        self.assertEqual((app.comp_id, app.season, app.focus), (101, 2027, team(2)))
+        app._on_positions_mode("Matchday chart")
+        app.update()
+        self.assertEqual((app.comp_id, app.season, app.focus), (101, 2027, team(2)))
+
+    def test_season_vs_season_highlights_the_followed_club_row(self):
+        app = self.app
+        self._install_two_season_dataset()
+        app.set_focus(team(1))                 # follow Hull City
+        app.set_view(fm_review.ANALYSIS)
+        app._on_analysis("Positions")
+        app._on_positions_mode("Season vs season")
+        app.update()
+        sheet = app.sheets[fm_review.ANALYSIS]
+        # Hull is row 2 (Sheffield, Leeds, Hull by 2027 position).
+        self.assertEqual(sheet.get_cell_data(2, 0), "Hull City")
+        self.assertEqual(sheet.props(2, 0, "highlight").bg, app.view_theme.focus[0])
+
+    def test_season_vs_season_paints_each_seasons_zone_fill(self):
+        app = self.app
+        rules = [NS(competition_id=101, promotion_places=1, playoff_places=0, relegation_places=1, rounds=())]
+        ds = fd.build_dataset(info(), test_fm_data.TWO_SEASON_LEAGUE,
+                              clubs=[club(1), club(2), club(3)],
+                              competitions=[NS(id=101, database_id=12)],
+                              rules=rules)
+        app.install_dataset(ds)
+        app.set_view(fm_review.ANALYSIS)
+        app._on_analysis("Positions")
+        app._on_positions_mode("Season vs season")
+        app.update()
+        sheet = app.sheets[fm_review.ANALYSIS]
+        theme = app.view_theme
+        # Row 0 is Sheffield (2027 Pos 1 → promotion, 2026 Pos 2 → no zone).
+        self.assertEqual(sheet.props(0, 1, "highlight").bg, theme.zones[fd.ZONE_PROMOTION][0])
+        # Row 2 is Hull (2027 Pos 3 → relegation, 2026 Pos 1 → promotion).
+        self.assertEqual(sheet.props(2, 1, "highlight").bg, theme.zones[fd.ZONE_RELEGATION][0])
+        self.assertEqual(sheet.props(2, 3, "highlight").bg, theme.zones[fd.ZONE_PROMOTION][0])
+
     def test_results_show_expected_goals_where_the_save_kept_a_report(self):
         app = self.app
         app.install_dataset(dataset(match_stats=HULL_LEEDS_XG))

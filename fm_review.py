@@ -69,6 +69,7 @@ HUB = "Competitions"
 ANALYSIS = "Analysis"
 VIEWS = ("Results", "Grid", "Table", ANALYSIS, HUB)
 ANALYSES = ("Form", "Positions", "xG", "Ties", "Bracket")
+POSITIONS_MODES = ("Matchday chart", "Season vs season")
 GROUPINGS = (fd.GROUP_BY_WEEK, fd.GROUP_BY_MATCHDAY, fd.GROUP_BY_DATE)
 MAX_TEAM_CHOICES = 120
 RESULTS_XG_COLUMN = 4
@@ -527,6 +528,7 @@ class FMReviewApp(_Root):
         self.group_by = fd.GROUP_BY_WEEK
         self.table_split = fd.SPLIT_OVERALL
         self.analysis = ANALYSES[0]
+        self.positions_mode = POSITIONS_MODES[0]
         self.fixtures: tuple = ()
         self.labels: dict[int, str] = {}
         self.short_labels: dict[int, str] = {}
@@ -708,6 +710,10 @@ class FMReviewApp(_Root):
         self.analysis_switch = role("switch", ctk.CTkSegmentedButton(controls, values=list(ANALYSES),
                                                                      command=self._on_analysis))
         self.analysis_switch.set(self.analysis)
+        # Shown only when Analysis > Positions has a comparison to offer (>=2 seasons with a snapshot).
+        self.positions_mode_switch = role("switch", ctk.CTkSegmentedButton(
+            controls, values=list(POSITIONS_MODES), command=self._on_positions_mode))
+        self.positions_mode_switch.set(self.positions_mode)
 
         self.coverage_label = role("text", ctk.CTkLabel(main, text="", anchor="w", justify="left"))
         self.coverage_label.grid(row=2, column=0, sticky="ew")
@@ -1418,7 +1424,7 @@ class FMReviewApp(_Root):
         """Show the grouping or standings switch the view uses, and enable the season and team
         pickers only where they apply: the hub covers every competition at once."""
         for widget in (self.group_label, self.group_switch, self.split_label, self.split_switch,
-                       self.analysis_label, self.analysis_switch):
+                       self.analysis_label, self.analysis_switch, self.positions_mode_switch):
             widget.pack_forget()
         if self.view == "Results":
             self.group_label.pack(side="left", padx=(0, 6))
@@ -1430,7 +1436,8 @@ class FMReviewApp(_Root):
             self.analysis_label.pack(side="left", padx=(0, 6))
             self.analysis_switch.pack(side="left")
         state = "normal" if self.dataset and self.view != HUB else "disabled"
-        for widget in (self.season_menu, self.team_box, self.group_switch, self.split_switch, self.analysis_switch):
+        for widget in (self.season_menu, self.team_box, self.group_switch, self.split_switch,
+                       self.analysis_switch, self.positions_mode_switch):
             widget.configure(state=state)
 
     def _on_table_split(self, value: str) -> None:
@@ -1440,6 +1447,11 @@ class FMReviewApp(_Root):
     def _on_analysis(self, value: str) -> None:
         self.analysis = value
         self.analysis_switch.set(value)
+        self.render()
+
+    def _on_positions_mode(self, value: str) -> None:
+        self.positions_mode = value
+        self.positions_mode_switch.set(value)
         self.render()
 
     def _on_group(self, value: str) -> None:
@@ -1854,6 +1866,8 @@ class FMReviewApp(_Root):
 
     def _render_analysis(self) -> None:
         self.overlays[ANALYSIS].clear()          # the Form panel draws its pills again
+        if self.analysis != "Positions":
+            self.positions_mode_switch.pack_forget()
         {"Form": self._render_form, "Positions": self._render_positions, "xG": self._render_xg,
          "Ties": self._render_ties, "Bracket": self._render_bracket}[self.analysis]()
 
@@ -1925,6 +1939,15 @@ class FMReviewApp(_Root):
                      + f"  ·  {followed.strip.describe()}")
 
     def _render_positions(self) -> None:
+        comparison = fd.season_comparison(self.dataset, self.comp_id, self.labels)
+        if comparison is not None:
+            self.positions_mode_switch.pack(side="left", padx=(12, 0))
+        if comparison is not None and self.positions_mode == "Season vs season":
+            self._render_season_comparison(comparison)
+            return
+        self._render_matchday_chart()
+
+    def _render_matchday_chart(self) -> None:
         chart = fd.positions_by_matchday(self.dataset, self.comp_id, self.season, self.fixtures, self.labels)
         if chart is None or not chart.matchdays:
             self.note_label.configure(text="")
@@ -1967,6 +1990,47 @@ class FMReviewApp(_Root):
         note.append("Click a team to follow it.")
         self.note_label.configure(text=" ".join(part for part in note if part))
         self._show_zone_key(zones)
+
+    def _render_season_comparison(self, comparison: fd.SeasonComparison) -> None:
+        headers = ["Team"]
+        for column in comparison.columns:
+            headers.extend([f"{column.label} Pos", f"{column.label} Pts"])
+        headers.append("Δ Pos")
+        theme = self.view_theme
+        data, self.analysis_rows, zone_cells = [], [], []
+        for row in comparison.rows:
+            row_idx = len(data)
+            cells: list = [row.team]
+            for n, cell in enumerate(row.cells):
+                if cell is None:
+                    cells.extend(["—", "—"])
+                else:
+                    cells.extend([cell.position, cell.points])
+                    if cell.zone and cell.zone in theme.zones:
+                        zone_cells.append((row_idx, 1 + n * 2, theme.zones[cell.zone]))
+            if row.delta is None:
+                cells.append("—")
+            else:
+                cells.append(f"{row.delta:+d}" if row.delta else "0")
+            data.append(cells)
+            self.analysis_rows.append(row.team_id)
+        widths = ([self._text_width([row[0] for row in data], minimum=200)]
+                  + [self.px(70), self.px(50)] * len(comparison.columns)
+                  + [self.px(60)])
+        sheet = self._fill_analysis(headers, data, widths, list(range(1, len(headers))))
+        for row_idx, team_id in enumerate(self.analysis_rows):
+            if team_id == self.focus:
+                sheet.highlight_rows(row_idx, bg=theme.focus[0], fg=theme.focus[1],
+                                     redraw=False, end_of_screen=False)
+        for row_idx, column, colours in zone_cells:
+            self._paint(sheet, row_idx, column, colours)
+        sheet.refresh()
+        notes = ["Each season side by side: the latest on the left, then earlier seasons; "
+                 "Δ Pos is the previous season's position minus the latest's."]
+        notes.extend(f"{column.label}: {column.note}." for column in comparison.columns)
+        notes.append("Click a team to follow it.")
+        self.note_label.configure(text=" ".join(notes))
+        self._show_zone_key(())
 
     def _render_xg(self) -> None:
         cov = fd.xg_coverage(self.dataset, self.fixtures)
