@@ -49,7 +49,7 @@ import palette
 import tooltip
 
 APP_TITLE = "Box2Box"
-VERSION = "1.5"
+VERSION = "1.6"
 APP_DIR = Path(__file__).resolve().parent
 NAMES_PATH = APP_DIR / "competition_names.csv"
 SETTINGS_PATH = APP_DIR / "box2box_settings.json"

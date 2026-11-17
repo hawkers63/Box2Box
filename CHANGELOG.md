@@ -1,8 +1,8 @@
 # Changelog
 
-**Release:** 1.5  
+**Release:** 1.6  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 1.5), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 1.6), launched with `Box2Box.bat`
 
 All notable changes to this project will be documented in this file.
 
@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [1.6] - 2026-11-17
+
+Adds the cup bracket, every meeting between two clubs in the inspector, and a side-by-side season-vs-season standings table.
 
 ### Added
 

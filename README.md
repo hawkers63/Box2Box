@@ -13,9 +13,9 @@ Saves are read with [fmsave](https://rhiever.github.io/fmsave/) and are never mo
 
 **Database viewer** · entry point `fm_review.py` · launcher `Box2Box.bat`
 
-**Release:** 1.5  
+**Release:** 1.6  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 1.5), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 1.6), launched with `Box2Box.bat`
 
 </div>
 
