@@ -1170,7 +1170,7 @@ class WindowTests(unittest.TestCase):
         text = drawer.rendered_text()
         self.assertIn("Not played yet.", text)
         self.assertFalse([t for t in text if t.startswith("Shots") or "report" in t])
-        self.assertIn("26 Sep  Hull City to play Sheffield United", text)
+        self.assertIn("  26 Sep  Hull City to play Sheffield United", text)
 
     def test_a_club_row_shows_form_run_record_and_the_next_match(self):
         app, drawer = self.inspector_app()
