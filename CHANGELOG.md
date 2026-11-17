@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Cup bracket** (Analysis → Bracket): for a knockout cup, the last rounds drawn as a tree, with each tie's two sides, their goals in each match (or leg), the winner in bold and a line to the tie it fed, then the earlier rounds listed below. Two-legged ties are decided on aggregate and a replay belongs to its tie. A drawn match whose winner the save does not store (it keeps no extra time or penalties) shows the side that plays in the next round, starred, with the star explained. A competition that does not end in a single final says so and lists its rounds; a group or league phase is counted, not drawn as ties. Your followed club's boxes are outlined.
+- **All meetings in the inspector** (Ctrl+I on a match): the inspector drawer's match view now lists every meeting between the two clubs across every competition and season the save holds, grouped by competition and season under a muted label, with the selected match highlighted.
+- **Season against season** (Analysis → Positions → *Season vs season*): when a league has at least two seasons in the save, a two-segment switch at the top of the Positions panel flips between the matchday chart and a side-by-side standings table — Club | (Pos, Pts) × seasons | Δ Pos — with the newest season on the left and Δ Pos reading the previous season's position minus the latest's. Each season's column header says *(final)* when every league match has a score and *(in progress, X of Y)* otherwise, and its Pos column carries its own zone fill. A club that did not play in a season reads "—" in its cells; a pre-season or single-season league sees the matchday chart unchanged.
 
 ### Fixed
 
