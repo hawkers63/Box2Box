@@ -12,9 +12,14 @@ import unittest
 from pathlib import Path
 
 import archive
+import dataclasses
 import datetime as dt
 import itertools
-from test_fm_data import D, fx
+from types import SimpleNamespace as NS
+from unittest import mock
+
+import fm_data as fd
+from test_fm_data import D, fx, info, unresolved_away
 
 
 class ArchiveFileTests(unittest.TestCase):
@@ -141,6 +146,118 @@ class FixtureKeyTests(unittest.TestCase):
     def test_competition_keys_use_the_database_id_or_a_negative_stand_in(self):
         self.assertEqual(archive.competition_key(8, 12), 12)
         self.assertEqual(archive.competition_key(8, None), -9)
+
+
+def bank_dataset(fixtures, *, file="a.fm", game=D(2026, 9, 1)):
+    """A Dataset in the one competition (database id 12) that every club is English in (nation 5)."""
+    base = dataclasses.replace(info(), file_name=file, path=file, game_date=game)
+    clubs = [NS(uid=i, reputation=1, teams=(), nation_id=5) for i in range(1, 6)]
+    return fd.build_dataset(base, fixtures, clubs=clubs, competitions=[NS(id=101, database_id=12)])
+
+
+def thirty(score=(1, 0), *, until=30):
+    """Thirty meetings of one pair (a long run of matchdays) with the given score, played up to matchday `until`."""
+    return [fx(D(2026, 8, 1) + dt.timedelta(days=md), 1, 2, *(score if md <= until else (None, None)), md=md)
+            for md in range(1, 31)]
+
+
+class BankTests(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        self.path = Path(self.folder.name) / "archive.sqlite"
+
+    def rows(self, path=None, table="fixtures"):
+        order = "1, 2, 3, 4, 5" if table in ("fixtures", "conflicts") else "1"
+        with contextlib.closing(sqlite3.connect(path or self.path)) as db:
+            return db.execute(f"SELECT * FROM {table} ORDER BY {order}").fetchall()
+
+    def test_the_first_bank_adds_every_fixture_and_records_the_import(self):
+        data = bank_dataset([fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 15), 3, 4, 2, 2, md=2),
+                             fx(D(2026, 8, 22), 1, 3, md=3)])
+        with archive.Archive.open(self.path) as a:
+            report = a.bank(data)
+            records = a.imports()
+        self.assertEqual((report.added, report.updated, report.conflicts, report.already_banked), (3, 0, 0, False))
+        self.assertEqual(len(self.rows()), 3)
+        self.assertEqual([(r.file_name, r.game_date, r.added) for r in records], [("a.fm", D(2026, 9, 1), 3)])
+
+    def test_banking_the_same_save_again_is_a_no_op_that_says_so(self):
+        data = bank_dataset([fx(D(2026, 8, 8), 1, 2, 1, 0, md=1)])
+        with archive.Archive.open(self.path) as a:
+            a.bank(data)
+            before = self.rows()
+            report = a.bank(data)
+            self.assertEqual(len(a.imports()), 1)
+        self.assertTrue(report.already_banked)
+        self.assertEqual(report.describe(), "Already banked.")
+        self.assertEqual(self.rows(), before)
+
+    def test_fixtures_with_an_unresolvable_team_are_skipped_and_counted(self):
+        data = bank_dataset([unresolved_away(fx(D(2026, 8, 8), 1, 2, 1, 0, md=1)), fx(D(2026, 8, 15), 3, 4, 0, 0, md=2)])
+        with archive.Archive.open(self.path) as a:
+            report = a.bank(data)
+        self.assertEqual((report.added, report.skipped_unresolved), (1, 1))
+        self.assertEqual(len(self.rows()), 1)
+        self.assertIn("1 skipped", report.describe())
+
+    def test_the_report_reads_in_words(self):
+        report = archive.BankReport(added=412, updated=3, unchanged=0, conflicts=0, skipped_unresolved=0,
+                                    already_banked=False)
+        self.assertEqual(report.describe(), "Banked: 412 new fixtures, 3 updated, 0 conflicts.")
+
+    def test_two_saves_banked_in_either_order_give_the_same_archive(self):
+        early = bank_dataset([fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 15), 3, 4, None, None, md=2),
+                              fx(D(2026, 8, 22), 1, 3, None, None, md=3)], file="early.fm", game=D(2026, 9, 1))
+        late = bank_dataset([fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 19), 3, 4, 2, 2, md=2),
+                             fx(D(2026, 8, 22), 1, 3, None, None, md=3), fx(D(2026, 8, 29), 2, 4, 3, 1, md=4)],
+                            file="late.fm", game=D(2026, 10, 1))
+        one, two = Path(self.folder.name) / "one.sqlite", Path(self.folder.name) / "two.sqlite"
+        with archive.Archive.open(one) as a:
+            a.bank(early)
+            a.bank(late)
+        with archive.Archive.open(two) as a:
+            a.bank(late)
+            a.bank(early)
+        self.assertEqual(self.rows(one), self.rows(two))
+        self.assertEqual(self.rows(one, "clubs"), self.rows(two, "clubs"))
+        moved = [r for r in self.rows(one) if r[3] == 4 and r[2] == 3][0]        # the rescheduled, then played, match
+        self.assertEqual((moved[5], moved[9]), ("2026-08-19", 1))                # on its real date, and played
+
+    def test_a_different_playthrough_is_refused_and_changes_nothing(self):
+        with archive.Archive.open(self.path) as a:
+            a.bank(bank_dataset(thirty((1, 0))))
+            before = (self.rows(), self.rows(table="imports"))
+            with self.assertRaises(archive.WorldMismatch) as caught:
+                a.bank(bank_dataset(thirty((0, 3)), file="other.fm", game=D(2026, 10, 1)))
+        self.assertIn("different playthrough", str(caught.exception))
+        self.assertEqual((self.rows(), self.rows(table="imports")), before)
+
+    def test_a_few_disagreements_among_many_overlaps_are_a_conflict_not_a_different_world(self):
+        with archive.Archive.open(self.path) as a:
+            a.bank(bank_dataset(thirty((1, 0))))
+            data = thirty((1, 0))
+            data[3] = fx(D(2026, 8, 5), 1, 2, 5, 5, md=4)
+            report = a.bank(bank_dataset(data, file="b.fm", game=D(2026, 10, 1)))
+        self.assertEqual(report.conflicts, 1)
+        self.assertEqual(len(self.rows(table="conflicts")), 1)
+
+    def test_a_failure_part_way_leaves_the_archive_as_it_was(self):
+        data = bank_dataset([fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 15), 3, 4, 2, 2, md=2),
+                             fx(D(2026, 8, 22), 1, 3, 0, 0, md=3)])
+        with archive.Archive.open(self.path) as a:
+            real, calls = archive.merge_fixture, []
+
+            def failing(old, new):
+                calls.append(1)
+                if len(calls) == 3:
+                    raise RuntimeError("disk full")
+                return real(old, new)
+
+            with mock.patch.object(archive, "merge_fixture", failing), self.assertRaises(RuntimeError):
+                a.bank(data)
+            self.assertEqual(a.imports(), [])
+        self.assertEqual((self.rows(), self.rows(table="imports"), self.rows(table="clubs")), ([], [], []))
 
 
 if __name__ == "__main__":

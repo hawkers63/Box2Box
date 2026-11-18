@@ -9,6 +9,7 @@ The Yearbook reads only this archive (see notes/design_v2.0_yearbook.md).
 from __future__ import annotations
 
 import datetime as dt
+import json
 import sqlite3
 from collections import defaultdict
 from collections.abc import Callable, Sequence
@@ -126,6 +127,70 @@ def merge_fixture(old: ArchivedFixture | None, new: ArchivedFixture) -> MergeRes
     return MergeResult(winner, "unchanged" if same else "updated")
 
 
+# A save whose played, scored results disagree with the archive's on more than this share of at least
+# WORLD_MIN_OVERLAP overlapping fixtures is a different playthrough (see notes/design_v2.0_yearbook.md).
+WORLD_MAX_DISAGREEMENT = 0.05
+WORLD_MIN_OVERLAP = 20
+
+
+@dataclass(frozen=True, slots=True)
+class BankReport:
+    """What banking one save changed."""
+
+    added: int
+    updated: int
+    unchanged: int
+    conflicts: int
+    skipped_unresolved: int
+    already_banked: bool
+
+    def describe(self) -> str:
+        if self.already_banked:
+            return "Already banked."
+        text = f"Banked: {self.added} new fixtures, {self.updated} updated, {self.conflicts} conflicts."
+        if self.skipped_unresolved:
+            text += f" {self.skipped_unresolved} skipped (no club the save could resolve)."
+        return text
+
+
+@dataclass(frozen=True, slots=True)
+class ImportRecord:
+    """One banked save, as the archive remembers it."""
+
+    file_name: str
+    build: str
+    game_date: dt.date | None
+    fmsave_version: str
+    imported_at: dt.datetime
+    added: int
+    updated: int
+    unchanged: int
+    conflicts: int
+    skipped_unresolved: int
+    warnings: tuple[str, ...]
+
+
+_COLUMNS = ("competition_key", "season", "home_uid", "away_uid", "meeting", "date", "kick_off", "home_goals",
+            "away_goals", "played", "round_index", "round_label", "round_raw", "home_name", "away_name", "source_date")
+
+
+def _iso(value: dt.date | dt.time | None) -> str | None:
+    return None if value is None else value.isoformat()
+
+
+def _row(f: ArchivedFixture) -> tuple:
+    return (*f.key, _iso(f.date), _iso(f.kick_off), f.home_goals, f.away_goals, int(f.played), f.round_index,
+            f.round_label, f.round_raw, f.home_name, f.away_name, _iso(f.source_date))
+
+
+def _fixture(row: Sequence) -> ArchivedFixture:
+    return ArchivedFixture(
+        key=tuple(row[:5]), date=dt.date.fromisoformat(row[5]) if row[5] else None,
+        kick_off=dt.time.fromisoformat(row[6]) if row[6] else None, home_goals=row[7], away_goals=row[8],
+        played=bool(row[9]), round_index=row[10], round_label=row[11], round_raw=row[12], home_name=row[13],
+        away_name=row[14], source_date=dt.date.fromisoformat(row[15]) if row[15] else None)
+
+
 class Archive:
     """An open archive file. Use as a context manager, or call close()."""
 
@@ -153,6 +218,93 @@ class Archive:
         except sqlite3.Error as exc:
             raise ArchiveError(f"The archive at {path} could not be opened: {exc}") from exc
         return cls(db, path)
+
+    def _archived(self, dataset) -> tuple[list[ArchivedFixture], int]:
+        """The save's identifiable fixtures as archive records, and how many it could not identify."""
+        everything = [f for fixtures in dataset.fixtures.values() for f in fixtures]
+        database_ids = {c.id: c.database_id for c in dataset.competitions}
+        keys = fixture_keys(everything, lambda f: competition_key(f.competition_id, database_ids.get(f.competition_id)))
+        records, skipped = [], 0
+        for f, key in zip(everything, keys):
+            if key is None:
+                skipped += 1
+                continue
+            label = getattr(getattr(f, "round", None), "label", None)
+            raw = getattr(getattr(f, "round", None), "raw", None)
+            records.append(ArchivedFixture(
+                key=key, date=f.date, kick_off=f.kick_off_time, home_goals=f.home_goals, away_goals=f.away_goals,
+                played=bool(f.played), round_index=f.round_index, round_label=label, round_raw=raw,
+                home_name=f.home_club_name or "", away_name=f.away_club_name or "", source_date=dataset.info.game_date))
+        return records, skipped
+
+    def _stored(self, key: FixtureKey) -> ArchivedFixture | None:
+        row = self._db.execute(
+            f"SELECT {', '.join(_COLUMNS)} FROM fixtures WHERE competition_key = ? AND season = ? AND home_uid = ? "
+            "AND away_uid = ? AND meeting = ?", key).fetchone()
+        return _fixture(row) if row else None
+
+    def _check_world(self, records: Sequence[ArchivedFixture]) -> None:
+        """Refuse a save whose played results disagree with the archive's beyond WORLD_MAX_DISAGREEMENT."""
+        overlap = disagree = 0
+        for f in records:
+            old = self._stored(f.key)
+            if old and old.played and f.played and old.scored and f.scored:
+                overlap += 1
+                disagree += (old.home_goals, old.away_goals) != (f.home_goals, f.away_goals)
+        if overlap >= WORLD_MIN_OVERLAP and disagree / overlap > WORLD_MAX_DISAGREEMENT:
+            raise WorldMismatch("These results do not match the archive, so this looks like a different "
+                                "playthrough. Nothing was changed.")
+
+    def bank(self, dataset) -> BankReport:
+        """Merge a save's fixtures into the archive in one transaction. Banking the same save (file and in-game
+        date) again changes nothing. A save that looks like a different playthrough raises WorldMismatch; any
+        failure rolls the whole import back."""
+        info = dataset.info
+        game_date = _iso(info.game_date)
+        if self._db.execute("SELECT 1 FROM imports WHERE file_name = ? AND game_date IS ?",
+                            (info.file_name, game_date)).fetchone():
+            return BankReport(0, 0, 0, 0, 0, True)
+        records, skipped = self._archived(dataset)
+        self._check_world(records)
+        counts = {"added": 0, "updated": 0, "unchanged": 0, "conflict": 0}
+        with self._db:
+            import_id = self._db.execute(
+                "INSERT INTO imports (file_name, build, game_date, fmsave_version, imported_at, warnings) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (info.file_name, info.build, game_date, info.fmsave_version, info.imported_at.isoformat(),
+                 json.dumps(list(info.warnings)))).lastrowid
+            for f in records:
+                old = self._stored(f.key)
+                result = merge_fixture(old, f)
+                counts[result.outcome] += 1
+                if result.outcome == "conflict":
+                    loser = f if result.fixture == old else old
+                    self._db.execute("INSERT INTO conflicts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                     (*f.key, result.fixture.home_goals, result.fixture.away_goals,
+                                      loser.home_goals, loser.away_goals, import_id))
+                if result.fixture != old:
+                    self._db.execute(
+                        f"INSERT OR REPLACE INTO fixtures ({', '.join(_COLUMNS)}) VALUES ({', '.join('?' * 16)})",
+                        _row(result.fixture))
+            for f in records:
+                for uid, name in ((f.key[2], f.home_name), (f.key[3], f.away_name)):
+                    self._db.execute("INSERT OR IGNORE INTO clubs (uid, name) VALUES (?, ?)", (uid, name))
+            for uid, nation in dataset.club_nations.items():
+                self._db.execute("UPDATE clubs SET nation_id = ? WHERE uid = ? AND nation_id IS NULL", (nation, uid))
+            self._db.execute(
+                "UPDATE imports SET added = ?, updated = ?, unchanged = ?, conflicts = ?, skipped_unresolved = ? "
+                "WHERE id = ?", (counts["added"], counts["updated"], counts["unchanged"], counts["conflict"], skipped,
+                                 import_id))
+        return BankReport(counts["added"], counts["updated"], counts["unchanged"], counts["conflict"], skipped, False)
+
+    def imports(self) -> list[ImportRecord]:
+        """Every banked save, oldest first."""
+        rows = self._db.execute(
+            "SELECT file_name, build, game_date, fmsave_version, imported_at, added, updated, unchanged, conflicts, "
+            "skipped_unresolved, warnings FROM imports ORDER BY id").fetchall()
+        return [ImportRecord(r[0], r[1], dt.date.fromisoformat(r[2]) if r[2] else None, r[3],
+                             dt.datetime.fromisoformat(r[4]), r[5], r[6], r[7], r[8], r[9], tuple(json.loads(r[10])))
+                for r in rows]
 
     def close(self) -> None:
         self._db.close()
