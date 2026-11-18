@@ -206,6 +206,39 @@ class CupBlockTests(unittest.TestCase):
         self.assertEqual(notes[("Leeds United", "Hull City")], ("(2-2 agg)", "away"))       # level, Hull City went through
         self.assertEqual(notes[("Derby County", "Sheffield United")], ("(1-3 agg)", ""))    # unlevel: just the aggregate
 
+    def test_qualifying_rounds_that_all_use_round_index_zero_are_separate_rounds_by_date(self):
+        q = CodedValue(CompetitionRound.UNKNOWN, 3)
+        games = [fx(D(2026, 7, 8), 1, 2, 2, 0, comp=102, md=1, rnd=q), fx(D(2026, 7, 15), 2, 1, 1, 0, comp=102, md=1, rnd=q),
+                 fx(D(2026, 8, 5), 3, 4, 1, 0, comp=102, md=1, rnd=q), fx(D(2026, 8, 12), 4, 3, 0, 0, comp=102, md=1, rnd=q)]
+        blocks = self.blocks(self.make(games))
+        self.assertEqual([(b.round_name, b.leg) for b in blocks],
+                         [("Round 1", "1st leg"), ("Round 1", "2nd leg"), ("Round 2", "1st leg"), ("Round 2", "2nd leg")])
+        self.assertEqual(blocks[1].matches[0].note, "(1-2 agg)")          # the second leg's home side (club 2) first
+
+    def test_weekly_qualifying_rounds_on_one_round_index_stay_separate_ties_not_one_big_round(self):
+        q = CodedValue(CompetitionRound.UNKNOWN, 3)
+        games = [fx(D(2026, 8, 5), 1, 2, 1, 0, comp=102, md=1, rnd=q), fx(D(2026, 8, 12), 2, 1, 1, 1, comp=102, md=1, rnd=q),
+                 fx(D(2026, 8, 19), 1, 3, 2, 0, comp=102, md=1, rnd=q), fx(D(2026, 8, 26), 3, 1, 0, 0, comp=102, md=1, rnd=q)]
+        blocks = self.blocks(self.make(games))
+        self.assertEqual([(b.round_name, b.leg) for b in blocks],
+                         [("Round 1", "1st leg"), ("Round 1", "2nd leg"), ("Round 2", "1st leg"), ("Round 2", "2nd leg")])
+
+    def test_parallel_qualifying_paths_on_the_same_dates_are_never_mistaken_for_a_league_phase(self):
+        q = CodedValue(CompetitionRound.UNKNOWN, 3)
+        games = [fx(D(2026, 8, 5), 1, 2, 1, 0, comp=102, md=1, rnd=q), fx(D(2026, 8, 5), 3, 4, 2, 2, comp=102, md=1, rnd=q),
+                 fx(D(2026, 8, 12), 2, 1, 1, 1, comp=102, md=1, rnd=q), fx(D(2026, 8, 12), 4, 3, 0, 1, comp=102, md=1, rnd=q),
+                 fx(D(2026, 8, 5), 1, 3, 0, 0, comp=102, md=3, rnd=q), fx(D(2026, 8, 5), 2, 4, 1, 1, comp=102, md=3, rnd=q),
+                 fx(D(2026, 8, 12), 3, 1, 2, 1, comp=102, md=3, rnd=q), fx(D(2026, 8, 12), 4, 2, 0, 0, comp=102, md=3, rnd=q),
+                 fx(D(2026, 8, 5), 1, 4, 1, 0, comp=102, md=2, rnd=q), fx(D(2026, 8, 12), 4, 1, 2, 2, comp=102, md=2, rnd=q)]
+        names = [b.round_name for b in self.blocks(self.make(games))]
+        self.assertFalse([n for n in names if n.startswith("Matchday")], names)
+
+    def test_two_legs_weeks_apart_stay_one_tie(self):
+        legs = [fx(D(2027, 1, 5), 1, 2, 2, 0, comp=102, md=1, rnd=SF), fx(D(2027, 2, 2), 2, 1, 1, 0, comp=102, md=1, rnd=SF)]
+        blocks = self.blocks(self.make(legs))
+        self.assertEqual([(b.round_name, b.leg) for b in blocks], [("Semi-final", "1st leg"), ("Semi-final", "2nd leg")])
+        self.assertEqual(blocks[1].matches[0].note, "(1-2 agg)")
+
     def test_a_league_phase_where_no_pair_meets_twice_is_still_matchdays_not_ties(self):
         group = CodedValue(CompetitionRound.UNKNOWN, 1)
         games = [fx(D(2026, 3, 4), 1, 2, 1, 1, comp=102, md=1, rnd=group), fx(D(2026, 3, 4), 3, 4, 0, 0, comp=102, md=1, rnd=group),

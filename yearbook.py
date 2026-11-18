@@ -262,6 +262,54 @@ def _one_pool(fixtures: Sequence) -> bool:
     return len({find(t) for t in list(parent)}) == 1
 
 
+ROUND_GAP_DAYS = 3       # matches more than this many days apart, with no pair in common, are different rounds
+
+
+def _separate_rounds(fixtures: Sequence) -> list:
+    """Some competitions (the qualifying rounds of the European cups) reuse a round index for several separate
+    rounds. Split such an index into rounds by date: fixtures more than ROUND_GAP_DAYS apart belong to different
+    rounds unless a pair meets in both (two legs, however far apart). Legs and consecutive rounds are both a week apart,
+    so only a pair tells them apart. Rounds are then renumbered in date order.
+    Fixtures are returned unchanged when no round index holds more than one round."""
+    by_index: dict[int, list[int]] = defaultdict(list)
+    for position, f in enumerate(fixtures):
+        by_index[f.round_index].append(position)
+    clusters: list[tuple[dt.date, int, list[int]]] = []
+    for index, positions in by_index.items():
+        positions.sort(key=lambda i: fixtures[i].date or dt.date.min)
+        parent = {i: i for i in positions}
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        seen: dict[frozenset, int] = {}
+        previous = None
+        for i in positions:
+            f = fixtures[i]
+            pair = frozenset((f.home_team_id, f.away_team_id))
+            if previous is not None and (f.date is None or fixtures[previous].date is None
+                                         or (f.date - fixtures[previous].date).days <= ROUND_GAP_DAYS):
+                parent[find(i)] = find(previous)
+            if pair in seen:
+                parent[find(i)] = find(seen[pair])
+            seen[pair], previous = i, i
+        groups: dict[int, list[int]] = defaultdict(list)
+        for i in positions:
+            groups[find(i)].append(i)
+        for members in groups.values():
+            clusters.append((min(fixtures[i].date or dt.date.min for i in members), index, members))
+    if len(clusters) == len(by_index):
+        return list(fixtures)
+    renumbered = list(fixtures)
+    for number, (_, _, members) in enumerate(sorted(clusters, key=lambda c: (c[0], c[1]))):
+        for i in members:
+            renumbered[i] = dataclasses.replace(fixtures[i], round_index=number)
+    return renumbered
+
+
 def _field_runs(fixtures: Sequence) -> list[list[int]]:
     """Runs of consecutive round indexes whose rounds are played by nearly the same clubs (at least SAME_FIELD of
     the larger field). A knockout halves its field each round, so a run is two legs of one round (length 2) or a
@@ -305,6 +353,7 @@ def _cup_blocks(name: str, cup_fixtures: Sequence, labels: Mapping[int, str],
     matchdays = 0
     league_phase: set[int] = set()
     league_fixtures: list = []
+    cup_fixtures = _separate_rounds(cup_fixtures)
     runs = _field_runs(cup_fixtures)
     league_rounds = {index for run in runs if len(run) >= 3 for index in run}      # a league phase or group stage
     cup_fixtures = _with_legs_together(cup_fixtures, runs)
