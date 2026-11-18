@@ -64,23 +64,23 @@ class LeaguePageTests(unittest.TestCase):
         return dataclasses.replace(base, home_club_name=home_name, home_club_short_name=home_short)
 
     def test_a_long_club_name_is_replaced_by_the_games_short_name_in_the_results_and_the_table(self):
-        book = self.make([self.long_named("Al-Jazira Sports & Culture Club", "Al-Jazira SCC")])
+        book = self.make([self.long_named("Al-Jazira Sports & Culture Club", "Al-Jazira SCC"), fx(D(2026, 8, 9), 3, 4, 0, 0, md=1)])
         (page,) = self.league_pages(book)
         self.assertEqual(page.matches[0].home, "Al-Jazira SCC")
         self.assertIn("Al-Jazira SCC", [t.team for t in page.table])
 
     def test_a_name_that_is_not_long_is_kept_even_when_the_game_has_a_shorter_one(self):
-        book = self.make([self.long_named("Sheffield United", "Sheff Utd")])
+        book = self.make([self.long_named("Sheffield United", "Sheff Utd"), fx(D(2026, 8, 9), 4, 5, 0, 0, md=1)])
         (page,) = self.league_pages(book)
         self.assertEqual(page.matches[0].home, "Sheffield United")
 
     def test_a_long_name_stays_when_the_short_name_is_no_shorter(self):
-        book = self.make([self.long_named("Al-Jazira Sports & Culture Club", "Al-Jazira Sports & Culture Club")])
+        book = self.make([self.long_named("Al-Jazira Sports & Culture Club", "Al-Jazira Sports & Culture Club"), fx(D(2026, 8, 9), 3, 4, 0, 0, md=1)])
         (page,) = self.league_pages(book)
         self.assertEqual(page.matches[0].home, "Al-Jazira Sports & Culture Club")
 
     def test_a_played_match_with_no_recoverable_score_reads_n_a(self):
-        book = self.make([fx(D(2026, 8, 8), 1, 2, None, None, played=True, md=1)])
+        book = self.make([fx(D(2026, 8, 8), 1, 2, None, None, played=True, md=1), fx(D(2026, 8, 9), 3, 4, 0, 0, md=1)])
         (page,) = self.league_pages(book)
         self.assertEqual(page.matches[0].score, "n/a")
 
@@ -111,8 +111,9 @@ class LeaguePageTests(unittest.TestCase):
 
 class WhichCompetitionsTests(unittest.TestCase):
     COMPS = [NS(id=101, database_id=12), NS(id=102, database_id=14), NS(id=103, database_id=15)]
-    FIXTURES = [fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 8), 4, 5, 2, 2, comp=102, md=1),
-                fx(D(2026, 8, 8), 2, 3, 0, 1, comp=103, md=1)]
+    FIXTURES = [fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 15), 2, 1, 0, 0, md=2),
+                fx(D(2026, 8, 8), 4, 5, 2, 2, comp=102, md=1), fx(D(2026, 8, 15), 5, 4, 1, 3, comp=102, md=2),
+                fx(D(2026, 8, 8), 2, 3, 0, 1, comp=103, md=1), fx(D(2026, 8, 15), 3, 2, 1, 1, comp=103, md=2)]
     NATIONS = {1: 5, 2: 5, 3: 5, 4: 7, 5: 7}
 
     def make(self, names):
@@ -320,6 +321,29 @@ class WholeBookTests(unittest.TestCase):
         unfinished = self.make(self.SEASON + [fx(D(2026, 8, 22), 1, 4, md=3)])
         self.assertFalse([p for p in unfinished.pages if isinstance(p, yearbook.FinalTablesPage)])
         self.assertIn("Season in progress", " ".join(unfinished.pages[0].coverage_lines))
+
+
+class SingleMatchAndPlayOffTests(unittest.TestCase):
+    def make(self, fixtures, names, competitions):
+        book, folder = banked(fixtures, competitions=competitions, game=D(2027, 6, 1))
+        self.addCleanup(folder.cleanup)
+        self.addCleanup(book.close)
+        return yearbook.build_yearbook(book, 2026, names)
+
+    def test_a_one_match_competition_is_a_single_dated_block_not_a_matchweek_with_a_two_club_table(self):
+        shield = [fx(D(2026, 8, 16), 1, 2, 2, 1, comp=101, md=1)]
+        built = self.make(shield, {12: "Community Shield"}, [NS(id=101, database_id=12)])
+        self.assertFalse([p for p in built.pages if isinstance(p, yearbook.LeaguePage)])
+        (block,) = [p for p in built.pages if isinstance(p, yearbook.CupBlock)]
+        self.assertEqual(block.heading, "Community Shield · Sun 16 Aug")
+        self.assertEqual([(m.home, m.score, m.away) for m in block.matches], [("Hull City", "2-1", "Leeds United")])
+
+    def test_cup_rounds_inside_a_league_are_its_play_offs(self):
+        league = [fx(D(2026, 8, 8), 1, 2, 1, 0, comp=101, md=1), fx(D(2026, 8, 8), 3, 4, 0, 0, comp=101, md=1)]
+        playoff = [fx(D(2027, 5, 16), 1, 3, 2, 1, comp=101, md=2, rnd=SF)]
+        built = self.make(league + playoff, {12: "Championship"}, [NS(id=101, database_id=12)])
+        (block,) = [p for p in built.pages if isinstance(p, yearbook.CupBlock)]
+        self.assertTrue(block.heading.startswith("Championship play-offs, Semi-final"), block.heading)
 
 
 class ZoneTests(unittest.TestCase):

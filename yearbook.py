@@ -88,7 +88,8 @@ class CupBlock:
 
     @property
     def heading(self) -> str:
-        return f"{self.competition}, {self.round_name}{', ' + self.leg if self.leg else ''} · {self.date_text}"
+        title = ", ".join(part for part in (self.competition, self.round_name, self.leg) if part)
+        return f"{title} · {self.date_text}"
 
     @property
     def footnote(self) -> str:
@@ -257,7 +258,7 @@ def _one_pool(fixtures: Sequence) -> bool:
 
 
 def _cup_blocks(name: str, cup_fixtures: Sequence, labels: Mapping[int, str],
-                tie_breaks: Sequence[int] = ()) -> list[CupBlock]:
+                tie_breaks: Sequence[int] = (), one_match: bool = False) -> list[CupBlock]:
     """The blocks of a cup or continental competition: a block for each round, leg and day with a played match.
     A league phase (one pool of clubs playing matchday after matchday) also gets its table, cut to the top places,
     after the last day of each matchday."""
@@ -288,6 +289,8 @@ def _cup_blocks(name: str, cup_fixtures: Sequence, labels: Mapping[int, str],
             league_phase.add(rnd.index)
             league_fixtures += [f for t in rnd.ties for f in t.fixtures]
         round_name = rnd.name if knockout else f"Matchday {matchdays}"
+        if one_match:
+            round_name = ""                       # a competition that is a single match: its name says it all
         for tie in rnd.ties:
             legs = tie.fixtures
             two_legged = knockout and len(legs) == 2 and not fd.is_replay(*legs)
@@ -371,12 +374,18 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
         labels = _display_names(fixtures)
         league = [f for f in fixtures if f.round is None and f.round_index is not None]
         cup = [f for f in fixtures if f.round is not None and f.round_index is not None]
+        one_match = False
+        if len(league) == 1:                                  # a one-match competition (the Community Shield)
+            cup, league, one_match = league, [], True
         rules = dataset.zone_rules.get(comp.key)
+        # Cup rounds inside a league are its play-offs.
+        cup_name = f"{name} play-offs" if league and cup else name
         built = (_league_pages(name, league, labels, comp.tie_breaks, rules) if league else []) + \
-            (_cup_blocks(name, cup, labels, comp.tie_breaks) if cup else [])
+            (_cup_blocks(cup_name, cup, labels, comp.tie_breaks, one_match) if cup else [])
         if not built:
             continue
         order[name] = len(order)
+        order[cup_name] = order[name]
         unplayed = unplayed or any(not f.played for f in league + cup)
         pages += built
         if league and all(f.played for f in league):
