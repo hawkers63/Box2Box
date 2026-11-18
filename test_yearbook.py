@@ -15,6 +15,7 @@ from types import SimpleNamespace as NS
 import archive
 import fm_data as fd
 import yearbook
+from fmsave import CodedValue, CompetitionRound
 from test_fm_data import D, fx, info
 
 
@@ -112,6 +113,115 @@ class WhichCompetitionsTests(unittest.TestCase):
         built, _ = self.make({14: "La Liga", 15: "Segunda"})
         self.assertEqual({p.competition for p in built.pages if isinstance(p, yearbook.LeaguePage)},
                          {"La Liga", "Segunda"})
+
+
+QF = CodedValue(CompetitionRound.QUARTER_FINAL, 16)
+SF = CodedValue(CompetitionRound.SEMI_FINAL, 17)
+
+
+class CupBlockTests(unittest.TestCase):
+    NAMES = {14: "Europa League"}
+    COMPS = [NS(id=102, database_id=14)]
+
+    def make(self, fixtures, names=None, **kw):
+        book, folder = banked(fixtures, competitions=self.COMPS, game=D(2026, 3, 20), **kw)
+        self.addCleanup(folder.cleanup)
+        self.addCleanup(book.close)
+        return yearbook.build_yearbook(book, 2026, self.NAMES if names is None else names)
+
+    @staticmethod
+    def blocks(built):
+        return [p for p in built.pages if isinstance(p, yearbook.CupBlock)]
+
+    def tie(self, **kw):
+        """Ajax (1) v Anderlecht (2): 2-0, then Anderlecht 2-0 on the second leg."""
+        return [fx(D(2026, 3, 4), 1, 2, 2, 0, comp=102, md=1, rnd=QF),
+                fx(D(2026, 3, 18), 2, 1, 2, 0, comp=102, md=1, rnd=QF)]
+
+    def test_two_legs_are_two_dated_blocks_with_the_aggregate_on_the_second_leg_only(self):
+        first, second = self.blocks(self.make(self.tie()))
+        self.assertEqual(first.heading, "Europa League, Quarter-final, 1st leg · Wed 4 Mar")
+        self.assertEqual(second.heading, "Europa League, Quarter-final, 2nd leg · Wed 18 Mar")
+        self.assertEqual([(m.home, m.score, m.away, m.note) for m in first.matches], [("Hull City", "2-0", "Leeds United", "")])
+        self.assertEqual([(m.home, m.score, m.away) for m in second.matches], [("Leeds United", "2-0", "Hull City")])
+        self.assertEqual(second.matches[0].note, "(2-2 agg, level)")           # nobody is known to have gone through
+
+    def test_a_level_aggregate_names_who_advanced_only_when_a_later_round_shows_them(self):
+        later = [fx(D(2026, 4, 8), 1, 3, 0, 0, comp=102, md=2, rnd=SF)]         # Hull City play on, Leeds do not
+        _, second = self.blocks(self.make(self.tie() + later))[:2]
+        self.assertEqual(second.matches[0].note, "(2-2 agg; Hull City advance)")
+
+    def test_an_unlevel_aggregate_is_just_the_aggregate_from_the_second_legs_home_side(self):
+        legs = [fx(D(2026, 3, 4), 4, 3, 3, 0, comp=102, md=1, rnd=QF), fx(D(2026, 3, 18), 3, 4, 1, 3, comp=102, md=1, rnd=QF)]
+        _, second = self.blocks(self.make(legs))
+        self.assertEqual(second.matches[0].note, "(1-6 agg)")                   # Sheffield 0+1, Derby 3+3
+
+    def test_a_drawn_single_match_names_who_advanced_when_a_later_round_shows_them_and_else_says_level(self):
+        drawn = [fx(D(2026, 3, 4), 1, 2, 1, 1, comp=102, md=1, rnd=QF)]
+        (block,) = self.blocks(self.make(drawn))
+        self.assertEqual(block.matches[0].note, "(level)")
+        later = drawn + [fx(D(2026, 4, 8), 2, 3, 0, 0, comp=102, md=2, rnd=SF)]
+        first = self.blocks(self.make(later, nations={i: 5 for i in range(1, 6)}))[0]
+        self.assertEqual(first.matches[0].note, "(Leeds United advance)")
+
+    def test_the_book_never_prints_extra_time_or_penalties(self):
+        built = self.make(self.tie() + [fx(D(2026, 4, 8), 1, 3, 1, 1, comp=102, md=2, rnd=SF)])
+        for block in self.blocks(built):
+            for m in block.matches:
+                self.assertNotIn("aet", m.note)
+                self.assertNotIn("pens", m.note)
+
+    def test_a_league_phase_is_matches_with_no_tie_notes(self):
+        group = CodedValue(CompetitionRound.UNKNOWN, 1)
+        games = [fx(D(2026, 3, 4), h, a, 1, 1, comp=102, md=1, rnd=group)       # four sides, each playing three times
+                 for h, a in ((1, 2), (3, 4), (1, 3), (2, 4), (1, 4), (2, 3))]
+        (block,) = self.blocks(self.make(games))
+        self.assertEqual({m.note for m in block.matches}, {""})
+
+
+class WholeBookTests(unittest.TestCase):
+    NAMES = {12: "Premier League", 14: "FA Cup"}
+    COMPS = [NS(id=101, database_id=12), NS(id=102, database_id=14)]
+
+    def make(self, fixtures, coverage=None):
+        book, folder = banked(fixtures, competitions=self.COMPS, game=D(2026, 8, 20))
+        self.addCleanup(folder.cleanup)
+        self.addCleanup(book.close)
+        cover = coverage or book.coverage(2026)
+        return yearbook.yearbook_from(book.dataset(), book.competitions(), cover, 2026, self.NAMES)
+
+    SEASON = [fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 8), 3, 4, 0, 0, md=1),
+              fx(D(2026, 8, 12), 1, 3, 2, 2, comp=102, md=1, rnd=QF),
+              fx(D(2026, 8, 15), 1, 3, 1, 0, md=2), fx(D(2026, 8, 15), 2, 4, 3, 1, md=2)]
+
+    def test_a_cup_day_lands_between_the_two_matchweeks_around_it(self):
+        built = self.make(self.SEASON)
+        kinds = [(type(p).__name__, getattr(p, "matchweek", None)) for p in built.pages]
+        self.assertEqual(kinds, [("TitlePage", None), ("LeaguePage", 1), ("CupBlock", None), ("LeaguePage", 2),
+                                 ("FinalTablesPage", None)])
+
+    def test_the_title_page_states_the_saves_the_span_the_gaps_and_whether_the_season_is_in_progress(self):
+        cover = archive.BookCoverage(2, D(2026, 9, 1), D(2026, 10, 1), ((D(2026, 9, 1), D(2026, 10, 1)),), True)
+        title = self.make(self.SEASON, cover).pages[0]
+        text = " ".join(title.coverage_lines)
+        self.assertEqual(title.season_label, "2026")
+        for part in ("2 banked saves", "1 September 2026", "1 October 2026", "No save was banked between 1 Sep and 1 Oct",
+                     "Season in progress", "Premier League", "FA Cup"):
+            self.assertIn(part, text)
+
+    def test_the_title_page_says_when_no_competition_is_named_premier_league(self):
+        book, folder = banked(self.SEASON, competitions=self.COMPS, game=D(2026, 8, 20))
+        self.addCleanup(folder.cleanup)
+        self.addCleanup(book.close)
+        built = yearbook.yearbook_from(book.dataset(), book.competitions(), book.coverage(2026), 2026, {14: "FA Cup"})
+        self.assertIn("No competition is named Premier League", " ".join(built.pages[0].coverage_lines))
+
+    def test_final_tables_appear_only_when_every_league_match_is_played(self):
+        done = self.make(self.SEASON)
+        self.assertEqual([t[0] for t in done.pages[-1].tables], ["Premier League"])
+        unfinished = self.make(self.SEASON + [fx(D(2026, 8, 22), 1, 4, md=3)])
+        self.assertFalse([p for p in unfinished.pages if isinstance(p, yearbook.FinalTablesPage)])
+        self.assertIn("Season in progress", " ".join(unfinished.pages[0].coverage_lines))
 
 
 if __name__ == "__main__":

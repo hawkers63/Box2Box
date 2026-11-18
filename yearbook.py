@@ -57,6 +57,38 @@ class LeaguePage:
 
 
 @dataclass(frozen=True, slots=True)
+class CupBlock:
+    """One day of one cup or continental round (one leg of it, when it has two): the matches, with the aggregate
+    on a second leg and, for a level tie, who advanced when the save shows it."""
+
+    competition: str
+    round_name: str
+    leg: str                       # "1st leg", "2nd leg", "Replay" or ""
+    date_text: str
+    matches: tuple[BookMatch, ...]
+    when: dt.date
+
+    @property
+    def heading(self) -> str:
+        return f"{self.competition}, {self.round_name}{', ' + self.leg if self.leg else ''} · {self.date_text}"
+
+
+@dataclass(frozen=True, slots=True)
+class TitlePage:
+    season_label: str
+    coverage_lines: tuple[str, ...]
+    when: dt.date = dt.date.min
+
+
+@dataclass(frozen=True, slots=True)
+class FinalTablesPage:
+    """The final table of each league whose every match is played: (competition, lines)."""
+
+    tables: tuple[tuple[str, tuple[TableLine, ...]], ...]
+    when: dt.date = dt.date.max
+
+
+@dataclass(frozen=True, slots=True)
 class Yearbook:
     season_label: str
     coverage: arch.BookCoverage
@@ -131,6 +163,79 @@ def _league_pages(name: str, league: Sequence, labels: Mapping[int, str], tie_br
     return pages
 
 
+def _tie_note(tie: fd.CupTie, labels: Mapping[int, str], two_legged: bool) -> str:
+    """The note under a tie's deciding match: an aggregate for two legs; "advance" or "level" for a drawn
+    deciding match. The save stores no extra time or penalties, so neither is ever printed: a winner is named
+    only when `tie.winner` is evidenced (the side plays in a later round)."""
+    last = tie.fixtures[-1]
+    advanced = labels.get(tie.winner, "") if tie.winner is not None and tie.how == "next round" else ""
+    if two_legged:
+        goals = fd.Tie(tie.round_index, tie.team_a, tie.team_b, tie.fixtures[0], last).aggregate
+        if goals is None:
+            return ""
+        home, away = goals[1], goals[0]                           # the second leg's home side first
+        if home != away:
+            return f"({home}-{away} agg)"
+        return f"({home}-{away} agg; {advanced} advance)" if advanced else f"({home}-{away} agg, level)"
+    if fd.has_score(last) and last.home_goals == last.away_goals:
+        return f"({advanced} advance)" if advanced else "(level)"
+    return ""
+
+
+def _cup_blocks(name: str, cup_fixtures: Sequence, labels: Mapping[int, str]) -> list[CupBlock]:
+    """The blocks of a cup or continental competition: a block for each round, leg and day with a played match."""
+    grouped: dict[tuple, list[BookMatch]] = {}
+    names: dict[tuple, str] = {}
+    for rnd in fd.cup_rounds(cup_fixtures, labels):
+        for tie in rnd.ties:
+            legs = tie.fixtures
+            two_legged = rnd.knockout and len(legs) == 2 and not fd.is_replay(*legs)
+            for n, f in enumerate(legs):
+                if not f.played or not f.date:
+                    continue
+                leg = ""
+                if rnd.knockout and len(legs) == 2:
+                    leg = ("1st leg", "2nd leg")[n] if two_legged else ("Replay" if n == 1 else "")
+                deciding = rnd.knockout and n == len(legs) - 1
+                note = _tie_note(tie, labels, two_legged) if deciding else ""
+                key = (f.date, rnd.index, leg)
+                names[key] = rnd.name
+                grouped.setdefault(key, []).append(
+                    BookMatch("", labels.get(f.home_team_id, ""), labels.get(f.away_team_id, ""), _score(f), note))
+    return [CupBlock(name, names[key], key[2], f"{_day(key[0])} {key[0]:%b}",
+                     tuple(sorted(matches, key=lambda m: (m.home, m.away))), key[0])
+            for key, matches in sorted(grouped.items())]
+
+
+def _title_lines(coverage: arch.BookCoverage, included: Sequence[str], home: int | None) -> tuple[str, ...]:
+    lines = []
+    if coverage.saves:
+        lines.append(f"Built from {coverage.saves} banked save{'s' if coverage.saves != 1 else ''}, in-game "
+                     f"{coverage.first_date.day} {coverage.first_date:%B %Y} to "
+                     f"{coverage.last_date.day} {coverage.last_date:%B %Y}.")
+    else:
+        lines.append("No banked save falls inside this season's dates.")
+    for first, last in coverage.gaps:
+        lines.append(f"No save was banked between {first.day} {first:%b} and {last.day} {last:%b}, so anything the "
+                     "game dropped in that stretch is missing.")
+    lines.append("Season in progress." if coverage.in_progress else "Season complete.")
+    lines.append("Competitions: " + (", ".join(included) if included else "none named") + ".")
+    if home is None:
+        lines.append("No competition is named Premier League, so every named league is included.")
+    lines.append("Only competitions you have named appear; use Name this competition to add one. Tables are "
+                 "calculated from the results.")
+    return tuple(lines)
+
+
+def _page_key(page, order: Mapping[str, int]) -> tuple:
+    """Pages run by date; on one day a competition's matchweek or round follows the competition order."""
+    if isinstance(page, LeaguePage):
+        return (page.when, order.get(page.competition, 0), page.matchweek * 2 + page.rescheduled, "")
+    if isinstance(page, CupBlock):
+        return (page.when, order.get(page.competition, 0), 10 ** 6, page.round_name + page.leg)
+    return (page.when, 0, 0, "")
+
+
 def build_yearbook(book: arch.Archive, season: int, names: Mapping[int, str]) -> Yearbook:
     """The Yearbook for one season, from everything the archive holds."""
     return yearbook_from(book.dataset(), book.competitions(), book.coverage(season), season, names)
@@ -139,20 +244,31 @@ def build_yearbook(book: arch.Archive, season: int, names: Mapping[int, str]) ->
 def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompetition], coverage: arch.BookCoverage,
                   season: int, names: Mapping[int, str]) -> Yearbook:
     """The page model for one season. Only competitions the user has named are in the book, and (when the
-    home nation is known) only those of that nation; the continental ones are added by the cup blocks."""
+    home nation is known) only those of that nation plus the continental ones. A title page opens it, the pages
+    run by date, and the final tables close it once a league is fully played."""
     home = home_nation(competitions, names)
     pages: list = []
     order: dict[str, int] = {}
+    finals: list[tuple[str, tuple[TableLine, ...]]] = []
     for comp in sorted(competitions, key=lambda c: c.key):
         name = names.get(comp.database_id)
-        if not name or comp.continental or (home is not None and comp.nation != home):
+        if not name or (home is not None and not comp.continental and comp.nation != home):
             continue
         fixtures = fd.season_fixtures(dataset, comp.key, season)
+        labels = fd.team_labels(fixtures)
         league = [f for f in fixtures if f.round is None and f.round_index is not None]
-        if not league:
+        cup = [f for f in fixtures if f.round is not None and f.round_index is not None]
+        built = (_league_pages(name, league, labels, comp.tie_breaks) if league else []) + \
+            (_cup_blocks(name, cup, labels) if cup else [])
+        if not built:
             continue
         order[name] = len(order)
-        pages += _league_pages(name, league, fd.team_labels(fixtures), comp.tie_breaks)
-    pages.sort(key=lambda p: (p.when, order.get(p.competition, 0), p.matchweek, p.rescheduled))
-    every = [f for fixtures in dataset.fixtures.values() for f in fixtures]
-    return Yearbook(fd.season_label(season, every), coverage, tuple(pages))
+        pages += built
+        if league and all(f.played for f in league):
+            last = max(f.date for f in league if f.date)
+            finals.append((name, _table(fd.standings_as_of(league, labels, through=last, tie_breaks=comp.tie_breaks))))
+    pages.sort(key=lambda p: _page_key(p, order))
+    label = fd.season_label(season, [f for fixtures in dataset.fixtures.values() for f in fixtures])
+    head = [TitlePage(label, _title_lines(coverage, list(order), home))]
+    tail = [FinalTablesPage(tuple(finals))] if finals else []
+    return Yearbook(label, coverage, tuple(head + pages + tail))
