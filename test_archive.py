@@ -363,6 +363,12 @@ class ReadBackTests(unittest.TestCase):
             a.bank(bank_dataset([fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2027, 8, 8), 1, 2, 2, 0, season=2027, md=1)]))
             self.assertEqual(a.seasons(), [2027, 2026])
 
+    def test_season_labels_read_2026_27_when_a_season_crosses_the_new_year_and_2026_when_it_does_not(self):
+        with archive.Archive.open(self.path) as a:
+            a.bank(bank_dataset([fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2027, 5, 2), 1, 2, 0, 0, md=2),
+                                 fx(D(2027, 3, 6), 1, 2, 2, 0, season=2027, md=1)]))
+            self.assertEqual(a.season_labels(), [(2027, "2027"), (2026, "2026/27")])
+
     def test_coverage_names_the_saves_the_span_and_a_gap_between_them(self):
         early = bank_dataset(self.SEASON, file="early.fm", game=D(2026, 9, 1))
         late = bank_dataset(self.SEASON, file="late.fm", game=D(2026, 10, 1))

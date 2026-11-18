@@ -48,6 +48,8 @@ import fm_export as fx
 import inspector
 import palette
 import tooltip
+import yearbook
+import yearbook_pdf
 
 APP_TITLE = "Box2Box"
 VERSION = "1.8"
@@ -727,6 +729,8 @@ class FMReviewApp(_Root):
         for kind, label in (("table", "Table"), ("team", "My club's results"), ("recent", "Recent results")):
             self.post_menu.add_command(label=label, command=lambda k=kind: self.copy_for_post(k))
         self.export_menu.add_cascade(label="Copy for a post", menu=self.post_menu)
+        self.yearbook_menu = tk.Menu(self.export_menu, tearoff=False, postcommand=self._refresh_yearbook_menu)
+        self.export_menu.add_cascade(label="Yearbook (PDF)", menu=self.yearbook_menu)
         self.export_menu.add_separator()
         self.export_menu.add_command(label="Open the export folder", command=self.open_export_folder)
         self.hint_label = role("muted", ctk.CTkLabel(header, text="", anchor="w"))
@@ -1644,11 +1648,60 @@ class FMReviewApp(_Root):
             messagebox.showerror("Could not export", payload, parent=self)
             return
         export_kind, path = payload
-        what = fx.KINDS[export_kind]
+        what = "Yearbook" if export_kind == "yearbook" else fx.KINDS[export_kind]
         self.detail_label.configure(text=f"Saved the {what} {path.name} in {path.parent}")
         if messagebox.askyesno("Export saved", f"Saved the {what}\n\n{path.name}\n\nin {path.parent}.\n\nOpen it now?",
                                parent=self):
             self._open_path(path)
+
+    # ----------------------------------------------------------------- the Yearbook (PDF)
+
+    @staticmethod
+    def _banked_seasons() -> list[tuple[int, str]]:
+        """(season, label) for each season in the archive, newest first; empty when nothing has been banked.
+        Never creates the archive file."""
+        if not ARCHIVE_PATH.exists():
+            return []
+        try:
+            with archive.Archive.open(ARCHIVE_PATH) as book:
+                return book.season_labels()
+        except archive.ArchiveError:
+            return []
+
+    def _refresh_yearbook_menu(self) -> None:
+        menu = self.yearbook_menu
+        menu.delete(0, "end")
+        seasons = self._banked_seasons()
+        if not seasons or self._exporting:
+            menu.add_command(label="Bank a save first" if not seasons else "Another export is under way",
+                             state="disabled")
+            return
+        for season, label in seasons:
+            menu.add_command(label=label, command=lambda sn=season: self.export_yearbook(sn))
+
+    def export_yearbook(self, season: int) -> None:
+        """Build one season's Yearbook from the archive and write it as a PDF, on a background thread."""
+        if self._exporting:
+            return
+        self._exporting = True
+        self.export_button.configure(state="disabled", text="Exporting…")
+        self.detail_label.configure(text="Building the Yearbook…")
+        threading.Thread(target=self._yearbook_worker, args=(season, dict(self.names), export_folder()),
+                         daemon=True).start()
+
+    def _yearbook_worker(self, season: int, names: dict[int, str], folder: Path) -> None:
+        try:
+            with archive.Archive.open(ARCHIVE_PATH) as book:
+                built = yearbook.build_yearbook(book, season, names)
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / f"Yearbook {built.season_label.replace('/', '-')}.pdf"
+            yearbook_pdf.render(built, path)
+            self.events.put(("exported", ("yearbook", path)))
+        except archive.ArchiveError as exc:
+            self.events.put(("export_failed", str(exc)))
+        except Exception as exc:  # report anything unexpected rather than dying silently
+            self._log_error(traceback.format_exc())
+            self.events.put(("export_failed", f"Unexpected error while building the Yearbook:\n{type(exc).__name__}: {exc}"))
 
     def open_export_folder(self) -> None:
         folder = export_folder()
@@ -2388,6 +2441,11 @@ class FMReviewApp(_Root):
             for kind, label in (("table", "Table"), ("team", "My club's results"), ("recent", "Recent results")):
                 if self._post_applies(kind):
                     add(cp.ACTION, f"Copy for a post: {label}", lambda k=kind: self.copy_for_post(k))
+        if not self._exporting:
+            seasons = self._banked_seasons()
+            if seasons:
+                add(cp.ACTION, "Export Yearbook (PDF)…", lambda sn=seasons[0][0]: self.export_yearbook(sn),
+                    f"the {seasons[0][1]} volume, from the archive")
         add(cp.ACTION, "Open the export folder", self.open_export_folder)
         if self.loading_since is None:
             add(cp.ACTION, "Open save…", self.choose_save)

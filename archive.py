@@ -347,6 +347,13 @@ class Archive:
         """Every season with a fixture in the archive, newest first."""
         return [r[0] for r in self._db.execute("SELECT DISTINCT season FROM fixtures ORDER BY season DESC")]
 
+    def season_labels(self) -> list[tuple[int, str]]:
+        """(season, label) for every season, newest first: "2026/27" when it crosses the new year, else "2026"
+        (the same rule as fm_data.season_label, answered without loading the archive)."""
+        rows = self._db.execute("SELECT season, MAX(date) FROM fixtures GROUP BY season ORDER BY season DESC")
+        return [(season, f"{season}/{(season + 1) % 100:02d}" if latest and int(latest[:4]) > season else str(season))
+                for season, latest in rows]
+
     def coverage(self, season: int) -> BookCoverage:
         """The banked saves that fall inside a season's span of play, and the gaps between them."""
         span = self._db.execute("SELECT MIN(date), MAX(date), MAX(1 - played) FROM fixtures WHERE season = ?",

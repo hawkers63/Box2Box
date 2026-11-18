@@ -1712,7 +1712,7 @@ class WindowTests(unittest.TestCase):
         app = self.post_app()
         cascades = [app.export_menu.entrycget(i, "label") for i in range(app.export_menu.index("end") + 1)
                     if app.export_menu.type(i) == "cascade"]
-        self.assertEqual(cascades, ["Copy for a post"])
+        self.assertEqual(cascades, ["Copy for a post", "Yearbook (PDF)"])
         menu = app.post_menu
         labels = [menu.entrycget(i, "label") for i in range(menu.index("end") + 1)]
         self.assertEqual(labels, ["Table", "My club's results", "Recent results"])
@@ -1972,6 +1972,66 @@ class WindowTests(unittest.TestCase):
             self.assertTrue(self.wait_until(lambda: "could not be banked" in self.detail()), self.detail())
         self.assertIn("disk full", fm_review.ERROR_LOG.read_text(encoding="utf-8"))
         self.assertIs(app.dataset, data)
+
+    # ----------------------------------------------------------------- v2.0: export the Yearbook
+
+    def bank_into_archive(self, data=None):
+        with archive.Archive.open(fm_review.ARCHIVE_PATH) as book:
+            book.bank(data or dataset())
+
+    def yearbook_labels(self):
+        app = self.app
+        app._refresh_yearbook_menu()
+        menu = app.yearbook_menu
+        return [(menu.entrycget(i, "label"), str(menu.entrycget(i, "state"))) for i in range(menu.index("end") + 1)]
+
+    def test_the_yearbook_menu_lists_the_banked_seasons_newest_first(self):
+        self.bank_into_archive()
+        self.assertEqual(self.yearbook_labels(), [("2027", "normal"), ("2026", "normal")])
+
+    def test_with_nothing_banked_the_yearbook_menu_says_to_bank_a_save_first_and_creates_no_file(self):
+        self.assertEqual(self.yearbook_labels(), [("Bank a save first", "disabled")])
+        self.assertFalse(fm_review.ARCHIVE_PATH.exists())
+
+    def test_choosing_a_season_builds_and_renders_that_volume_off_the_main_thread(self):
+        app = self.app
+        self.bank_into_archive()
+        out = Path(self.folder.name) / "exports"
+        seen = {}
+
+        def fake_render(book, path):
+            seen["book"], seen["path"] = book, Path(path)
+            Path(path).write_bytes(b"%PDF-")
+
+        with mock.patch.object(fm_review, "export_folder", return_value=out), \
+                mock.patch.object(fm_review.yearbook_pdf, "render", side_effect=fake_render), \
+                mock.patch.object(fm_review.messagebox, "askyesno", return_value=False):
+            app.names = {12: "Championship"}
+            app.export_yearbook(2026)
+            self.assertTrue(app._exporting)
+            self.assertTrue(self.wait_until(lambda: not app._exporting, 10))
+        self.assertEqual(seen["book"].season_label, "2026")
+        self.assertEqual(seen["path"], out / "Yearbook 2026.pdf")
+        self.assertIn("Yearbook 2026.pdf", self.detail())
+
+    def test_a_failure_building_the_yearbook_is_shown_and_logged(self):
+        app = self.app
+        self.bank_into_archive()
+        with mock.patch.object(fm_review, "export_folder", return_value=Path(self.folder.name) / "exports"), \
+                mock.patch.object(fm_review.yearbook_pdf, "render", side_effect=RuntimeError("out of paper")), \
+                mock.patch.object(fm_review.messagebox, "showerror") as showerror:
+            app.export_yearbook(2026)
+            self.assertTrue(self.wait_until(lambda: not app._exporting, 10))
+        self.assertIn("out of paper", showerror.call_args.args[1])
+        self.assertIn("out of paper", fm_review.ERROR_LOG.read_text(encoding="utf-8"))
+
+    def test_the_palette_offers_the_newest_volume_only_when_something_is_banked(self):
+        app = self.app
+        app.install_dataset(dataset())
+        titles = lambda: [i.title for i in app._palette_items()]
+        self.assertNotIn("Export Yearbook (PDF)…", titles())
+        self.bank_into_archive()
+        self.assertIn("Export Yearbook (PDF)…", titles())
 
 
 class PathsTests(unittest.TestCase):
