@@ -161,7 +161,7 @@ class RenderTests(unittest.TestCase):
         self.assertEqual([type(p).__name__ for p in order], ["LeaguePage", "CupBlock"])
 
     def test_a_failure_while_drawing_leaves_no_file_and_no_scrap_behind(self):
-        with mock.patch.object(yearbook_pdf, "SimpleDocTemplate") as doc:
+        with mock.patch.object(yearbook_pdf, "BaseDocTemplate") as doc:
             doc.return_value.build.side_effect = RuntimeError("out of paper")
             with self.assertRaises(RuntimeError):
                 yearbook_pdf.render(book(week(1)), self.path)
@@ -170,7 +170,7 @@ class RenderTests(unittest.TestCase):
     def test_a_failure_keeps_an_earlier_book_that_was_already_there(self):
         yearbook_pdf.render(book(week(1)), self.path)
         before = self.path.read_bytes()
-        with mock.patch.object(yearbook_pdf, "SimpleDocTemplate") as doc:
+        with mock.patch.object(yearbook_pdf, "BaseDocTemplate") as doc:
             doc.return_value.build.side_effect = RuntimeError("out of paper")
             with self.assertRaises(RuntimeError):
                 yearbook_pdf.render(book(week(1), week(2)), self.path)
@@ -246,3 +246,83 @@ class MovingTableDrawingTests(unittest.TestCase):
         self.assertLess(texts.index("Premier League · final table"), texts.index("Premier League · home record"))
         self.assertIn("Home and away records are calculated from the results, in the order of the overall table.",
                       texts)
+
+
+def places(weeks=3, clubs=("Hull City", "Leeds United", "Derby County", "Wrexham"), zone="", marked=()):
+    rows = tuple(yb.PlacesRow(c, tuple(range(i + 1, i + 1 + weeks)) if False else tuple(i + 1 for _ in range(weeks)), zone,
+                              c in marked, i + 1) for i, c in enumerate(clubs))
+    return yb.PlacesPage("Premier League", tuple(range(1, weeks + 1)), rows)
+
+
+class PlacesGridDrawingTests(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        self.path = Path(self.folder.name) / "book.pdf"
+
+    def render(self, *pages):
+        yearbook_pdf.render(book(*pages), self.path)
+        return self.path.read_bytes()
+
+    def test_a_whole_season_fits_one_chunk_and_the_type_never_drops_below_seven_points(self):
+        self.assertEqual(yearbook_pdf.places_chunks(38), [(0, 38)])
+        self.assertGreaterEqual(yearbook_pdf.PLACES_FONT, 7)
+
+    def test_weeks_that_will_not_fit_split_into_equal_halves_in_order(self):
+        narrow = yearbook_pdf.places_chunks(46, width=yearbook_pdf.PLACES_NAME + yearbook_pdf.PLACES_NOW + 30 * yearbook_pdf.PLACES_CELL)
+        self.assertEqual(narrow, [(0, 23), (23, 46)])
+
+    def test_no_chunk_ever_has_more_weeks_than_fit_and_none_is_dropped(self):
+        for weeks in (10, 38, 46, 90):
+            for width in (200, 300, 600):
+                chunks = yearbook_pdf.places_chunks(weeks, width=width)
+                self.assertEqual(sum(b - a for a, b in chunks), weeks)
+                self.assertEqual([a for a, _ in chunks][1:], [b for _, b in chunks][:-1])
+
+    def test_a_championship_sized_grid_fits_the_landscape_text_area_at_the_stated_size(self):
+        names = [f"Club {i}" for i in range(24)]
+        page = places(weeks=46, clubs=names)
+        (table,) = [t for t in yearbook_pdf._places_tables(page, yearbook_pdf._styles())]
+        self.assertLessEqual(sum(table._colWidths), yearbook_pdf.LANDSCAPE_FRAME_WIDTH)
+        self.assertEqual(len(table._cellvalues), 25)                      # a header and every club: none dropped
+        self.assertEqual(len(table._cellvalues[0]), 46 + 2)               # every week, the name and the latest place
+
+    def test_a_blank_week_prints_nothing_not_zero(self):
+        page = yb.PlacesPage("L", (1, 2), (yb.PlacesRow("Hull City", (None, 3), "", False, 3),))
+        (table,) = yearbook_pdf._places_tables(page, yearbook_pdf._styles())
+        self.assertEqual(table._cellvalues[1][1:], ["", "3", "3"])
+
+    def test_the_latest_place_is_shaded_by_its_zone_and_the_marked_club_is_bold(self):
+        page = places(zone="relegation", marked=("Wrexham",))
+        (table,) = yearbook_pdf._places_tables(page, yearbook_pdf._styles())
+        shaded = [c for c in table._bkgrndcmds if c[0] == "BACKGROUND" and c[1][0] == len(page.matchweeks) + 1]
+        self.assertEqual(len(shaded), 4)
+        self.assertIn("<b>Wrexham</b>", [row[0].text for row in table._cellvalues[1:]])
+
+    def test_the_grid_is_landscape_and_the_pages_around_it_stay_portrait(self):
+        week_ = week(1)
+        final = yb.FinalTablesPage((("Premier League", table("Hull City", "Leeds United")),))
+        data = self.render(week_, places(), final)
+        sizes = re.findall(rb"/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]", data)
+        widths = [float(w) for w, _ in sizes]
+        self.assertEqual([w > 800 for w in widths], [False, False, True, False])        # title, week, grid, final
+
+    def test_a_grid_that_ends_the_book_leaves_no_blank_page_after_it(self):
+        data = self.render(places())
+        self.assertEqual(len(re.findall(rb"/Type\s*/Page\b", data)), 2)
+
+    def test_the_grid_and_its_headings_say_what_they_are(self):
+        texts = _texts(yearbook_pdf._flow(book(places(weeks=3))))
+        self.assertIn("Premier League · How they stood, matchweeks 1–3", texts)
+        self.assertTrue(any("a blank means the club had not yet played" in t for t in texts))
+
+
+class ResultsStripDrawingTests(unittest.TestCase):
+    def test_the_strip_sits_under_the_final_table_with_its_own_heading(self):
+        lines = ("Most wins: Hull City (3)", "A match with no score is not part of a run.")
+        final = yb.FinalTablesPage((("Premier League", table("Hull City", "Leeds United")),),
+                                   strips=(("Premier League", lines),))
+        texts = _texts(yearbook_pdf._flow(book(final)))
+        self.assertLess(texts.index("Premier League · final table"), texts.index("Premier League · from the results"))
+        for line in lines:
+            self.assertIn(line, texts)

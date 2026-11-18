@@ -310,7 +310,7 @@ class WholeBookTests(unittest.TestCase):
         built = self.make(self.SEASON)
         kinds = [(type(p).__name__, getattr(p, "matchweek", None)) for p in built.pages]
         self.assertEqual(kinds, [("TitlePage", None), ("LeaguePage", 1), ("CupBlock", None), ("LeaguePage", 2),
-                                 ("FinalTablesPage", None)])
+                                 ("PlacesPage", None), ("FinalTablesPage", None)])
 
     def test_the_title_page_states_the_saves_the_span_the_gaps_and_whether_the_season_is_in_progress(self):
         cover = archive.BookCoverage(2, D(2026, 9, 1), D(2026, 10, 1), ((D(2026, 9, 1), D(2026, 10, 1)),), True)
@@ -525,3 +525,126 @@ class MovingTableTests(unittest.TestCase):
         hull_away = {t.team: t for t in away}["Hull City"]
         self.assertEqual((hull_home.played, hull_home.points, hull_away.played, hull_away.points), (1, 3, 1, 3))
         self.assertEqual([t.pos for t in home], [t.pos for t in overall])
+
+
+class BookBuilder:
+    NAMES = {12: "Premier League"}
+    # Three rounds of a four-club league, all played: Hull City win every match.
+    FINISHED = [fx(D(2026, 8, 8), 1, 2, 2, 0, md=1), fx(D(2026, 8, 8), 3, 4, 1, 1, md=1),
+                fx(D(2026, 8, 15), 1, 3, 1, 0, md=2), fx(D(2026, 8, 15), 4, 2, 3, 0, md=2),
+                fx(D(2026, 8, 22), 1, 4, 3, 1, md=3), fx(D(2026, 8, 22), 2, 3, 0, 0, md=3)]
+
+    def build(self, fixtures, **kw):
+        book, folder = banked(fixtures, **kw)
+        self.addCleanup(folder.cleanup)
+        self.addCleanup(book.close)
+        return yearbook.build_yearbook(book, 2026, self.NAMES)
+
+
+class PlacesPageTests(BookBuilder, unittest.TestCase):
+    def places(self, built):
+        return [p for p in built.pages if isinstance(p, yearbook.PlacesPage)]
+
+    def test_each_league_with_two_or_more_tables_gets_a_grid_of_the_places_its_weekly_tables_printed(self):
+        built = self.build(self.FINISHED)
+        (page,) = self.places(built)
+        weekly = [p for p in built.pages if isinstance(p, yearbook.LeaguePage) and p.table]
+        self.assertEqual((page.competition, page.matchweeks), ("Premier League", (1, 2, 3)))
+        for row in page.rows:
+            printed = tuple({t.team: t.pos for t in p.table}[row.team] for p in weekly)
+            self.assertEqual(row.places, printed, row.team)
+
+    def test_the_rows_follow_the_latest_table_and_the_last_column_is_the_current_place(self):
+        (page,) = self.places(self.build(self.FINISHED))
+        self.assertEqual([(r.team, r.now) for r in page.rows],
+                         [("Hull City", 1), ("Derby County", 2), ("Sheffield United", 3), ("Leeds United", 4)])
+
+    def test_a_club_that_had_not_played_yet_is_blank_not_zero(self):
+        built = self.build([fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 15), 3, 4, 2, 0, md=2),
+                            fx(D(2026, 8, 15), 1, 2, 0, 0, md=2)])
+        (page,) = self.places(built)
+        self.assertEqual({r.team: r.places[0] for r in page.rows}["Derby County"], None)
+
+    def test_a_league_with_a_single_table_has_no_grid(self):
+        self.assertEqual(self.places(self.build(self.FINISHED[:2])), [])
+
+    def test_the_grid_comes_before_the_final_tables_and_after_every_weekly_page(self):
+        pages = self.build(self.FINISHED).pages
+        kinds = [type(p).__name__ for p in pages]
+        self.assertEqual(kinds[-2:], ["PlacesPage", "FinalTablesPage"])
+
+    def test_an_unfinished_season_still_gets_its_grid_at_the_end(self):
+        built = self.build([fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 15), 1, 2, 0, 0, md=2),
+                            fx(D(2026, 8, 22), 1, 2, md=3)])
+        self.assertEqual(type(built.pages[-1]).__name__, "PlacesPage")
+
+    def test_the_marked_club_is_flagged_in_the_grid(self):
+        book, folder = banked(self.FINISHED)
+        self.addCleanup(folder.cleanup)
+        self.addCleanup(book.close)
+        built = yearbook.build_yearbook(book, 2026, self.NAMES, marked_club=2)
+        (page,) = self.places(built)
+        self.assertEqual([r.team for r in page.rows if r.marked], ["Leeds United"])
+
+
+class BiggestMovesTests(unittest.TestCase):
+    @staticmethod
+    def page(*rows):
+        return yearbook.PlacesPage("L", (1, 2, 3, 4), tuple(yearbook.PlacesRow(t, p, "", p[-1] or 0) for t, p in rows))
+
+    def test_a_rise_is_the_biggest_climb_from_an_earlier_week_to_a_later_one(self):
+        page = self.page(("A", (5, 6, 3, 2)), ("B", (1, 2, 2, 3)), ("C", (2, 1, 1, 1)))
+        rise, fall, left_out = yearbook.biggest_moves(page)
+        self.assertEqual(rise, yearbook.Move("A", 6, 2, 2, 4))
+        self.assertEqual(fall, yearbook.Move("B", 1, 1, 3, 4))
+        self.assertFalse(left_out)
+
+    def test_a_club_that_had_not_played_every_week_is_left_out_and_counted(self):
+        page = self.page(("A", (None, 9, 3, 2)), ("B", (4, 4, 4, 4)))
+        rise, fall, left_out = yearbook.biggest_moves(page)
+        self.assertEqual((rise, fall, left_out), (None, None, 1))
+
+    def test_a_league_that_never_moved_has_no_rise_or_fall(self):
+        self.assertEqual(yearbook.biggest_moves(self.page(("A", (1, 1, 1, 1)), ("B", (2, 2, 2, 2))))[:2], (None, None))
+
+
+class ResultsStripTests(BookBuilder, unittest.TestCase):
+    def strip(self, fixtures):
+        built = self.build(fixtures)
+        final = built.pages[-1]
+        self.assertIsInstance(final, yearbook.FinalTablesPage)
+        return dict(final.strips)["Premier League"]
+
+    def test_a_finished_league_gets_its_figures_taken_from_the_final_table_and_the_results(self):
+        lines = self.strip(self.FINISHED)
+        self.assertIn("Most wins: Hull City (3)", lines)
+        self.assertIn("Best goal difference: Hull City (+5)", lines)
+        self.assertIn("Fewest goals against: Hull City (1)", lines)
+        self.assertIn("Most draws: Sheffield United (2)", lines)
+        self.assertIn("Longest winning run: Hull City (3)", lines)
+        self.assertIn("Longest unbeaten run: Hull City (3)", lines)
+
+    def test_clubs_that_share_a_record_are_all_named(self):
+        lines = self.strip([fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 8), 3, 4, 1, 0, md=1),
+                            fx(D(2026, 8, 15), 1, 3, 0, 0, md=2), fx(D(2026, 8, 15), 2, 4, 0, 0, md=2)])
+        self.assertIn("Most wins: Hull City and Sheffield United (1)", lines)
+
+    def test_a_season_not_finished_has_no_strip(self):
+        built = self.build(self.FINISHED[:-1] + [fx(D(2026, 8, 22), 2, 3, md=3)])
+        self.assertFalse([p for p in built.pages if isinstance(p, yearbook.FinalTablesPage)])
+
+    def test_a_match_with_no_score_ends_a_run_and_the_strip_says_so(self):
+        fixtures = [dataclasses.replace(f, home_goals=None, away_goals=None) if f.round_index == 1 and f.home_club_uid == 1
+                    else f for f in self.FINISHED]
+        lines = self.strip(fixtures)
+        self.assertIn("Longest winning run: Derby County and Hull City (1)", lines)
+        self.assertEqual(lines[-1], "A match with no score is not part of a run.")
+
+    def test_the_strip_never_names_a_player_or_an_award(self):
+        text = " ".join(self.strip(self.FINISHED)).lower()
+        for word in ("player", "manager", "award", "signing"):
+            self.assertNotIn(word, text)
+
+    def test_ordinals_read_naturally(self):
+        self.assertEqual([yearbook.ordinal(n) for n in (1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 24)],
+                         ["1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "23rd", "24th"])

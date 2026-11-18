@@ -116,6 +116,40 @@ class FinalTablesPage:
     tables: tuple[tuple[str, tuple[TableLine, ...]], ...]
     when: dt.date = dt.date.max
     splits: tuple[tuple[str, tuple[TableLine, ...], tuple[TableLine, ...], tuple[TableLine, ...]], ...] = ()
+    strips: tuple[tuple[str, tuple[str, ...]], ...] = ()      # (competition, the "From the results" lines)
+
+
+@dataclass(frozen=True, slots=True)
+class PlacesRow:
+    """One club's place after each matchweek (None where it had not yet played), and its latest place."""
+
+    team: str
+    places: tuple[int | None, ...]
+    zone: str = ""                 # the zone of the latest place
+    marked: bool = False
+    now: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class PlacesPage:
+    """How they stood: for one league, every club's place after every matchweek, in the order of the latest table.
+    Built from the weekly tables already in the book, never from a second sort."""
+
+    competition: str
+    matchweeks: tuple[int, ...]
+    rows: tuple[PlacesRow, ...]
+    when: dt.date = dt.date.max
+
+
+@dataclass(frozen=True, slots=True)
+class Move:
+    """A club's climb or drop between two matchweeks."""
+
+    team: str
+    from_place: int
+    from_week: int
+    to_place: int
+    to_week: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,6 +241,89 @@ def _table(rows, rules: fd.ZoneRules | None = None, previous: Mapping[int, tuple
                            _ppg(r, unscored.get(r.team_id, 0)) if unscored is not None else "",
                            marked is not None and r.team_id == marked)
                  for r in rows)
+
+
+def ordinal(n: int) -> str:
+    return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
+
+
+def places_page(name: str, pages: Sequence[LeaguePage]) -> PlacesPage | None:
+    """The places grid of one league from its weekly pages: None unless it has tables for two matchweeks or more.
+    A club that had played nothing at a table is blank there."""
+    weeks = sorted((p for p in pages if p.table and not p.rescheduled), key=lambda p: p.matchweek)
+    if len(weeks) < 2:
+        return None
+    by_week = [{t.team: t.pos for t in p.table if t.played} for p in weeks]
+    rows = tuple(PlacesRow(t.team, tuple(w.get(t.team) for w in by_week), t.zone, t.marked, t.pos)
+                 for t in weeks[-1].table)
+    return PlacesPage(name, tuple(p.matchweek for p in weeks), rows)
+
+
+def biggest_moves(page: PlacesPage) -> tuple[Move | None, Move | None, int]:
+    """(biggest rise, biggest fall, clubs left out) over the weeks. A rise is a climb from a lower place in one
+    matchweek to a higher one in a later matchweek, a fall the reverse; the largest wins, then the shorter span,
+    then the name. A club with a blank week is left out, and counted."""
+    rise = fall = None
+    left_out = 0
+    for row in page.rows:
+        if any(p is None for p in row.places):
+            left_out += 1
+            continue
+        for i, a in enumerate(row.places):
+            for j in range(i + 1, len(row.places)):
+                b = row.places[j]
+                for kind, gain in (("rise", a - b), ("fall", b - a)):
+                    if gain <= 0:
+                        continue
+                    move = Move(row.team, a, page.matchweeks[i], b, page.matchweeks[j])
+                    best = rise if kind == "rise" else fall
+                    key = (-gain, j - i, row.team)
+                    if best is None or key < best[0]:
+                        if kind == "rise":
+                            rise = (key, move)
+                        else:
+                            fall = (key, move)
+    return (rise[1] if rise else None, fall[1] if fall else None, left_out)
+
+
+def _names(teams: Sequence[str]) -> str:
+    teams = sorted(teams)
+    return teams[0] if len(teams) == 1 else ", ".join(teams[:-1]) + " and " + teams[-1]
+
+
+def results_strip(overall: Sequence[TableLine], league: Sequence, rows: Sequence, labels: Mapping[int, str],
+                  places: PlacesPage | None) -> tuple[str, ...]:
+    """The "From the results" lines for a league whose every match is played: figures taken from the final table,
+    the places grid and the scored results only. No player, manager or award: the save holds none."""
+    lines: list[str] = []
+
+    def leaders(title: str, values: Mapping[str, int], best, fmt="{}") -> None:
+        if not values:
+            return
+        top = best(values.values())
+        if top == 0 and best is max and title != "Best goal difference":
+            return
+        lines.append(f"{title}: {_names([t for t, v in values.items() if v == top])} ({fmt.format(top)})")
+
+    leaders("Most wins", {t.team: t.won for t in overall}, max)
+    leaders("Best goal difference", {t.team: t.goal_difference for t in overall}, max, "{:+d}")
+    leaders("Fewest goals against", {t.team: t.goals_against for t in overall}, min)
+    leaders("Most draws", {t.team: t.drawn for t in overall}, max)
+    left_out = 0
+    if places is not None:
+        rise, fall, left_out = biggest_moves(places)
+        for title, move in (("Biggest rise", rise), ("Biggest fall", fall)):
+            if move:
+                lines.append(f"{title}: {move.team}, from {ordinal(move.from_place)} after matchweek {move.from_week} "
+                             f"to {ordinal(move.to_place)} after matchweek {move.to_week}")
+    runs = {r.team: fd.streaks(fd.team_steps(league, r.team_id, labels)) for r in rows}
+    leaders("Longest winning run", {t: s.longest[fd.STREAK_WINNING].length for t, s in runs.items()}, max)
+    leaders("Longest unbeaten run", {t: s.longest[fd.STREAK_UNBEATEN].length for t, s in runs.items()}, max)
+    if left_out:
+        lines.append("Clubs that had not played in every matchweek are left out of the rise and the fall.")
+    if any(f.played and not fd.has_score(f) for f in league):
+        lines.append("A match with no score is not part of a run.")
+    return tuple(lines)
 
 
 def _unscored(fixtures: Sequence, through: dt.date) -> dict[int, int]:
@@ -500,6 +617,8 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
     included: list[str] = []
     finals: list[tuple[str, tuple[TableLine, ...]]] = []
     splits: list[tuple] = []
+    strips: list[tuple[str, tuple[str, ...]]] = []
+    grids: list[PlacesPage] = []
     unplayed = False
     for comp in sorted(competitions, key=lambda c: c.key):
         name = names.get(comp.database_id)
@@ -524,6 +643,9 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
         included.append(name)
         unplayed = unplayed or any(not f.played for f in league + cup)
         pages += built
+        grid = None if comp.continental or not league else places_page(name, [p for p in built if isinstance(p, LeaguePage)])
+        if grid:
+            grids.append(grid)
         if league and all(f.played for f in league):
             last = max(f.date for f in league if f.date)
             rows = fd.standings_as_of(league, labels, through=last, tie_breaks=comp.tie_breaks)
@@ -532,9 +654,10 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
             splits.append((name, overall,
                            _split_lines(overall, fd.calculate_standings(league, labels, home_only=True), rows),
                            _split_lines(overall, fd.calculate_standings(league, labels, away_only=True), rows)))
+            strips.append((name, results_strip(overall, league, rows, labels, grid)))
     pages.sort(key=lambda p: _page_key(p, order))
     label = fd.season_label(season, [f for fixtures in dataset.fixtures.values() for f in fixtures])
     coverage = dataclasses.replace(coverage, in_progress=unplayed)         # judged on the competitions in the book
     head = [TitlePage(label, _title_lines(coverage, included, home))]
-    tail = [FinalTablesPage(tuple(finals), splits=tuple(splits))] if finals else []
+    tail = grids + ([FinalTablesPage(tuple(finals), splits=tuple(splits), strips=tuple(strips))] if finals else [])
     return Yearbook(label, coverage, tuple(head + pages + tail))

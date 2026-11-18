@@ -7,6 +7,7 @@ never leaves a half-written book and never disturbs an earlier one.
 
 from __future__ import annotations
 
+import math
 import os
 import sys
 from collections.abc import Sequence
@@ -15,12 +16,13 @@ from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import (BaseDocTemplate, Frame, KeepTogether, NextPageTemplate, PageBreak, PageTemplate,
+                                Paragraph, Spacer, Table, TableStyle)
 
 import yearbook as yb
 
@@ -159,6 +161,68 @@ def _record(lines, styles) -> Table:
     return table
 
 
+# The places grid ("How they stood") is drawn on a landscape page at PLACES_FONT; a row that will not fit is split
+# into equal halves (thirds, ...) of the weeks, never into a smaller type and never by dropping a week or a club.
+PLACES_FONT = 7
+PLACES_NAME, PLACES_NOW = 36 * mm, 10 * mm
+PLACES_CELL = 12.0                                   # the least a two-digit place needs at PLACES_FONT, in points
+LANDSCAPE_FRAME_WIDTH = A4[1] - 36 * mm - 12         # the landscape text area, less the frame's own padding
+FRAME_TOP, FRAME_SIDE, FRAME_BOTTOM = 16 * mm, 18 * mm, 18 * mm
+
+
+def places_chunks(weeks: int, width: float = LANDSCAPE_FRAME_WIDTH) -> list[tuple[int, int]]:
+    """The (start, end) week ranges of a places grid: the whole season when every week fits at PLACES_FONT, else
+    the fewest equal parts that each fit."""
+    capacity = max(1, int((width - PLACES_NAME - PLACES_NOW) // PLACES_CELL))
+    parts = math.ceil(weeks / capacity)
+    size = math.ceil(weeks / parts)
+    return [(a, min(a + size, weeks)) for a in range(0, weeks, size)]
+
+
+def _places_tables(page, styles) -> list[Table]:
+    """One table for each chunk of weeks: the club, its place after each matchweek (blank before it played), and
+    its latest place shaded by zone."""
+    small = ParagraphStyle("places", parent=styles["cell"], fontSize=PLACES_FONT, leading=PLACES_FONT + 1.5)
+    tables = []
+    for first, last in places_chunks(len(page.matchweeks)):
+        weeks = page.matchweeks[first:last]
+        cell = min((LANDSCAPE_FRAME_WIDTH - PLACES_NAME - PLACES_NOW) / len(weeks), 7 * mm)
+        rows = [[""] + [str(w) for w in weeks] + ["Now"]]
+        for r in page.rows:
+            rows.append([Paragraph(f"<b>{escape(r.team)}</b>" if r.marked else escape(r.team), small)] +
+                        ["" if p is None else str(p) for p in r.places[first:last]] + [str(r.now)])
+        table = Table(rows, colWidths=[PLACES_NAME] + [cell] * len(weeks) + [PLACES_NOW], hAlign="CENTER", repeatRows=1)
+        now = len(weeks) + 1
+        zones = [("BACKGROUND", (now, i), (now, i), colors.HexColor(ZONE_TINT[r.zone]))
+                 for i, r in enumerate(page.rows, start=1) if r.zone in ZONE_TINT]
+        marked = [("LINEBELOW", (0, i), (-1, i), 0.6, colors.HexColor(INK)) for i, r in enumerate(page.rows, start=1)
+                  if r.marked]
+        table.setStyle(TableStyle(zones + [
+            ("FONTNAME", (0, 0), (-1, 0), BOLD), ("FONTNAME", (0, 1), (-1, -1), FONT),
+            ("FONTSIZE", (0, 0), (-1, -1), PLACES_FONT), ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eeeeee")),
+            ("FONTNAME", (now, 1), (now, -1), BOLD), ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.6, colors.HexColor(INK)),
+            ("LINEBELOW", (0, 1), (-1, -1), 0.25, colors.HexColor("#dddddd")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 1.3), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.3),
+            ("LEFTPADDING", (1, 0), (-1, -1), 1), ("RIGHTPADDING", (1, 0), (-1, -1), 1),
+        ] + marked))
+        tables.append(table)
+    return tables
+
+
+def _places_parts(page, styles) -> list[list]:
+    """The parts of each landscape page of a places grid: heading, table and a note."""
+    legend = " · ".join(name for zone, name in yb.ZONE_NAMES.items() if any(r.zone == zone for r in page.rows))
+    note = ("Place after each matchweek, calculated from the results; a blank means the club had not yet played. "
+            "Now is the latest place." + (f" Shaded: {legend}." if legend else ""))
+    parts = []
+    for (first, last), table in zip(places_chunks(len(page.matchweeks)), _places_tables(page, styles)):
+        weeks = page.matchweeks[first:last]
+        parts.append([Paragraph(f"{escape(page.competition)} · How they stood, matchweeks {weeks[0]}–{weeks[-1]}",
+                                styles["heading"]), table, Spacer(1, 3 * mm), Paragraph(escape(note), styles["small"])])
+    return parts
+
+
 MOVE_WITHIN_DAYS = 3        # only a block this close before a matchweek may follow it
 FRAME_WIDTH, FRAME_HEIGHT = A4[0] - 36 * mm, A4[1] - 34 * mm      # the text area of a page
 
@@ -222,6 +286,13 @@ def _flow(book: yb.Yearbook) -> list:
         if flow and not isinstance(flow[-1], PageBreak):
             flow.append(PageBreak())
 
+    def switch_to(template: str) -> None:
+        """Start a new page in the named page template (portrait or landscape)."""
+        if flow and isinstance(flow[-1], PageBreak):
+            flow.insert(len(flow) - 1, NextPageTemplate(template))
+        else:
+            flow.extend([NextPageTemplate(template), PageBreak()])
+
     for page in order_for_pages(book.pages):
         if isinstance(page, yb.TitlePage):
             flow += [Spacer(1, 60 * mm), Paragraph(f"Football Yearbook {escape(page.season_label)}", styles["title"]),
@@ -231,13 +302,23 @@ def _flow(book: yb.Yearbook) -> list:
             flow.append(KeepTogether(_matchweek_parts(page, styles)))
         elif isinstance(page, (yb.LeaguePage, yb.CupBlock)):      # a cup day, or a postponed match played late
             flow.append(KeepTogether(_block_parts(page, styles)))
+        elif isinstance(page, yb.PlacesPage):
+            switch_to("landscape")
+            for number, parts in enumerate(_places_parts(page, styles)):
+                if number:
+                    flow.append(PageBreak())
+                flow.append(KeepTogether(parts))
+            switch_to("portrait")
         elif isinstance(page, yb.FinalTablesPage):
             new_page()
             splits = {entry[0]: entry for entry in page.splits}
+            strips = dict(page.strips)
             for name, lines in page.tables:
+                strip = ([Paragraph(f"{escape(name)} · from the results", styles["heading"])] +
+                         [Paragraph(escape(text), styles["cell"]) for text in strips[name]]) if strips.get(name) else []
                 flow += [KeepTogether([Paragraph(f"{escape(name)} · final table", styles["heading"]),
                                        _standings(lines, styles), Paragraph(table_note(lines), styles["small"]),
-                                       Spacer(1, 8 * mm)])]
+                                       *strip, Spacer(1, 8 * mm)])]
                 if name in splits:
                     _, _, home, away = splits[name]
                     for kind, record in (("home", home), ("away", away)):
@@ -245,6 +326,8 @@ def _flow(book: yb.Yearbook) -> list:
                                                _record(record, styles), Spacer(1, 4 * mm)])]
                     flow += [Paragraph("Home and away records are calculated from the results, in the order of "
                                        "the overall table.", styles["small"]), Spacer(1, 8 * mm)]
+    while flow and isinstance(flow[-1], PageBreak):          # a page break at the very end would print a blank page
+        flow.pop()
     return flow
 
 
@@ -255,18 +338,28 @@ def render(book: yb.Yearbook, path: Path) -> None:
     path = Path(path)
     scrap = path.with_name(path.name + ".part")
     try:
-        doc = SimpleDocTemplate(str(scrap), pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm, topMargin=16 * mm,
-                                bottomMargin=18 * mm, title=f"Football Yearbook {book.season_label}", author="Box2Box")
+        doc = BaseDocTemplate(str(scrap), pagesize=A4, title=f"Football Yearbook {book.season_label}",
+                              author="Box2Box")
 
         def footer(canvas, _doc) -> None:
+            if canvas.getPageNumber() == 1:                      # the title page carries none
+                return
+            width = canvas._pagesize[0]
             canvas.saveState()
             canvas.setFont(FONT, 7.5)
             canvas.setFillColor(colors.HexColor(MUTED))
-            canvas.drawString(18 * mm, 10 * mm, f"Box2Box · Football Yearbook {book.season_label}")
-            canvas.drawRightString(A4[0] - 18 * mm, 10 * mm, f"Page {canvas.getPageNumber()}")
+            canvas.drawString(FRAME_SIDE, 10 * mm, f"Box2Box · Football Yearbook {book.season_label}")
+            canvas.drawRightString(width - FRAME_SIDE, 10 * mm, f"Page {canvas.getPageNumber()}")
             canvas.restoreState()
 
-        doc.build(_flow(book), onFirstPage=lambda c, d: None, onLaterPages=footer)
+        wide, high = A4
+        doc.addPageTemplates([
+            PageTemplate("portrait", [Frame(FRAME_SIDE, FRAME_BOTTOM, wide - 2 * FRAME_SIDE,
+                                            high - FRAME_TOP - FRAME_BOTTOM, id="portrait")], onPage=footer, pagesize=A4),
+            PageTemplate("landscape", [Frame(FRAME_SIDE, FRAME_BOTTOM, high - 2 * FRAME_SIDE,
+                                             wide - FRAME_TOP - FRAME_BOTTOM, id="landscape")], onPage=footer,
+                         pagesize=landscape(A4))])
+        doc.build(_flow(book))
         os.replace(scrap, path)
     except BaseException:
         scrap.unlink(missing_ok=True)
