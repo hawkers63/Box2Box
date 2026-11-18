@@ -1,8 +1,8 @@
 # Changelog
 
-**Release:** 2.2  
+**Release:** 2.3  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 2.2), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.3), launched with `Box2Box.bat`
 
 All notable changes to this project will be documented in this file.
 
@@ -10,6 +10,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [2.3] - 2026-11-18
+
+Makes the Yearbook's tables show how the season moved.
+
+### Added
+
+- **A "±" column on every weekly league table:** places gained or lost since the previous printed table of the same competition (`▲2`, `▼1`, `•` for no change), in the book's win, loss and muted inks. A club that had not yet played reads `–`, and so does every club on a competition's first table. A cup night does not reset it.
+- **PPG on every weekly and final league table:** points per scored match to two decimals. A played match with no recoverable score is left out, never counted as a draw, and the figure carries a `*` with a note under the table.
+- **Home and away records after each finished league's final table**, for the same clubs in the overall order and with the overall place and shading, calculated from the results.
+- **Mark a club:** *Export ▾ → Yearbook (PDF)* offers "Mark {club} in bold" while a club is followed. It is off each time the app starts. The marked club's name is bold with a rule under its row; there is no fill.
+
+### Changed
+
+- Weekly tables with the new columns use a slightly narrower club-name column (50 mm); no real club name wraps. A table without them (a European league phase) is unchanged.
+
+### Fixed
+
+- The command-palette test that chooses a view by typing and Enter failed once on a busy machine: it now waits until the search box holds focus before sending the key.
 
 ## [2.2] - 2026-11-18
 
