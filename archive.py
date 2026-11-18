@@ -13,8 +13,10 @@ import json
 import sqlite3
 from collections import defaultdict
 from collections.abc import Callable, Sequence
+import dataclasses
 from dataclasses import dataclass, replace
 from pathlib import Path
+from types import SimpleNamespace as NS
 from typing import NamedTuple
 
 SCHEMA_VERSION = 1
@@ -198,6 +200,20 @@ def infer_nation(club_uids: set[int], club_nations: dict[int, int]) -> tuple[int
     return None, True
 
 
+GAP_DAYS = 14          # more than this many days between banked saves inside a season is a gap in the record
+
+
+@dataclass(frozen=True, slots=True)
+class BookCoverage:
+    """How well the archive covers one season: which saves, their in-game span and the gaps between them."""
+
+    saves: int
+    first_date: dt.date | None
+    last_date: dt.date | None
+    gaps: tuple[tuple[dt.date, dt.date], ...]
+    in_progress: bool
+
+
 _COLUMNS = ("competition_key", "season", "home_uid", "away_uid", "meeting", "date", "kick_off", "home_goals",
             "away_goals", "played", "round_index", "round_label", "round_raw", "home_name", "away_name", "source_date")
 
@@ -258,6 +274,7 @@ class Archive:
                 skipped += 1
                 continue
             label = getattr(getattr(f, "round", None), "label", None)
+            label = getattr(label, "name", label)             # an enum member is stored by its name
             raw = getattr(getattr(f, "round", None), "raw", None)
             records.append(ArchivedFixture(
                 key=key, date=f.date, kick_off=f.kick_off_time, home_goals=f.home_goals, away_goals=f.away_goals,
@@ -325,6 +342,56 @@ class Archive:
                 "WHERE id = ?", (counts["added"], counts["updated"], counts["unchanged"], counts["conflict"], skipped,
                                  import_id))
         return BankReport(counts["added"], counts["updated"], counts["unchanged"], counts["conflict"], skipped, False)
+
+    def seasons(self) -> list[int]:
+        """Every season with a fixture in the archive, newest first."""
+        return [r[0] for r in self._db.execute("SELECT DISTINCT season FROM fixtures ORDER BY season DESC")]
+
+    def coverage(self, season: int) -> BookCoverage:
+        """The banked saves that fall inside a season's span of play, and the gaps between them."""
+        span = self._db.execute("SELECT MIN(date), MAX(date), MAX(1 - played) FROM fixtures WHERE season = ?",
+                                (season,)).fetchone()
+        if span[0] is None:
+            return BookCoverage(0, None, None, (), False)
+        dates = sorted({r[0] for r in self._db.execute(
+            "SELECT game_date FROM imports WHERE game_date BETWEEN ? AND ?", (span[0], span[1]))})
+        days = [dt.date.fromisoformat(d) for d in dates]
+        gaps = tuple((a, b) for a, b in zip(days, days[1:]) if (b - a).days > GAP_DAYS)
+        return BookCoverage(len(days), days[0] if days else None, days[-1] if days else None, gaps, bool(span[2]))
+
+    def dataset(self):
+        """The whole archive as an fm_data.Dataset, so the existing table, cup and label helpers run on it
+        unchanged. A competition's id here is its archive key; a club's team id is its club uid."""
+        import fm_data as fd
+        from fmsave import CodedValue, CompetitionRound, Fixture
+        columns = ", ".join(_COLUMNS)
+        fixtures = []
+        for row in self._db.execute(f"SELECT {columns} FROM fixtures ORDER BY competition_key, season, date"):
+            f = _fixture(row)
+            round_ = None if f.round_label is None and f.round_raw is None else CodedValue(
+                CompetitionRound[f.round_label] if f.round_label else CompetitionRound.UNKNOWN, f.round_raw)
+            key = f.key
+            fixtures.append(Fixture(
+                stage_id=0, competition_id=key[0], competition_name=None, round=round_, round_index=f.round_index,
+                date=f.date, kick_off_time=f.kick_off, season_start_year=key[1],
+                home_team_id=key[2], home_club_uid=key[2], home_club_name=f.home_name, home_club_short_name=f.home_name,
+                home_team_slot=0, away_team_id=key[3], away_club_uid=key[3], away_club_name=f.away_name,
+                away_club_short_name=f.away_name, away_team_slot=0, home_goals=f.home_goals, away_goals=f.away_goals,
+                played=f.played, is_neutral_venue=False, stadium_uid=None, stadium_name=None, referee_id=None,
+                match_rules_template=(), unknown={}))
+        known = self.competitions()
+        clubs = [NS(uid=r[0], reputation=None, teams=(), nation_id=r[1])
+                 for r in self._db.execute("SELECT uid, nation_id FROM clubs")]
+        imports = self.imports()
+        last = imports[-1] if imports else None
+        info = fd.ImportInfo(
+            path=str(self.path), file_name=self.path.name, game="Archive", build="archive", known_build=True,
+            game_date=last.game_date if last else None, fmsave_version="", imported_at=dt.datetime.now(),
+            seconds=0.0, warnings=(), managed_club_uid=None, managed_club_name=None)
+        dataset = fd.build_dataset(info, fixtures, clubs=clubs,
+                                   competitions=[NS(id=c.key, database_id=c.database_id if c.key >= 0 else None)
+                                                 for c in known])
+        return dataclasses.replace(dataset, tie_breaks={c.key: c.tie_breaks for c in known if c.tie_breaks})
 
     def _bank_competitions(self, dataset, records: Sequence[ArchivedFixture]) -> None:
         """Keep each competition's metadata from the newest save (ties go to the larger value, so the order saves

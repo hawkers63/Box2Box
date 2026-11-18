@@ -19,6 +19,7 @@ from types import SimpleNamespace as NS
 from unittest import mock
 
 import fm_data as fd
+from fmsave import CodedValue, CompetitionRound
 from test_fm_data import D, fx, info, rules_listing, unresolved_away
 
 
@@ -203,6 +204,21 @@ class BankTests(unittest.TestCase):
         self.assertEqual(len(self.rows()), 1)
         self.assertIn("1 skipped", report.describe())
 
+    def test_a_cup_fixtures_round_is_stored_by_name(self):
+        final = CodedValue(CompetitionRound.FINAL, 19)
+        data = bank_dataset([fx(D(2026, 5, 16), 1, 2, 1, 0, rnd=final, md=6)])
+        with archive.Archive.open(self.path) as a:
+            a.bank(data)
+        (row,) = self.rows()
+        self.assertEqual((row[10], row[11], row[12]), (5, "FINAL", 19))
+
+    def test_the_same_pair_in_a_league_and_a_cup_are_kept_apart(self):
+        # Different competitions share a pair of clubs and a season: the key keeps them separate.
+        data = bank_dataset([fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 9), 1, 2, 2, 2, comp=102, md=1)])
+        with archive.Archive.open(self.path) as a:
+            report = a.bank(data)
+        self.assertEqual(report.added, 2)
+
     def test_the_report_reads_in_words(self):
         report = archive.BankReport(added=412, updated=3, unchanged=0, conflicts=0, skipped_unresolved=0,
                                     already_banked=False)
@@ -300,6 +316,71 @@ class CompetitionTests(unittest.TestCase):
                     a.bank(data)
                 (comp,) = a.competitions()
             self.assertEqual(comp.tie_breaks, (0, 1), order[0].info.file_name)
+
+
+class ReadBackTests(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        self.path = Path(self.folder.name) / "archive.sqlite"
+
+    SEASON = [fx(D(2026, 8, 8), 1, 3, 1, 0, md=1), fx(D(2026, 8, 8), 2, 5, 1, 1, md=1),
+              fx(D(2026, 8, 15), 1, 4, 0, 4, md=2), fx(D(2026, 8, 15), 2, 3, 2, 2, md=2),
+              fx(D(2026, 8, 22), 2, 4, 0, 0, md=3), fx(D(2026, 10, 15), 1, 2, md=4)]
+
+    def banked(self, **bank):
+        original = bank_dataset(self.SEASON, rules=[rules_listing(2, 0, 1)], **bank)
+        with archive.Archive.open(self.path) as a:
+            a.bank(original)
+            return original, a.dataset(), a
+
+    def test_the_archive_gives_back_a_dataset_the_existing_helpers_can_use(self):
+        original, back, _ = self.banked()
+        key = 12                                                       # the competition's database id
+        before, after = original.fixtures[101], back.fixtures[key]
+        self.assertEqual(len(before), len(after))
+        self.assertEqual([(f.date, f.home_goals, f.away_goals, f.played) for f in before],
+                         [(f.date, f.home_goals, f.away_goals, f.played) for f in after])
+        labels = fd.team_labels(after)
+        self.assertEqual(labels[1], "Hull City")
+        table = lambda ds, comp, fixtures: [
+            (r.team, r.points, r.played, r.goals_for) for r in
+            fd.standings(ds, comp, 2026, fixtures, fd.team_labels(fixtures)).groups[0][1]]
+        self.assertEqual(table(original, 101, before), table(back, key, after))
+        self.assertEqual(back.tie_breaks[key], (2, 0, 1))
+        self.assertEqual(back.club_nations[1], 5)
+
+    def test_a_cup_round_comes_back_as_the_same_round(self):
+        final = CodedValue(CompetitionRound.FINAL, 19)
+        with archive.Archive.open(self.path) as a:
+            a.bank(bank_dataset([fx(D(2026, 5, 16), 1, 2, 1, 0, rnd=final, md=6)]))
+            (back,) = a.dataset().fixtures[12]
+        self.assertEqual(back.round, final)
+        self.assertEqual(fd.round_text(back), "Final")
+
+    def test_seasons_are_listed_newest_first(self):
+        with archive.Archive.open(self.path) as a:
+            a.bank(bank_dataset([fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2027, 8, 8), 1, 2, 2, 0, season=2027, md=1)]))
+            self.assertEqual(a.seasons(), [2027, 2026])
+
+    def test_coverage_names_the_saves_the_span_and_a_gap_between_them(self):
+        early = bank_dataset(self.SEASON, file="early.fm", game=D(2026, 9, 1))
+        late = bank_dataset(self.SEASON, file="late.fm", game=D(2026, 10, 1))
+        with archive.Archive.open(self.path) as a:
+            a.bank(early)
+            a.bank(late)
+            cover = a.coverage(2026)
+        self.assertEqual((cover.saves, cover.first_date, cover.last_date), (2, D(2026, 9, 1), D(2026, 10, 1)))
+        self.assertEqual(cover.gaps, ((D(2026, 9, 1), D(2026, 10, 1)),))       # 30 days with no save banked
+        self.assertTrue(cover.in_progress)                                    # the 15 October match is unplayed
+
+    def test_a_finished_season_with_closely_spaced_saves_has_no_gap_and_is_not_in_progress(self):
+        done = [fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 15), 2, 1, 0, 0, md=2)]
+        with archive.Archive.open(self.path) as a:
+            a.bank(bank_dataset(done, file="a.fm", game=D(2026, 8, 9)))
+            a.bank(bank_dataset(done, file="b.fm", game=D(2026, 8, 16)))
+            cover = a.coverage(2026)
+        self.assertEqual((cover.gaps, cover.in_progress), ((), False))
 
 
 if __name__ == "__main__":
