@@ -8,7 +8,7 @@
 
 A Windows desktop viewer for the fixtures, results, grids and league tables in a Football Manager 27 (or 26) save. Saves are read with [fmsave](https://rhiever.github.io/fmsave/) and are never modified.
 
-[![Release 2.0](https://img.shields.io/badge/Release-2.0-0EA5E9)](https://github.com/hawkers63/Box2Box/releases/latest)
+[![Release 2.1](https://img.shields.io/badge/Release-2.1-0EA5E9)](https://github.com/hawkers63/Box2Box/releases/latest)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)](https://www.microsoft.com/windows)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![GUI](https://img.shields.io/badge/GUI-CustomTkinter%20%2B%20tksheet-10B981)](https://customtkinter.tomschimansky.com/)
@@ -16,13 +16,13 @@ A Windows desktop viewer for the fixtures, results, grids and league tables in a
 [![Tests](https://img.shields.io/badge/Tests-418%20passing-success)](#-tests)
 [![Licence](https://img.shields.io/badge/Licence-Proprietary%20%2F%20All%20Rights%20Reserved-red)](LICENSE)
 
-[![Get the latest release](https://img.shields.io/badge/Get-Box2Box%202.0-0EA5E9?style=for-the-badge&logo=github&logoColor=white)](https://github.com/hawkers63/Box2Box/releases/latest)
+[![Get the latest release](https://img.shields.io/badge/Get-Box2Box%202.1-0EA5E9?style=for-the-badge&logo=github&logoColor=white)](https://github.com/hawkers63/Box2Box/releases/latest)
 
 **Database viewer** · entry point `fm_review.py` · launcher `Box2Box.bat`
 
-**Release:** 2.0  
+**Release:** 2.1  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 2.0), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.1), launched with `Box2Box.bat`
 
 </div>
 
@@ -330,11 +330,12 @@ A save keeps the current season's results but lets the past thin out, early cup 
 
 - A title page that says which saves it was built from and flags any stretch with no save banked.
 - League matchweeks with their dates and results, and the table as it stood after each one, with the last six results. A match postponed and played late prints on the day it was played, marked "Matchweek N, rescheduled", and the table leaves it out until then.
-- Cup rounds and European nights in the same shape, in date order. The aggregate goes on the second leg; a level tie names the club that went through only when a later round shows it.
+- Cup rounds and European nights in the same shape, in date order. The aggregate goes on the second leg; a side that went through a level tie is marked `*` after its name, with a footnote, when a later round shows it. A European league phase reads "Matchday N" and gets a table after each matchday, cut to the top 16.
+- League tables with promotion, play-off and relegation places (and estimated European places for a 20-club top division) shaded from the last 11 matches of the season, and always in the final table.
 - The final table of each league once all its matches are played.
 - One light, ink-friendly style: no badges, no club colours.
 
-Only competitions you have named (*Name this competition…*) appear, and when one of them is named "Premier League" only that league's country and the continental competitions are included. The save stores no extra time or penalties, so the book never prints them.
+Only competitions you have named (*Name this competition…*) appear, and when one of them is named "Premier League" only that league's country and the continental competitions are included. Clubs with long names use the game's short name. The save stores no extra time or penalties, so the book never prints them: the `*` footnote says only that the tie was level and the side still went through.
 
 ---
 
@@ -465,6 +466,7 @@ The tests write only to temporary directories and do not need a real Football Ma
 
 | Release | Date | Highlights |
 | --- | --- | --- |
+| [**2.1**](https://github.com/hawkers63/Box2Box/releases/tag/v2.1) | 18&nbsp;Nov&nbsp;2026 | 📖 Yearbook refinements: level ties marked with an asterisk, Matchday tables for European league phases, table zones and short club names |
 | [**2.0**](https://github.com/hawkers63/Box2Box/releases/tag/v2.0) | 18&nbsp;Nov&nbsp;2026 | 📖 A local archive of every save you open, and the Yearbook: a printable PDF of a whole season |
 | [**1.8**](https://github.com/hawkers63/Box2Box/releases/tag/v1.8) | 18&nbsp;Nov&nbsp;2026 | ✨ Show only and copy results from the right-click menu, a place spark and bevel on the form pills, and a quieter UV build chip |
 | [**1.7**](https://github.com/hawkers63/Box2Box/releases/tag/v1.7) | 18&nbsp;Nov&nbsp;2026 | 🖥️ A standalone Windows build, head-to-head from the right-click menu, and a refreshed front page on GitHub |
