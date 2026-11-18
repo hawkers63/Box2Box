@@ -1176,6 +1176,40 @@ class WindowTests(unittest.TestCase):
         row = next(i for i, t in enumerate(app.table_rows) if t is not None)
         self.assertFalse([e.label for e in app._row_menu("Table", row, 0) if e.label.startswith("Show only")])
 
+    def test_a_row_offers_to_copy_each_clubs_results_for_a_post(self):
+        app = self.menu_app(focus=None)
+        row = self.match_row(app)
+        r = app.result_rows[row]
+        labels = [e.label for e in app._row_menu("Results", row, 2)]
+        self.assertIn(f"Copy {r.home}'s results", labels)
+        self.assertIn(f"Copy {r.away}'s results", labels)
+
+    def test_copying_a_clubs_results_from_a_row_copies_that_club_not_the_followed_one(self):
+        app = self.menu_app(focus=team(1))
+        app.names = {12: "Championship"}
+        app.set_view("Table")
+        app.update()
+        row = next(i for i, t in enumerate(app.table_rows) if t not in (None, team(1)))
+        label = app.labels[app.table_rows[row]]
+        entry = next(e for e in app._row_menu("Table", row, 0) if e.label == f"Copy {label}'s results")
+        with mock.patch.object(fm_review.clipboard, "copy", return_value=True) as copy:
+            entry.command()
+        self.assertTrue(copy.call_args.args[0].startswith(f"**{label}: "))
+        self.assertEqual(app.detail_label.cget("text"), f"Copied {label}'s results for a post, as Markdown and as HTML.")
+        self.assertEqual(app.focus, team(1))                        # copying never changes who is followed
+
+    def test_a_club_with_no_played_match_has_a_greyed_copy_results_item(self):
+        app = self.app
+        self.widen()
+        app.install_dataset(dataset(extra=[fx(D(2026, 9, 30), 5, 1, comp=101, md=9)]))   # team 5: nothing played yet
+        app.set_focus(None)
+        app.set_view("Results")
+        app.update()
+        row = next(i for i, r in enumerate(app.result_rows) if r.fixture is not None and team(5) in (r.home_id, r.away_id))
+        entries = {e.label: e for e in app._row_menu("Results", row, 2) if e.label.endswith("'s results")}
+        self.assertIsNone(entries[f"Copy {app.labels[team(5)]}'s results"].command)
+        self.assertIsNotNone(entries[f"Copy {app.labels[team(1)]}'s results"].command)
+
     def test_after_head_to_head_the_next_sheet_selection_replaces_the_pair_in_the_drawer(self):
         app, drawer = self.inspector_app()
         app.install_dataset(dataset(extra=[fx(D(2026, 9, 12), 4, 1, comp=101, md=4)]))

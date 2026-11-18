@@ -1503,23 +1503,31 @@ class FMReviewApp(_Root):
         if not self.dataset or self.comp_id is None:
             return False
         if kind == "team":
-            return self.focus is not None and any(
-                f.played and self.focus in (f.home_team_id, f.away_team_id) for f in self.fixtures)
+            return self._has_played(self.focus)
         if kind == "recent":
             return any(f.played for f in self.fixtures)
         return len(self.labels) <= fx.POST_ROW_LIMIT
+
+    def _has_played(self, team_id: int | None) -> bool:
+        """Whether this club has a played match in the competition and season on show."""
+        return team_id is not None and any(
+            f.played and team_id in (f.home_team_id, f.away_team_id) for f in self.fixtures)
 
     def _refresh_post_menu(self) -> None:
         for index, kind in enumerate(("table", "team", "recent")):
             self.post_menu.entryconfigure(index, state="normal" if self._post_applies(kind) else "disabled")
 
-    def copy_for_post(self, kind: str) -> None:
-        """Copy the competition and season as shown for a forum post: Markdown and HTML on one copy."""
+    def copy_for_post(self, kind: str, club: int | None = None) -> None:
+        """Copy the competition and season as shown for a forum post: Markdown and HTML on one copy.
+        `club` stands in for the followed club (a right-click on another club's row) without following it."""
         if not self.dataset or self.comp_id is None:
             return
         what, build = self.POSTS[kind]
+        if club is not None and club in self.labels:
+            what = f"{self.labels[club]}'s results"
         request = fx.ExportRequest(self.dataset, self.comp_id, self.season, names=dict(self.names),
-                                   focus=self.focus, group_by=self.group_by, theme=self.view_theme)
+                                   focus=self.focus if club is None else club, group_by=self.group_by,
+                                   theme=self.view_theme)
         post = build(fx.snapshot(request))
         if post is None:
             self.detail_label.configure(text=f"Nothing to copy: {self._post_missing(kind)}.")
@@ -2662,7 +2670,11 @@ class FMReviewApp(_Root):
             entries.append(MenuEntry(f"Show only {self.labels[self.focus]} v {row_label}",
                                      lambda pair=(self.focus, row_id): self.set_opponent_filter(pair)))
         if clubs:
-            entries += [MENU_SEPARATOR, self._head_to_head_entry(clubs), MENU_SEPARATOR]
+            entries += [MENU_SEPARATOR, self._head_to_head_entry(clubs)]
+            entries += [MenuEntry(f"Copy {label}'s results",
+                                  (lambda t=team_id: self.copy_for_post("team", t)) if self._has_played(team_id) else None)
+                        for team_id, label in clubs]
+            entries.append(MENU_SEPARATOR)
         kinds = ((fx.EXCEL, "Excel workbook (.xlsx)"), (fx.HTML, "Web page (.html)"), (fx.CSV, "CSV files (.csv)"))
         children = () if self._exporting or self.comp_id is None else tuple(
             MenuEntry(label, lambda k=kind: self.export(k)) for kind, label in kinds)
