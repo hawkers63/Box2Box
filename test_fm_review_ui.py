@@ -1072,11 +1072,21 @@ class WindowTests(unittest.TestCase):
         labels = [e.label for e in menu]
         self.assertEqual(labels[:3], [f"Follow {r.home}", f"Follow {r.away}", f"Show only {r.home} v {r.away}"])
         head_to_head = next(e for e in menu if e.label.startswith("Head-to-head"))
-        self.assertIsNone(head_to_head.command)                       # greyed until v2.0
+        self.assertEqual(head_to_head.label, "Head-to-head")
+        self.assertIsNotNone(head_to_head.command)
         export = next(e for e in menu if e.label == "Export")
         self.assertEqual([c.label for c in export.children],
                          ["Excel workbook (.xlsx)", "Web page (.html)", "CSV files (.csv)"])
         self.assertEqual(labels[-1], "Copy")
+
+    def test_head_to_head_from_a_results_row_opens_the_inspector_on_the_pair(self):
+        app = self.menu_app()
+        row = self.match_row(app)
+        r = app.result_rows[row]
+        next(e for e in app._row_menu("Results", row, 2) if e.label.startswith("Head-to-head")).command()
+        self.assertEqual(app._selection, ("pair", (r.home_id, r.away_id)))
+        self.assertTrue(app.inspector.is_open)
+        self.assertEqual(app.inspector.rendered_text()[0], "Head-to-head")
 
     def test_following_from_the_menu_follows_and_the_followed_club_is_not_offered_again(self):
         app = self.menu_app()
@@ -1102,7 +1112,7 @@ class WindowTests(unittest.TestCase):
         self.assertIn("Follow Leeds United", labels)
         self.assertFalse([label for label in labels if "999" in label or label.startswith("Show only")])
 
-    def test_a_table_row_offers_follow_unless_followed_a_greyed_head_to_head_and_export(self):
+    def test_a_table_row_offers_follow_unless_followed_a_head_to_head_with_the_followed_and_export(self):
         app = self.menu_app(focus=team(1))
         app.set_view("Table")
         app.update()
@@ -1111,8 +1121,53 @@ class WindowTests(unittest.TestCase):
         self.assertNotIn("Follow Hull City", [e.label for e in app._row_menu("Table", followed, 0)])
         menu = app._row_menu("Table", other, 0)
         self.assertEqual(menu[0].label, f"Follow {app.labels[app.table_rows[other]]}")
-        self.assertIsNone(next(e for e in menu if e.label.startswith("Head-to-head")).command)
+        head_to_head = next(e for e in menu if e.label.startswith("Head-to-head"))
+        self.assertEqual(head_to_head.label, "Head-to-head with Hull City")
+        self.assertIsNotNone(head_to_head.command)
         self.assertEqual([e.label for e in menu][-2:], ["Export", "Copy"])
+
+    def test_head_to_head_from_a_table_row_opens_the_inspector_on_the_followed_and_the_row_club(self):
+        app = self.menu_app(focus=team(1))
+        app.set_view("Table")
+        app.update()
+        other = next(i for i, t in enumerate(app.table_rows) if t not in (None, team(1)))
+        row_club = app.table_rows[other]
+        next(e for e in app._row_menu("Table", other, 0) if e.label.startswith("Head-to-head")).command()
+        self.assertEqual(app._selection, ("pair", (team(1), row_club)))
+        self.assertTrue(app.inspector.is_open)
+
+    def test_a_table_row_with_no_followed_club_shows_a_greyed_head_to_head_with_a_reason(self):
+        app = self.menu_app(focus=None)
+        app.set_view("Table")
+        app.update()
+        row = next(i for i, t in enumerate(app.table_rows) if t is not None)
+        head_to_head = next(e for e in app._row_menu("Table", row, 0) if e.label.startswith("Head-to-head"))
+        self.assertEqual(head_to_head.label, "Head-to-head (follow another club first)")
+        self.assertIsNone(head_to_head.command)
+
+    def test_after_head_to_head_the_next_sheet_selection_replaces_the_pair_in_the_drawer(self):
+        app, drawer = self.inspector_app()
+        app.install_dataset(dataset(extra=[fx(D(2026, 9, 12), 4, 1, comp=101, md=4)]))
+        app._selection = ("pair", (team(1), team(4)))
+        app.open_inspector()
+        self.assertEqual(drawer.rendered_text()[0], "Head-to-head")
+        self.select_match(1, 2)
+        self.assertEqual(drawer.rendered_text()[0], "Hull City v Leeds United")
+
+    def test_head_to_head_on_a_grid_cell_opens_the_inspector_on_the_home_and_away(self):
+        app = self.menu_app()
+        app.set_view("Grid")
+        app.update()
+        grid = app.grid_data
+        # a cell: a (row, column) pair whose two team ids are both resolvable.
+        row = next(i for i, t in enumerate(grid.team_ids) if t is not None)
+        column = next(j for j, t in enumerate(grid.team_ids) if t is not None and j != row)
+        menu = app._row_menu("Grid", row, column)
+        head_to_head = next(e for e in menu if e.label.startswith("Head-to-head"))
+        self.assertEqual(head_to_head.label, "Head-to-head")
+        head_to_head.command()
+        self.assertEqual(app._selection, ("pair", (grid.team_ids[row], grid.team_ids[column])))
+        self.assertTrue(app.inspector.is_open)
 
     def test_export_is_greyed_while_an_export_is_running(self):
         app = self.menu_app()
@@ -1450,6 +1505,44 @@ class WindowTests(unittest.TestCase):
         app.open_inspector()
         app.update()
         self.assertIs(app.focus_get(), sheet.MT)
+
+    # ----------------------------------------------------------------- v1.7 step 1: head-to-head in the drawer
+
+    def test_a_pair_selection_shows_a_head_to_head_model_titled_from_the_two_clubs(self):
+        app, drawer = self.inspector_app()
+        app.install_dataset(dataset(extra=[fx(D(2026, 9, 12), 4, 1, comp=101, md=4)]))
+        app._selection = ("pair", (team(1), team(4)))
+        model = app._inspector_model()
+        self.assertEqual(model.title, "Head-to-head")
+        self.assertEqual(model.subtitle, "Hull City v Derby County")
+        headings = [b for b in model.blocks if isinstance(b, inspector.Heading)]
+        self.assertEqual(headings[0].text, "Meetings (2)")
+
+    def test_the_head_to_head_model_groups_meetings_by_competition_and_season_and_marks_none(self):
+        app, drawer = self.inspector_app()
+        app.install_dataset(dataset(extra=[fx(D(2026, 9, 12), 4, 1, comp=101, md=4)]))
+        app._selection = ("pair", (team(1), team(4)))
+        model = app._inspector_model()
+        lines = [b for b in model.blocks if isinstance(b, inspector.Line)]
+        self.assertTrue(any(line.muted and "Championship" in line.text for line in lines))
+        self.assertFalse(any(line.marked for line in lines))
+
+    def test_a_pair_with_no_meetings_reads_no_meetings_in_this_save(self):
+        app, drawer = self.inspector_app()
+        # Add team 5 to the open competition's labels through a 1 v 5 fixture; (3, 5) still never meet.
+        app.install_dataset(dataset(extra=[fx(D(2026, 10, 10), 1, 5, comp=101, md=5)]))
+        app._selection = ("pair", (team(3), team(5)))
+        model = app._inspector_model()
+        lines = [b for b in model.blocks if isinstance(b, inspector.Line)]
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0].text, "No meetings in this save.")
+        self.assertTrue(lines[0].muted)
+
+    def test_a_pair_whose_clubs_are_no_longer_in_the_dataset_falls_back_to_the_generic_prompt(self):
+        app, drawer = self.inspector_app()
+        app._selection = ("pair", (team(1), 9999))        # one unknown id
+        model = app._inspector_model()
+        self.assertEqual((model.title, model.subtitle), ("Inspector", "Select a match or a club."))
 
     # ----------------------------------------------------------------- v1.5 step 2: copy for a post
 

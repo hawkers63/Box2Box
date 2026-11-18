@@ -284,7 +284,6 @@ class MenuEntry(NamedTuple):
 
 
 MENU_SEPARATOR = MenuEntry("")
-HEAD_TO_HEAD_LABEL = "Head-to-head… (needs saves from more than one season)"
 
 
 class SheetOverlay:
@@ -2443,6 +2442,8 @@ class FMReviewApp(_Root):
                 return self._club_model(value)
             if kind == "hub" and value in self.dataset.by_id:
                 return self._hub_model(value)
+            if kind == "pair" and value[0] in self.labels and value[1] in self.labels:
+                return self._head_to_head_model(*value)
         return inspector.InspectorModel("Inspector", "Select a match or a club.")
 
     def _team_name(self, team_id: int) -> str:
@@ -2511,6 +2512,28 @@ class FMReviewApp(_Root):
                     f"  {self._day(meeting, '%d %b')}  {self._team_name(meeting.home_team_id)} {score} "
                     f"{self._team_name(meeting.away_team_id)}", marked=meeting == f))
         return inspector.InspectorModel(f"{home} v {away}", " · ".join(when), tuple(blocks))
+
+    def _head_to_head_model(self, a_id: int, b_id: int) -> inspector.InspectorModel:
+        """Every meeting between two clubs across every competition and season the save holds."""
+        a, b = self._team_name(a_id), self._team_name(b_id)
+        groups = fd.all_meetings(self.dataset, a_id, b_id)
+        blocks: list = []
+        total = sum(len(g.fixtures) for g in groups)
+        if not total:
+            blocks.append(inspector.Line("No meetings in this save.", muted=True))
+        else:
+            blocks.append(inspector.Heading(f"Meetings ({total})"))
+            for group in groups:
+                comp_info = self.dataset.by_id.get(group.competition_id)
+                comp_name = fd.competition_title(comp_info, self.names) if comp_info else f"Competition {group.competition_id}"
+                season_lbl = fd.season_label(group.season, group.fixtures)
+                blocks.append(inspector.Line(f"{comp_name}  {season_lbl}", muted=True))
+                for meeting in group.fixtures:
+                    score = "to play" if fd.result_kind(meeting) == fd.SCHEDULED else fd.score_text(meeting)
+                    blocks.append(inspector.Line(
+                        f"  {self._day(meeting, '%d %b')}  {self._team_name(meeting.home_team_id)} {score} "
+                        f"{self._team_name(meeting.away_team_id)}"))
+        return inspector.InspectorModel("Head-to-head", f"{a} v {b}", tuple(blocks))
 
     def _club_model(self, team_id: int) -> inspector.InspectorModel:
         ds = self.dataset
@@ -2588,6 +2611,24 @@ class FMReviewApp(_Root):
                 clubs.append((team_id, self.labels[team_id]))
         return clubs
 
+    def _head_to_head_entry(self, clubs: list[tuple[int, str]]) -> MenuEntry:
+        """A right-click head-to-head item: active on two clubs; active with "Head-to-head with {focus}"
+        when a different club is followed; greyed with its reason otherwise."""
+        if len(clubs) == 2:
+            (a_id, _), (b_id, _) = clubs
+            return MenuEntry("Head-to-head", lambda pair=(a_id, b_id): self._open_head_to_head(*pair))
+        row_id, _ = clubs[0]
+        if self.focus is not None and self.focus != row_id and self.focus in self.labels:
+            focus_label = self.labels[self.focus]
+            return MenuEntry(f"Head-to-head with {focus_label}",
+                             lambda pair=(self.focus, row_id): self._open_head_to_head(*pair))
+        return MenuEntry("Head-to-head (follow another club first)", None)
+
+    def _open_head_to_head(self, a_id: int, b_id: int) -> None:
+        """Pin the pair as the inspector's selection and show the drawer."""
+        self._selection = ("pair", (a_id, b_id))
+        self.open_inspector()
+
     def _row_menu(self, name: str, row: int, column: int | None = None) -> list[MenuEntry]:
         """What a right-click on a row offers: follow each club on it (but not the one already followed),
         for a match show only the two clubs' meetings, a head-to-head that waits for the archive, export
@@ -2600,7 +2641,7 @@ class FMReviewApp(_Root):
             entries.append(MenuEntry(f"Show only {home} v {away}",
                                      lambda pair=(home_id, away_id): self.set_opponent_filter(pair)))
         if clubs:
-            entries += [MENU_SEPARATOR, MenuEntry(HEAD_TO_HEAD_LABEL), MENU_SEPARATOR]
+            entries += [MENU_SEPARATOR, self._head_to_head_entry(clubs), MENU_SEPARATOR]
         kinds = ((fx.EXCEL, "Excel workbook (.xlsx)"), (fx.HTML, "Web page (.html)"), (fx.CSV, "CSV files (.csv)"))
         children = () if self._exporting or self.comp_id is None else tuple(
             MenuEntry(label, lambda k=kind: self.export(k)) for kind, label in kinds)
