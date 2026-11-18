@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -77,7 +78,7 @@ def _matches(matches, styles) -> Table:
         ("FONTNAME", (2, 0), (2, -1), BOLD), ("FONTSIZE", (2, 0), (2, -1), 10), ("ALIGN", (2, 0), (2, -1), "CENTER"),
         ("ALIGN", (1, 0), (1, -1), "RIGHT"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("LINEBELOW", (0, 0), (-1, -1), 0.25, colors.HexColor("#dddddd")),
-        ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 2.2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2.2),
     ]))
     return table
 
@@ -93,9 +94,56 @@ def _standings(lines, styles) -> Table:
         ("FONTNAME", (9, 1), (9, -1), BOLD), ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eeeeee")),
         ("ALIGN", (2, 0), (9, -1), "CENTER"), ("LINEBELOW", (0, 0), (-1, 0), 0.6, colors.HexColor(INK)),
         ("LINEBELOW", (0, 1), (-1, -1), 0.25, colors.HexColor("#dddddd")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("TOPPADDING", (0, 0), (-1, -1), 1.2), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.2),
     ]))
     return table
+
+
+FRAME_WIDTH, FRAME_HEIGHT = A4[0] - 36 * mm, A4[1] - 34 * mm      # the text area of a page
+
+
+def _block_parts(page, styles) -> list:
+    """The parts of a small block (a cup day, or a postponed league match played late)."""
+    if isinstance(page, yb.CupBlock):
+        note = [Paragraph(escape(page.footnote), styles["small"])] if page.footnote else []
+        title = escape(page.heading)
+    else:
+        note, title = [], f"{escape(page.competition)} · {escape(page.heading)}"
+    return [Paragraph(title, styles["heading"]), _matches(page.matches, styles), *note, Spacer(1, 4 * mm)]
+
+
+def _matchweek_parts(page, styles) -> list:
+    """The parts of a full matchweek: heading, results and table, kept together."""
+    return [Paragraph(f"{escape(page.competition)} · {escape(page.heading)}", styles["heading"]),
+            _matches(page.matches, styles), Spacer(1, 6 * mm), _standings(page.table, styles),
+            Paragraph("Table calculated from the results.", styles["small"]), Spacer(1, 8 * mm)]
+
+
+def _height(parts: list) -> float:
+    return sum(part.wrap(FRAME_WIDTH, 10 ** 6)[1] for part in parts)
+
+
+def order_for_pages(pages: Sequence) -> list:
+    """The pages in the order they are printed. A matchweek and its table are never split, so small blocks that
+    come just before a full matchweek would leave a mostly empty page when the two cannot share one: in that case
+    the matchweek goes first and the blocks follow it (a few days out of date order, but no gap)."""
+    _register_fonts()
+    styles = _styles()
+    ordered: list = []
+    pending: list = []
+    for page in pages:
+        full = isinstance(page, yb.LeaguePage) and bool(page.table)
+        small = isinstance(page, yb.CupBlock) or (isinstance(page, yb.LeaguePage) and not page.table)
+        if small:
+            pending.append(page)
+        elif full and pending:
+            together = sum(_height(_block_parts(b, styles)) for b in pending) + _height(_matchweek_parts(page, styles))
+            ordered += [page, *pending] if together > FRAME_HEIGHT else [*pending, page]
+            pending = []
+        else:
+            ordered += [*pending, page]
+            pending = []
+    return ordered + pending
 
 
 def _flow(book: yb.Yearbook) -> list:
@@ -106,23 +154,15 @@ def _flow(book: yb.Yearbook) -> list:
         if flow and not isinstance(flow[-1], PageBreak):
             flow.append(PageBreak())
 
-    for page in book.pages:
+    for page in order_for_pages(book.pages):
         if isinstance(page, yb.TitlePage):
             flow += [Spacer(1, 60 * mm), Paragraph(f"Football Yearbook {escape(page.season_label)}", styles["title"]),
                      Spacer(1, 8 * mm)] + [Paragraph(escape(line), styles["line"]) for line in page.coverage_lines]
             new_page()
         elif isinstance(page, yb.LeaguePage) and page.table:       # a matchweek and its table stay together
-            flow.append(KeepTogether([Paragraph(f"{escape(page.competition)} · {escape(page.heading)}", styles["heading"]),
-                                      _matches(page.matches, styles), Spacer(1, 6 * mm), _standings(page.table, styles),
-                                      Paragraph("Table calculated from the results.", styles["small"]),
-                                      Spacer(1, 8 * mm)]))
-        elif isinstance(page, yb.LeaguePage):                              # a postponed match, played late
-            flow.append(KeepTogether([Paragraph(f"{escape(page.competition)} · {escape(page.heading)}", styles["heading"]),
-                                      _matches(page.matches, styles), Spacer(1, 4 * mm)]))
-        elif isinstance(page, yb.CupBlock):
-            note = [Paragraph(escape(page.footnote), styles["small"])] if page.footnote else []
-            flow.append(KeepTogether([Paragraph(escape(page.heading), styles["heading"]),
-                                      _matches(page.matches, styles), *note, Spacer(1, 4 * mm)]))
+            flow.append(KeepTogether(_matchweek_parts(page, styles)))
+        elif isinstance(page, (yb.LeaguePage, yb.CupBlock)):      # a cup day, or a postponed match played late
+            flow.append(KeepTogether(_block_parts(page, styles)))
         elif isinstance(page, yb.FinalTablesPage):
             new_page()
             for name, lines in page.tables:

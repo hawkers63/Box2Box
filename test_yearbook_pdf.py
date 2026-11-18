@@ -99,6 +99,30 @@ class RenderTests(unittest.TestCase):
                           (yb.BookMatch("", "Birmingham City", "Cardiff City", "0-0", "", advanced="away"),), D(2026, 8, 8))
         self.assertTrue(self.render(book(cup)).startswith(b"%PDF-"))
 
+    @staticmethod
+    def full_week(n, clubs=24):
+        names = [f"Club {i}" for i in range(clubs)]
+        matches = tuple(yb.BookMatch("Sat 8", names[i], names[i + clubs // 2], "1-0") for i in range(clubs // 2))
+        return yb.LeaguePage("Championship", n, f"Matchweek {n} · Sat 8 – Mon 10 Aug", matches, table(*names),
+                             D(2026, 8, 8 + n))
+
+    def test_a_championship_sized_matchweek_and_a_small_cup_block_share_a_page(self):
+        cup = yb.CupBlock("FA Cup", "Fourth round", "", "Tue 4 Aug",
+                          tuple(yb.BookMatch("", f"Home {i}", f"Away {i}", "2-1") for i in range(3)), D(2026, 8, 4))
+        data = self.render(book(cup, self.full_week(1)))
+        self.assertEqual(len(re.findall(rb"/Type\s*/Page" + chr(92).encode() + b"b", data)), 2)    # the title page, then one page
+
+    def test_a_small_block_that_does_fit_with_the_matchweek_stays_before_it_in_date_order(self):
+        cup = yb.CupBlock("FA Cup", "Fourth round", "", "Tue 4 Aug", (yb.BookMatch("", "Home", "Away", "2-1"),), D(2026, 8, 4))
+        order = yearbook_pdf.order_for_pages([cup, self.full_week(1, clubs=6)])
+        self.assertEqual([type(p).__name__ for p in order], ["CupBlock", "LeaguePage"])
+
+    def test_pages_that_do_not_fit_together_are_reordered_matchweek_first(self):
+        cup = yb.CupBlock("FA Cup", "Fourth round", "", "Tue 4 Aug",
+                          tuple(yb.BookMatch("", f"Home {i}", f"Away {i}", "2-1") for i in range(6)), D(2026, 8, 4))
+        order = yearbook_pdf.order_for_pages([cup, self.full_week(1)])
+        self.assertEqual([type(p).__name__ for p in order], ["LeaguePage", "CupBlock"])
+
     def test_a_failure_while_drawing_leaves_no_file_and_no_scrap_behind(self):
         with mock.patch.object(yearbook_pdf, "SimpleDocTemplate") as doc:
             doc.return_value.build.side_effect = RuntimeError("out of paper")
