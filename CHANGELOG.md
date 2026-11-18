@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Head-to-head from the right-click menu** (Results, Grid, Table or Analysis): the greyed **Head-to-head…** is now active. On a row that names two clubs (a match or a Grid cell) it opens the inspector on every meeting between them across every competition and season the save holds; on a row that names only one club it reads **Head-to-head with {followed}** and compares the row's club with the one you follow. A pair with no meetings reads "No meetings in this save."
+
 ### Changed
 
 - **A new front page on GitHub.** The README has a logo (a sky-blue football on a dark green pitch between two penalty boxes, in `docs/images/`), badges, a contents list, a features table, Mermaid diagrams of how a save reaches the screen, the views, how Box2Box starts and how its modules fit together, a keyboard and mouse table, a feature tour in fold-out sections and a release history. Two examples that named real clubs and an in-game date now use the made-up league from the screenshots.

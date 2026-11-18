@@ -240,7 +240,7 @@ Open a feature for the full details.
 <details>
 <summary><b>🖱️ Right-click menu</b></summary>
 
-**Right-click menu.** Right-click a row in Results, Grid, Table or Analysis to follow either club on it, to **Show only** the meetings of the two clubs in a match (a note and **Clear** button show while the filter is on), to export, or to copy. **Head-to-head…** is there but greyed: it needs saves from more than one season.
+**Right-click menu.** Right-click a row in Results, Grid, Table or Analysis to follow either club on it, to **Show only** the meetings of the two clubs in a match (a note and **Clear** button show while the filter is on), to open **Head-to-head** on the two clubs (from a Table, Analysis or Grid row that names only one club, the item reads **Head-to-head with {followed}** and uses the club you follow as the other side; it is greyed when no club is followed), to export, or to copy.
 
 </details>
 
