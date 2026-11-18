@@ -87,26 +87,75 @@ def _matches(matches, styles) -> Table:
 
 
 def table_note(lines) -> str:
-    """The small note under a table: it is calculated, and what any shading means."""
+    """The small note under a table: it is calculated, and what any shading, movement or star means."""
     legend = yb.zone_legend(lines)
-    return "Table calculated from the results." + (f" Shaded: {legend}." if legend else "")
+    note = "Table calculated from the results." + (f" Shaded: {legend}." if legend else "")
+    if any(t.movement for t in lines):
+        note += " ± is the change in place since the previous table."
+    if any(t.ppg.endswith("*") for t in lines):
+        note += " * a match with no score is left out of PPG."
+    return note
+
+
+MOVE_INK = {"▲": FORM_INK["W"], "▼": FORM_INK["L"]}      # a rise and a fall; anything else is muted
+
+
+def _move(text: str) -> str:
+    """A movement as coloured text: the win ink for a rise, the loss ink for a fall, muted otherwise."""
+    return f'<font color="{MOVE_INK.get(text[:1], MUTED)}">{escape(text)}</font>'
 
 
 def _standings(lines, styles) -> Table:
-    head = ["#", "Team", "P", "W", "D", "L", "F", "A", "GD", "Pts", "Last six"]
-    rows = [head] + [[str(t.pos), Paragraph(escape(t.team), styles["cell"]), t.played, t.won, t.drawn, t.lost,
-                      t.goals_for, t.goals_against, f"{t.goal_difference:+d}" if t.goal_difference else "0",
-                      t.points, Paragraph(_form(t.form), styles["cell"])] for t in lines]
-    table = Table(rows, colWidths=[8 * mm, 52 * mm] + [9 * mm] * 7 + [11 * mm, 27 * mm], hAlign="CENTER", repeatRows=1)
-    zones = [("BACKGROUND", (0, i), (0, i), colors.HexColor(ZONE_TINT[t.zone]))
+    """A table with its movement and PPG columns only where the lines carry them. A marked club is bold with a
+    rule under its row."""
+    moves, ppg = any(t.movement for t in lines), any(t.ppg for t in lines)
+    head = (["±"] if moves else []) + ["#", "Team", "P", "W", "D", "L", "F", "A", "GD", "Pts"] + \
+           (["PPG"] if ppg else []) + ["Last six"]
+    rows = [head]
+    for t in lines:
+        name = f"<b>{escape(t.team)}</b>" if t.marked else escape(t.team)
+        rows.append(([Paragraph(_move(t.movement), styles["cell"])] if moves else []) +
+                    [str(t.pos), Paragraph(name, styles["cell"]), t.played, t.won, t.drawn, t.lost, t.goals_for,
+                     t.goals_against, f"{t.goal_difference:+d}" if t.goal_difference else "0", t.points] +
+                    ([t.ppg] if ppg else []) + [Paragraph(_form(t.form), styles["cell"])])
+    widths = ([9 * mm] if moves else []) + [7 * mm, 50 * mm] + [8.5 * mm] * 7 + [10 * mm] + \
+             ([11 * mm] if ppg else []) + [24 * mm]
+    if not moves and not ppg:                                   # the plain table keeps its wider name and form
+        widths = [8 * mm, 52 * mm] + [9 * mm] * 7 + [11 * mm, 27 * mm]
+    first = 1 if moves else 0                                   # the column of "#"
+    pts = first + 9
+    table = Table(rows, colWidths=widths, hAlign="CENTER", repeatRows=1)
+    zones = [("BACKGROUND", (first, i), (first, i), colors.HexColor(ZONE_TINT[t.zone]))
              for i, t in enumerate(lines, start=1) if t.zone in ZONE_TINT]
+    marked = [("LINEBELOW", (0, i), (-1, i), 0.6, colors.HexColor(INK)) for i, t in enumerate(lines, start=1) if t.marked]
     table.setStyle(TableStyle(zones + [
         ("FONTNAME", (0, 0), (-1, 0), BOLD), ("FONTNAME", (0, 1), (-1, -1), FONT), ("FONTSIZE", (0, 0), (-1, -1), 8.5),
-        ("FONTNAME", (9, 1), (9, -1), BOLD), ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eeeeee")),
-        ("ALIGN", (2, 0), (9, -1), "CENTER"), ("LINEBELOW", (0, 0), (-1, 0), 0.6, colors.HexColor(INK)),
+        ("FONTNAME", (pts, 1), (pts, -1), BOLD), ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eeeeee")),
+        ("ALIGN", (first + 2, 0), (-2, -1), "CENTER"), ("ALIGN", (0, 0), (first, -1), "CENTER"),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.6, colors.HexColor(INK)),
         ("LINEBELOW", (0, 1), (-1, -1), 0.25, colors.HexColor("#dddddd")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("TOPPADDING", (0, 0), (-1, -1), 1.2), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.2),
-    ]))
+    ] + marked))
+    return table
+
+
+def _record(lines, styles) -> Table:
+    """A home or away record: places, results and goals, with no form."""
+    rows = [["#", "Team", "P", "W", "D", "L", "F", "A", "Pts"]] + \
+           [[str(t.pos), Paragraph(f"<b>{escape(t.team)}</b>" if t.marked else escape(t.team), styles["cell"]), t.played,
+             t.won, t.drawn, t.lost, t.goals_for, t.goals_against, t.points] for t in lines]
+    table = Table(rows, colWidths=[8 * mm, 52 * mm] + [9 * mm] * 6 + [11 * mm], hAlign="CENTER", repeatRows=1)
+    zones = [("BACKGROUND", (0, i), (0, i), colors.HexColor(ZONE_TINT[t.zone]))
+             for i, t in enumerate(lines, start=1) if t.zone in ZONE_TINT]
+    marked = [("LINEBELOW", (0, i), (-1, i), 0.6, colors.HexColor(INK)) for i, t in enumerate(lines, start=1) if t.marked]
+    table.setStyle(TableStyle(zones + [
+        ("FONTNAME", (0, 0), (-1, 0), BOLD), ("FONTNAME", (0, 1), (-1, -1), FONT), ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+        ("FONTNAME", (8, 1), (8, -1), BOLD), ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eeeeee")),
+        ("ALIGN", (2, 0), (8, -1), "CENTER"), ("ALIGN", (0, 0), (0, -1), "CENTER"),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.6, colors.HexColor(INK)),
+        ("LINEBELOW", (0, 1), (-1, -1), 0.25, colors.HexColor("#dddddd")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 1.2), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.2),
+    ] + marked))
     return table
 
 
@@ -184,10 +233,18 @@ def _flow(book: yb.Yearbook) -> list:
             flow.append(KeepTogether(_block_parts(page, styles)))
         elif isinstance(page, yb.FinalTablesPage):
             new_page()
+            splits = {entry[0]: entry for entry in page.splits}
             for name, lines in page.tables:
                 flow += [KeepTogether([Paragraph(f"{escape(name)} · final table", styles["heading"]),
                                        _standings(lines, styles), Paragraph(table_note(lines), styles["small"]),
                                        Spacer(1, 8 * mm)])]
+                if name in splits:
+                    _, _, home, away = splits[name]
+                    for kind, record in (("home", home), ("away", away)):
+                        flow += [KeepTogether([Paragraph(f"{escape(name)} · {kind} record", styles["heading"]),
+                                               _record(record, styles), Spacer(1, 4 * mm)])]
+                    flow += [Paragraph("Home and away records are calculated from the results, in the order of "
+                                       "the overall table.", styles["small"]), Spacer(1, 8 * mm)]
     return flow
 
 

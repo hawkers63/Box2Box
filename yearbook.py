@@ -57,6 +57,9 @@ class TableLine:
     points: int
     form: str
     zone: str = ""                 # promotion, play-off, relegation or a European place; "" for none
+    movement: str = ""             # places since the previous printed table: "▲2", "▼1", "•", "–" or "in"; "" for none
+    ppg: str = ""                  # points per scored match, "1.85"; "*" when a match with no score was left out
+    marked: bool = False           # the club the reader asked to have marked
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,10 +110,12 @@ class TitlePage:
 
 @dataclass(frozen=True, slots=True)
 class FinalTablesPage:
-    """The final table of each league whose every match is played: (competition, lines)."""
+    """The final table of each league whose every match is played: (competition, lines). `splits` holds, for the
+    same leagues, (competition, overall, home, away): the home and away records in the overall table's order."""
 
     tables: tuple[tuple[str, tuple[TableLine, ...]], ...]
     when: dt.date = dt.date.max
+    splits: tuple[tuple[str, tuple[TableLine, ...], tuple[TableLine, ...], tuple[TableLine, ...]], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,17 +176,65 @@ def zone_legend(table: Sequence[TableLine]) -> str:
     return " · ".join(name for zone, name in ZONE_NAMES.items() if zone in present)
 
 
-def _table(rows, rules: fd.ZoneRules | None = None) -> tuple[TableLine, ...]:
-    """A table's lines; with the competition's rules, each line carries its zone."""
+def _ppg(row, unscored: int) -> str:
+    """Points per scored match (the rule of fd.TeamTotals.ppg_text): a match with no score is not counted, and
+    a "*" says one was left out. Empty when the club has no scored match."""
+    return f"{row.points / row.played:.2f}" + ("*" if unscored else "") if row.played else ""
+
+
+def _movement(row, previous: Mapping[int, tuple[int, int]], shown: int | None) -> str:
+    """How a club's place changed since the previous table: "–" when it had not played then, "in" when it came
+    into a cut table from outside the cut."""
+    before = previous.get(row.team_id)
+    if before is None or before[1] == 0:
+        return "–"
+    place = before[0]
+    if shown and place > shown >= row.position:
+        return "in"
+    return f"▲{place - row.position}" if place > row.position else f"▼{row.position - place}" if place < row.position else "•"
+
+
+def _table(rows, rules: fd.ZoneRules | None = None, previous: Mapping[int, tuple[int, int]] | None = None,
+           unscored: Mapping[int, int] | None = None, marked: int | None = None,
+           shown: int | None = None) -> tuple[TableLine, ...]:
+    """A table's lines; with the competition's rules, each line carries its zone. With `previous` (club: place and
+    played at the previous printed table; empty for the first) each carries its movement, and with `unscored`
+    (club: matches played with no score) its points per game."""
     return tuple(TableLine(r.position, r.team, r.played, r.won, r.drawn, r.lost, r.goals_for, r.goals_against,
                            r.goal_difference, r.points, r.form,
-                           fd.zone_for_position(r.position, len(rows), rules) if rules is not None else "")
+                           fd.zone_for_position(r.position, len(rows), rules) if rules is not None else "",
+                           _movement(r, previous, shown) if previous is not None else "",
+                           _ppg(r, unscored.get(r.team_id, 0)) if unscored is not None else "",
+                           marked is not None and r.team_id == marked)
                  for r in rows)
+
+
+def _unscored(fixtures: Sequence, through: dt.date) -> dict[int, int]:
+    """Matches played by `through` that have no recoverable score, per club."""
+    counts: dict[int, int] = defaultdict(int)
+    for f in fixtures:
+        if f.played and f.date and f.date <= through and not fd.has_score(f):
+            counts[f.home_team_id] += 1
+            counts[f.away_team_id] += 1
+    return counts
+
+
+def _split_lines(overall: Sequence[TableLine], rows: Sequence, order: Sequence) -> tuple[TableLine, ...]:
+    """A home (or away) record for each club, in the overall table's order and with its overall place and zone."""
+    by_team = {r.team_id: r for r in rows}
+    lines = []
+    for line, o in zip(overall, order):
+        r = by_team[o.team_id]
+        lines.append(dataclasses.replace(line, played=r.played, won=r.won, drawn=r.drawn, lost=r.lost,
+                                         goals_for=r.goals_for, goals_against=r.goals_against,
+                                         goal_difference=r.goal_difference, points=r.points, form="", movement="",
+                                         ppg=""))
+    return tuple(lines)
 
 
 def _league_pages(name: str, league: Sequence, labels: Mapping[int, str], tie_breaks: Sequence[int],
                   rules: fd.ZoneRules | None = None, unit: str = "Matchweek",
-                  shown: int | None = None) -> list[LeaguePage]:
+                  shown: int | None = None, marked: int | None = None) -> list[LeaguePage]:
     """The matchweek pages of one league, and a block for each day a postponed match was played. Zones are shown
     from zones_from_matchweek on. `unit` is "Matchday" for a continental league phase, whose table is cut to
     the top `shown` places."""
@@ -205,6 +258,7 @@ def _league_pages(name: str, league: Sequence, labels: Mapping[int, str], tie_br
                          _score(f))
 
     pages: list[LeaguePage] = []
+    previous: dict[int, tuple[int, int]] = {}            # place and games played at the previous printed table
     for ri in sorted(rounds):
         played = sorted((f for f in rounds[ri] if f.played and f.date),
                         key=lambda f: (f.date, f.kick_off_time or dt.time.min, labels.get(f.home_team_id, "")))
@@ -212,7 +266,9 @@ def _league_pages(name: str, league: Sequence, labels: Mapping[int, str], tie_br
         if on_time:
             first, last = on_time[0].date, max(f.date for f in on_time)
             table = fd.standings_as_of(league, labels, through=last, tie_breaks=tie_breaks)
-            lines = _table(table, rules if ri + 1 >= zones_from else None)
+            lines = _table(table, rules if ri + 1 >= zones_from else None, previous, _unscored(league, last), marked,
+                           shown)
+            previous = {r.team_id: (r.position, r.played) for r in table}
             cut = lines[:shown] if shown else lines
             pages.append(LeaguePage(name, ri + 1, f"{unit} {ri + 1} · {_span(first, last)}",
                                     tuple(line(f, first) for f in on_time), cut, first,
@@ -428,13 +484,13 @@ def _page_key(page, order: Mapping[str, int]) -> tuple:
     return (page.when, 0, 0, "")
 
 
-def build_yearbook(book: arch.Archive, season: int, names: Mapping[int, str]) -> Yearbook:
-    """The Yearbook for one season, from everything the archive holds."""
-    return yearbook_from(book.dataset(), book.competitions(), book.coverage(season), season, names)
+def build_yearbook(book: arch.Archive, season: int, names: Mapping[int, str], marked_club: int | None = None) -> Yearbook:
+    """The Yearbook for one season, from everything the archive holds. `marked_club` is a club uid to mark."""
+    return yearbook_from(book.dataset(), book.competitions(), book.coverage(season), season, names, marked_club)
 
 
 def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompetition], coverage: arch.BookCoverage,
-                  season: int, names: Mapping[int, str]) -> Yearbook:
+                  season: int, names: Mapping[int, str], marked_club: int | None = None) -> Yearbook:
     """The page model for one season. Only competitions the user has named are in the book, and (when the
     home nation is known) only those of that nation plus the continental ones. A title page opens it, the pages
     run by date, and the final tables close it once a league is fully played."""
@@ -443,6 +499,7 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
     order: dict[str, int] = {}
     included: list[str] = []
     finals: list[tuple[str, tuple[TableLine, ...]]] = []
+    splits: list[tuple] = []
     unplayed = False
     for comp in sorted(competitions, key=lambda c: c.key):
         name = names.get(comp.database_id)
@@ -459,7 +516,7 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
         # Cup rounds inside a league are its play-offs.
         cup_name = f"{name} play-offs" if league and cup and not comp.continental else name
         built = (_league_pages(name, league, labels, comp.tie_breaks, rules, "Matchday" if comp.continental else "Matchweek",
-                       LEAGUE_PHASE_SHOWN if comp.continental else None) if league else []) + \
+                       LEAGUE_PHASE_SHOWN if comp.continental else None, marked_club) if league else []) + \
             (_cup_blocks(cup_name, cup, labels, comp.tie_breaks, one_match) if cup else [])
         if not built:
             continue
@@ -469,11 +526,15 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
         pages += built
         if league and all(f.played for f in league):
             last = max(f.date for f in league if f.date)
-            finals.append((name, _table(fd.standings_as_of(league, labels, through=last, tie_breaks=comp.tie_breaks),
-                                        rules)))
+            rows = fd.standings_as_of(league, labels, through=last, tie_breaks=comp.tie_breaks)
+            overall = _table(rows, rules, unscored=_unscored(league, last), marked=marked_club)
+            finals.append((name, overall))
+            splits.append((name, overall,
+                           _split_lines(overall, fd.calculate_standings(league, labels, home_only=True), rows),
+                           _split_lines(overall, fd.calculate_standings(league, labels, away_only=True), rows)))
     pages.sort(key=lambda p: _page_key(p, order))
     label = fd.season_label(season, [f for fixtures in dataset.fixtures.values() for f in fixtures])
     coverage = dataclasses.replace(coverage, in_progress=unplayed)         # judged on the competitions in the book
     head = [TitlePage(label, _title_lines(coverage, included, home))]
-    tail = [FinalTablesPage(tuple(finals))] if finals else []
+    tail = [FinalTablesPage(tuple(finals), splits=tuple(splits))] if finals else []
     return Yearbook(label, coverage, tuple(head + pages + tail))

@@ -464,3 +464,64 @@ class ZoneTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MovingTableTests(unittest.TestCase):
+    NAMES = {12: "Premier League"}
+
+    def pages(self, fixtures, marked=None):
+        book, folder = banked(fixtures)
+        self.addCleanup(folder.cleanup)
+        self.addCleanup(book.close)
+        built = yearbook.build_yearbook(book, 2026, self.NAMES, marked_club=marked)
+        return [p for p in built.pages if isinstance(p, yearbook.LeaguePage) and p.table], built
+
+    ROUNDS = [fx(D(2026, 8, 8), 1, 2, 2, 0, md=1), fx(D(2026, 8, 8), 3, 4, 1, 0, md=1),
+              fx(D(2026, 8, 15), 2, 3, 3, 0, md=2), fx(D(2026, 8, 15), 4, 1, 0, 0, md=2)]
+
+    def by_team(self, page):
+        return {t.team: t for t in page.table}
+
+    def test_the_first_table_has_no_previous_one_so_every_club_reads_a_dash(self):
+        first, _ = self.pages(self.ROUNDS)[0]
+        self.assertEqual({t.movement for t in first.table}, {"–"})
+
+    def test_a_club_that_rose_fell_or_stayed_reads_the_places_it_moved(self):
+        _, second = self.pages(self.ROUNDS)[0]
+        moves = {t.team: t.movement for t in second.table}
+        self.assertEqual(moves, {"Hull City": "•", "Leeds United": "▲2", "Derby County": "▼1",
+                                 "Sheffield United": "▼1"})
+
+    def test_a_club_that_had_not_played_at_the_previous_table_reads_a_dash(self):
+        pages, _ = self.pages([fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 15), 3, 4, 2, 0, md=2)])
+        self.assertEqual({t.team: t.movement for t in pages[1].table}["Derby County"], "–")
+
+    def test_points_per_game_is_points_over_scored_matches_to_two_places(self):
+        pages, _ = self.pages(self.ROUNDS)
+        self.assertEqual(self.by_team(pages[1])["Hull City"].ppg, "2.00")
+
+    def test_a_played_match_with_no_score_is_left_out_and_starred(self):
+        pages, _ = self.pages([fx(D(2026, 8, 8), 1, 2, 2, 0, md=1), fx(D(2026, 8, 15), 1, 3, None, None, played=True, md=2)])
+        self.assertEqual(self.by_team(pages[1])["Hull City"].ppg, "3.00*")
+
+    def test_a_club_with_no_scored_match_has_no_ppg(self):
+        pages, _ = self.pages([fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 15), 3, 4, md=2)])
+        self.assertEqual(self.by_team(pages[0])["Sheffield United"].ppg, "")
+
+    def test_the_marked_club_is_flagged_and_nobody_else(self):
+        pages, _ = self.pages(self.ROUNDS, marked=2)
+        self.assertEqual([t.team for t in pages[1].table if t.marked], ["Leeds United"])
+        self.assertFalse(any(t.marked for t in self.pages(self.ROUNDS)[0][1].table))
+
+    def test_the_final_table_carries_home_and_away_blocks_in_the_overall_order(self):
+        full = [fx(D(2026, 8, 8), 1, 2, 2, 0, md=1), fx(D(2026, 8, 15), 2, 1, 0, 1, md=2)]
+        _, built = self.pages(full)
+        final = built.pages[-1]
+        (name, overall, home, away), = final.splits
+        self.assertEqual(name, "Premier League")
+        self.assertEqual([t.team for t in home], [t.team for t in overall])
+        self.assertEqual([t.team for t in away], [t.team for t in overall])
+        hull_home = {t.team: t for t in home}["Hull City"]
+        hull_away = {t.team: t for t in away}["Hull City"]
+        self.assertEqual((hull_home.played, hull_home.points, hull_away.played, hull_away.points), (1, 3, 1, 3))
+        self.assertEqual([t.pos for t in home], [t.pos for t in overall])

@@ -179,3 +179,70 @@ class RenderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _texts(flowables):
+    """Every Paragraph's text in a flow, looking inside tables and keep-together groups."""
+    from reportlab.platypus import KeepTogether, Paragraph, Table
+    found = []
+    for item in flowables:
+        if isinstance(item, Paragraph):
+            found.append(item.text)
+        elif isinstance(item, KeepTogether):
+            found += _texts(item._content)
+        elif isinstance(item, Table):
+            for row in item._cellvalues:
+                found += [c.text for c in row if isinstance(c, Paragraph)] + [str(c) for c in row if not isinstance(c, Paragraph)]
+    return found
+
+
+def moving(pos, team, movement, ppg, marked=False):
+    return yb.TableLine(pos, team, 3, 2, 1, 0, 5, 2, 3, 7, "WWD", "", movement, ppg, marked)
+
+
+class MovingTableDrawingTests(unittest.TestCase):
+    def table(self, *lines):
+        return yearbook_pdf._standings(lines, yearbook_pdf._styles())
+
+    def test_movement_and_ppg_columns_appear_only_when_a_line_carries_them(self):
+        plain = self.table(yb.TableLine(1, "Hull City", 3, 2, 1, 0, 5, 2, 3, 7, "WWD"))
+        moved = self.table(moving(1, "Hull City", "▲2", "2.33"))
+        self.assertNotIn("±", plain._cellvalues[0])
+        self.assertNotIn("PPG", plain._cellvalues[0])
+        self.assertEqual((moved._cellvalues[0][0], "PPG" in moved._cellvalues[0]), ("±", True))
+
+    def test_a_table_with_every_column_still_fits_the_text_area(self):
+        table = self.table(moving(1, "Hull City", "▲2", "2.33"))
+        self.assertLessEqual(sum(table._colWidths), yearbook_pdf.FRAME_WIDTH)
+
+    def test_a_rise_a_fall_and_no_change_use_the_win_loss_and_muted_inks(self):
+        table = self.table(moving(1, "A", "▲2", "1.00"), moving(2, "B", "▼1", "1.00"), moving(3, "C", "•", "1.00"))
+        cells = [row[0].text for row in table._cellvalues[1:]]
+        self.assertIn(yearbook_pdf.FORM_INK["W"], cells[0])
+        self.assertIn(yearbook_pdf.FORM_INK["L"], cells[1])
+        self.assertIn(yearbook_pdf.MUTED, cells[2])
+
+    def test_the_marked_club_is_bold_with_a_rule_under_its_row_and_nobody_else(self):
+        table = self.table(moving(1, "Hull City", "•", "1.00"), moving(2, "Leeds United", "•", "1.00", marked=True))
+        names = [row[2 if False else 2].text for row in table._cellvalues[1:]]
+        self.assertNotIn("<b>", names[0])
+        self.assertIn("<b>Leeds United</b>", names[1])
+        rules = [c for c in table._linecmds if c[0] == "LINEBELOW" and c[3] == 0.6 and c[1][1] == 2]
+        self.assertEqual(len(rules), 1)
+
+    def test_the_note_explains_the_movement_column_and_the_star_on_a_ppg(self):
+        lines = (moving(1, "Hull City", "▲2", "2.33*"),)
+        note = yearbook_pdf.table_note(lines)
+        self.assertIn("± is the change in place since the previous table", note)
+        self.assertIn("* a match with no score is left out of PPG", note)
+        self.assertNotIn("PPG", yearbook_pdf.table_note((moving(1, "Hull City", "▲2", "2.33"),)))
+
+    def test_a_final_page_with_splits_prints_home_and_away_blocks_after_the_overall_table(self):
+        overall = (moving(1, "Hull City", "", "2.33"), moving(2, "Leeds United", "", "1.00"))
+        final = yb.FinalTablesPage((("Premier League", overall),), splits=(("Premier League", overall, overall, overall),))
+        texts = _texts(yearbook_pdf._flow(book(final)))
+        self.assertIn("Premier League · home record", texts)
+        self.assertIn("Premier League · away record", texts)
+        self.assertLess(texts.index("Premier League · final table"), texts.index("Premier League · home record"))
+        self.assertIn("Home and away records are calculated from the results, in the order of the overall table.",
+                      texts)
