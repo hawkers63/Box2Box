@@ -38,6 +38,7 @@ try:        # an optional extra: without it, a save cannot be dropped onto the w
 except ImportError:
     COPY, DND_FILES, REFUSE_DROP, TkinterDnD = "copy", "DND_Files", "refuse_drop", None
 
+import archive
 import bracket
 import clipboard
 import club_colours
@@ -71,6 +72,7 @@ NAMES_PATH = APP_DIR / "competition_names.csv"
 SETTINGS_PATH = APP_DIR / "box2box_settings.json"
 LEGACY_SETTINGS_PATH = APP_DIR / "fm_review_settings.json"
 ERROR_LOG = APP_DIR / "box2box_errors.log"
+ARCHIVE_PATH = APP_DIR / "box2box_archive.sqlite"        # every opened save is banked here (archive.py)
 LICENCE_PATH = APP_DIR / "LICENSE"
 ICON_PATH = APP_DIR / "icon" / "football-64-sky-blue.ico"
 APP_ID = "hawkers63.Box2Box"         # the taskbar's name for Box2Box, so it shows its own icon
@@ -1057,6 +1059,24 @@ class FMReviewApp(_Root):
             self._log_error(traceback.format_exc())
             self.events.put(("failed", f"Unexpected error while reading the save:\n{type(exc).__name__}: {exc}"))
 
+    def _start_banking(self, dataset: fd.Dataset) -> None:
+        """Bank the save just opened into the archive on a worker thread. Opening is never delayed, and a failure
+        here never touches the save that is open."""
+        self._bank_thread = threading.Thread(target=self._bank_worker, args=(dataset,), daemon=True)
+        self._bank_thread.start()
+
+    def _bank_worker(self, dataset: fd.Dataset) -> None:
+        try:
+            with archive.Archive.open(ARCHIVE_PATH) as book:
+                report = book.bank(dataset)
+            self.events.put(("banked", report))
+        except archive.ArchiveError as exc:          # includes a different playthrough: its message is plain words
+            self.events.put(("bank_failed", str(exc)))
+        except Exception as exc:
+            self._log_error(traceback.format_exc())
+            self.events.put(("bank_failed", f"This save could not be banked into the archive "
+                                            f"({type(exc).__name__}: {exc}). It is still open."))
+
     def _poll(self) -> None:
         try:
             while True:
@@ -1082,6 +1102,12 @@ class FMReviewApp(_Root):
         if kind in ("exported", "export_failed"):
             self._finish_export(kind, payload)
             return
+        if kind == "banked":
+            self.detail_label.configure(text=payload.describe())
+            return
+        if kind == "bank_failed":
+            self.detail_label.configure(text=payload)
+            return
         if kind == "loaded":
             # The save is in and can be browsed; its expected goals follow from the same worker,
             # and another save cannot be opened until they have.
@@ -1089,6 +1115,7 @@ class FMReviewApp(_Root):
             self.open_button.configure(state="disabled")
             self.reopen_button.configure(state="disabled")
             self.install_dataset(payload)
+            self._start_banking(payload)
             return
         self.loading_since = None
         self._reading_xg = False

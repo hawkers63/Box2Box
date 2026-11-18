@@ -21,6 +21,7 @@ import customtkinter as ctk
 
 import club_colours
 import command_palette
+import archive
 import fm_data as fd
 import fm_review
 import inspector
@@ -66,6 +67,7 @@ class WindowTests(unittest.TestCase):
             mock.patch.object(fm_review, "SETTINGS_PATH", folder / "settings.json"),
             mock.patch.object(fm_review, "NAMES_PATH", folder / "names.csv"),
             mock.patch.object(fm_review, "ERROR_LOG", folder / "errors.log"),
+            mock.patch.object(fm_review, "ARCHIVE_PATH", folder / "archive.sqlite"),
         ]
         for patch in patches:
             patch.start()
@@ -77,6 +79,9 @@ class WindowTests(unittest.TestCase):
         self.app.update()
 
     def tearDown(self):
+        bank = getattr(self.app, "_bank_thread", None)             # a banking thread must not outlive its folder
+        if bank is not None:
+            bank.join(10)
         # Let CustomTkinter's own short timers (window icons, scaling checks) run first.
         stop = time.monotonic() + 0.5
         while time.monotonic() < stop:
@@ -1925,6 +1930,48 @@ class WindowTests(unittest.TestCase):
         app.open_palette()
         app.command_palette.set_query("analysis bracket")
         self.assertEqual(app.command_palette.visible_titles(), ["Analysis: Bracket"])
+
+    # ----------------------------------------------------------------- v2.0: banking each opened save
+
+    def detail(self):
+        return self.app.detail_label.cget("text")
+
+    def test_an_opened_save_is_banked_after_it_is_shown_and_the_detail_bar_says_so(self):
+        app = self.app
+        data = dataset()
+        app.handle_event(("loaded", data))
+        self.assertIs(app.dataset, data)                                  # shown at once: banking never delays opening
+        self.assertTrue(self.wait_until(lambda: self.detail().startswith("Banked:")), self.detail())
+        with archive.Archive.open(fm_review.ARCHIVE_PATH) as book:
+            self.assertEqual([r.file_name for r in book.imports()], ["x.fm"])
+
+    def test_opening_the_same_save_again_says_it_is_already_banked(self):
+        app = self.app
+        app.handle_event(("loaded", dataset()))
+        self.assertTrue(self.wait_until(lambda: self.detail().startswith("Banked:")))
+        app.handle_event(("loaded", dataset()))
+        self.assertTrue(self.wait_until(lambda: self.detail() == "Already banked."), self.detail())
+
+    def test_a_save_from_a_different_playthrough_says_so_and_stays_open(self):
+        app = self.app
+        error = archive.WorldMismatch("These results do not match the archive, so this looks like a different "
+                                      "playthrough. Nothing was changed.")
+        with mock.patch.object(archive.Archive, "bank", side_effect=error), \
+                mock.patch.object(fm_review.messagebox, "showerror") as showerror:
+            data = dataset()
+            app.handle_event(("loaded", data))
+            self.assertTrue(self.wait_until(lambda: "different playthrough" in self.detail()), self.detail())
+        showerror.assert_not_called()
+        self.assertIs(app.dataset, data)
+
+    def test_a_banking_failure_is_logged_and_shown_and_the_open_save_is_unaffected(self):
+        app = self.app
+        with mock.patch.object(archive.Archive, "bank", side_effect=RuntimeError("disk full")):
+            data = dataset()
+            app.handle_event(("loaded", data))
+            self.assertTrue(self.wait_until(lambda: "could not be banked" in self.detail()), self.detail())
+        self.assertIn("disk full", fm_review.ERROR_LOG.read_text(encoding="utf-8"))
+        self.assertIs(app.dataset, data)
 
 
 class PathsTests(unittest.TestCase):
