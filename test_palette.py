@@ -111,6 +111,20 @@ class TintTests(unittest.TestCase):
             tinted = palette.club_tint(me, colours)
             self.assertGreaterEqual(palette.contrast_ratio(palette.ink_on_white(tinted.focus), "#ffffff"), 4.5)
 
+    def test_a_pill_bevel_is_a_lighter_top_edge_and_a_darker_bottom_edge_in_every_theme(self):
+        for theme in palette.THEMES:
+            for letter, (background, _text) in theme.colours.items():
+                if background is None:
+                    continue
+                highlight, shadow = palette.pill_edges(background)
+                self.assertGreater(palette.luminance(highlight), palette.luminance(background), (theme.name, letter))
+                self.assertLess(palette.luminance(shadow), palette.luminance(background), (theme.name, letter))
+
+    def test_a_pill_bevel_is_faint(self):
+        highlight, shadow = palette.pill_edges("#2e7d32")
+        self.assertLess(palette.contrast_ratio(highlight, "#2e7d32"), 2.0)
+        self.assertLess(palette.contrast_ratio(shadow, "#2e7d32"), 2.0)
+
     def test_blend_and_readable_text(self):
         self.assertEqual(palette.blend("#000000", "#ffffff", 0), "#000000")
         self.assertEqual(palette.blend("#000000", "#ffffff", 1), "#ffffff")

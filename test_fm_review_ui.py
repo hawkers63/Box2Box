@@ -414,6 +414,19 @@ class WindowTests(unittest.TestCase):
         app.update()
         self.assertEqual(self.overlay_texts(fm_review.ANALYSIS), [])
 
+    def test_each_form_pill_has_a_faint_bevel_that_leaves_the_letter_alone(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_view("Table")
+        app.update()
+        canvas = app.sheets["Table"].MT
+        items = canvas.find_withtag(fm_review.SheetOverlay.TAG)
+        pills = len(self.overlay_texts("Table"))
+        arcs = [i for i in items if canvas.type(i) == "arc"]
+        self.assertEqual(len(arcs), 2 * pills)
+        letter = next(i for i in items if canvas.type(i) == "text")
+        self.assertEqual(canvas.itemcget(letter, "fill"), app.view_theme.colours[canvas.itemcget(letter, "text")][1])
+
     def test_zone_edges_and_the_colour_key(self):
         app = self.app
         app.install_dataset(dataset())

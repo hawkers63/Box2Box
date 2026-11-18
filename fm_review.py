@@ -391,6 +391,11 @@ class SheetOverlay:
             background, text = self._colours.get(letter, (None, None))
             canvas.create_polygon(rounded_box_coords(left, top, left + width, top + height, radius=height // 2),
                                   smooth=True, fill=background or "", outline="", tags=self.TAG)
+            if background:
+                highlight, shadow = palette.pill_edges(background)
+                rim = (left + 1, top + 1, left + width - 1, top + height - 1)
+                canvas.create_arc(*rim, start=20, extent=140, style="arc", outline=highlight, width=1, tags=self.TAG)
+                canvas.create_arc(*rim, start=200, extent=140, style="arc", outline=shadow, width=1, tags=self.TAG)
             canvas.create_text(left + width / 2, top + height / 2, text=letter, fill=text or "#ffffff",
                                font=self._font, tags=self.TAG)
             left += width + gap

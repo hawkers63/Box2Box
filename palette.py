@@ -241,6 +241,12 @@ def blend(a: str, b: str, amount: float) -> str:
     return "#" + "".join(f"{value:02x}" for value in channels)
 
 
+def pill_edges(background: str) -> tuple[str, str]:
+    """The faint bevel of a form pill: a lighter edge for its top and a darker one for its bottom. They are
+    thin lines at the rim, so the letter's contrast against the pill's own colour is untouched."""
+    return blend(background, "#ffffff", 0.28), blend(background, "#000000", 0.22)
+
+
 def readable_text(background: str) -> str:
     """Black or white, whichever reads better on the background."""
     return "#000000" if contrast_ratio(background, "#000000") >= contrast_ratio(background, "#ffffff") else "#ffffff"
