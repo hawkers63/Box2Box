@@ -14,6 +14,10 @@ box2box_errors.log
 # The launcher is built on each machine by build_launcher.ps1
 Box2Box.exe
 
+# PyInstaller output folders (build_exe.ps1)
+build/
+dist/
+
 # Football Manager saves are large and personal; Box2Box only reads them from the game's folder
 *.fm
 

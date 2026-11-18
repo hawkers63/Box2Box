@@ -1803,6 +1803,30 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(app.command_palette.visible_titles(), ["Analysis: Bracket"])
 
 
+class PathsTests(unittest.TestCase):
+    """Where settings and the error log live, depending on whether the app is frozen."""
+
+    def test_app_dir_is_the_source_folder_when_not_frozen(self):
+        self.assertEqual(
+            fm_review._resolve_app_dir(
+                frozen=False,
+                executable=Path(r"X:\python.exe"),
+                source=Path(r"C:\Box2Box\fm_review.py"),
+            ),
+            Path(r"C:\Box2Box"),
+        )
+
+    def test_app_dir_is_the_executable_folder_when_frozen(self):
+        self.assertEqual(
+            fm_review._resolve_app_dir(
+                frozen=True,
+                executable=Path(r"C:\Users\Me\Desktop\Box2Box\Box2Box.exe"),
+                source=Path(r"C:\Users\Me\Desktop\Box2Box\_internal\fm_review.pyc"),
+            ),
+            Path(r"C:\Users\Me\Desktop\Box2Box"),
+        )
+
+
 class IconTests(unittest.TestCase):
     def test_the_icon_is_a_windows_icon(self):
         data = fm_review.ICON_PATH.read_bytes()

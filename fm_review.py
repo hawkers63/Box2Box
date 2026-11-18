@@ -50,7 +50,23 @@ import tooltip
 
 APP_TITLE = "Box2Box"
 VERSION = "1.6"
-APP_DIR = Path(__file__).resolve().parent
+
+
+def _resolve_app_dir(*, frozen: bool, executable: Path, source: Path) -> Path:
+    """Where Box2Box reads and writes its own files (settings, error log, bundled assets).
+
+    In a frozen PyInstaller build, `__file__` points to the extracted `_internal` cache rather
+    than the installation folder, so we read `sys.executable` instead — the `.exe` beside which
+    settings and the log must live.
+    """
+    return executable.resolve().parent if frozen else source.resolve().parent
+
+
+APP_DIR = _resolve_app_dir(
+    frozen=getattr(sys, "frozen", False),
+    executable=Path(sys.executable),
+    source=Path(__file__),
+)
 NAMES_PATH = APP_DIR / "competition_names.csv"
 SETTINGS_PATH = APP_DIR / "box2box_settings.json"
 LEGACY_SETTINGS_PATH = APP_DIR / "fm_review_settings.json"

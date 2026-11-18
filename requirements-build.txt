@@ -1,0 +1,5 @@
+# Tools used only by build_exe.ps1 to package a standalone Box2Box.exe.
+# Install into .venv alongside requirements.txt:
+#     .venv\Scripts\python -m pip install -r requirements-build.txt
+# Pinned on 18 November 2026.
+pyinstaller==6.22.3
