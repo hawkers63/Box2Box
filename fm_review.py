@@ -90,6 +90,7 @@ GROUPINGS = (fd.GROUP_BY_WEEK, fd.GROUP_BY_MATCHDAY, fd.GROUP_BY_DATE)
 MAX_TEAM_CHOICES = 120
 RESULTS_XG_COLUMN = 4
 GD_COLUMN, FORM_COLUMN = 8, 10            # in the Table view
+SPARK_ROW_LIMIT = 100                      # a Table longer than this skips the place sparks: they cost a full replay
 RUN_LETTERS = {fd.STREAK_WINNING: "W", fd.STREAK_UNBEATEN: "U", fd.STREAK_WINLESS: "N", fd.STREAK_LOSING: "L"}
 RUN_NAMED_FROM = 3                        # the Table tab names a followed team's run once it is this long
 CLUB_OPEN_PRIORITY = 10_000                 # the palette ranks the open competition's own teams first,
@@ -313,8 +314,10 @@ class SheetOverlay:
         self.sheet, self.px = sheet, px
         self.pills: dict[tuple[int, int], str] = {}
         self.bars: dict[tuple[int, int], float] = {}
+        self.sparks: dict[tuple[int, int], tuple[int, ...]] = {}
+        self._spark_colour = ""
         self.drawn_rows: set[int] = set()        # the rows the last draw painted
-        self._by_row: dict[int, list[tuple[int, str | float]]] = {}
+        self._by_row: dict[int, list[tuple[int, str | float | tuple[int, ...]]]] = {}
         self._colours: Mapping[str, tuple[str | None, str | None]] = {}
         self._bar_colours = ("", "")
         self._font = (FONT, 9, "bold")
@@ -344,13 +347,15 @@ class SheetOverlay:
             self.on_leave()
 
     def show(self, pills: Mapping[tuple[int, int], str], bars: Mapping[tuple[int, int], float],
-             colours: Mapping[str, tuple[str | None, str | None]], bar_colours: tuple[str, str]) -> None:
+             colours: Mapping[str, tuple[str | None, str | None]], bar_colours: tuple[str, str],
+             sparks: Mapping[tuple[int, int], tuple[int, ...]] | None = None, spark_colour: str = "") -> None:
         """Pills: (row, column) → its letters, oldest first. Bars: (row, column) → a value from -1 to 1,
-        drawn right in bar_colours[0] when positive and left in bar_colours[1] when negative."""
-        self.pills, self.bars = dict(pills), dict(bars)
-        self._colours, self._bar_colours = colours, bar_colours
-        by_row: dict[int, list[tuple[int, str | float]]] = defaultdict(list)
-        for (row, column), value in [*self.pills.items(), *self.bars.items()]:
+        drawn right in bar_colours[0] when positive and left in bar_colours[1] when negative. Sparks:
+        (row, column) → league places, oldest first, drawn as a line under that cell's pills."""
+        self.pills, self.bars, self.sparks = dict(pills), dict(bars), dict(sparks or {})
+        self._colours, self._bar_colours, self._spark_colour = colours, bar_colours, spark_colour
+        by_row: dict[int, list[tuple[int, str | float | tuple[int, ...]]]] = defaultdict(list)
+        for (row, column), value in [*self.pills.items(), *self.bars.items(), *self.sparks.items()]:
             by_row[row].append((column, value))
         self._by_row = by_row
         self.draw()
@@ -376,6 +381,8 @@ class SheetOverlay:
                 box = (columns[column], rows[row], columns[column + 1], rows[row + 1])
                 if isinstance(value, str):
                     self._pills(canvas, box, value, row, column)
+                elif isinstance(value, tuple):
+                    self._spark(canvas, box, value, len(self.pills.get((row, column), "")))
                 else:
                     self._bar(canvas, box, value)
                 self.drawn_rows.add(row)
@@ -385,7 +392,7 @@ class SheetOverlay:
         x1, y1, x2, y2 = box
         width, height, gap = self.px(18), self.px(16), self.px(4)
         left = x1 + ((x2 - x1) - (len(letters) * (width + gap) - gap)) / 2
-        top = (y1 + y2 - height) / 2
+        top = (y1 + y2 - height) / 2 - (self.px(2) if (row, column) in self.sparks else 0)   # room for the spark
         for index, letter in enumerate(letters):
             self._hits.append((left, top, left + width, top + height, row, column, index))
             background, text = self._colours.get(letter, (None, None))
@@ -399,6 +406,25 @@ class SheetOverlay:
             canvas.create_text(left + width / 2, top + height / 2, text=letter, fill=text or "#ffffff",
                                font=self._font, tags=self.TAG)
             left += width + gap
+
+    def _spark(self, canvas: tk.Canvas, box: tuple[float, ...], places: tuple[int, ...], pill_count: int) -> None:
+        """A thin line of league places under the pills, one point below each of the last pills; a better
+        place sits higher. Its height covers at least three places, so one step never looks like a plunge."""
+        x1, _y1, x2, y2 = box
+        width, gap = self.px(18), self.px(4)
+        points = min(len(places), pill_count)
+        if points < 2:
+            return
+        places = places[-points:]
+        left = x1 + ((x2 - x1) - (pill_count * (width + gap) - gap)) / 2
+        xs = [left + (pill_count - points + i) * (width + gap) + width / 2 for i in range(points)]
+        low, high = min(places), max(places)
+        span, middle = max(high - low, 3), (low + high) / 2
+        band_middle, band_height = y2 - self.px(3), self.px(4)
+        coords = []
+        for x, place in zip(xs, places):
+            coords += [x, band_middle + (place - middle) / span * band_height]
+        canvas.create_line(*coords, fill=self._spark_colour, width=1, tags=self.TAG)
 
     def _bar(self, canvas: tk.Canvas, box: tuple[float, ...], value: float) -> None:
         x1, _y1, x2, y2 = box
@@ -1896,7 +1922,14 @@ class FMReviewApp(_Root):
                                   fg=hidden, redraw=False)
         scale = max([10, *(abs(gd) for gd in differences.values())])
         bars = {(row_idx, GD_COLUMN): gd / scale for row_idx, gd in differences.items() if gd}
-        self.overlays["Table"].show(pills, bars, theme.colours, (theme.colours["W"][0], theme.colours["L"][0]))
+        sparks = {}
+        if len(self.table_rows) <= SPARK_ROW_LIMIT:
+            spark_places = fd.place_sparks(fd.positions_by_matchday(
+                self.dataset, self.comp_id, self.season, self.fixtures, self.labels))
+            sparks = {(row_idx, FORM_COLUMN): spark_places[team_id] for row_idx, team_id in enumerate(self.table_rows)
+                      if team_id in spark_places}
+        self.overlays["Table"].show(pills, bars, theme.colours, (theme.colours["W"][0], theme.colours["L"][0]),
+                                    sparks=sparks, spark_colour=theme.muted)
         sheet.refresh()
         zones = {r.zone for _, rows in result.groups for r in rows if r.zone}
         note = [result.note]

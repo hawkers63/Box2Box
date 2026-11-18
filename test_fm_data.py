@@ -607,6 +607,29 @@ class TieBreakTests(unittest.TestCase):
         self.assertIn("cannot follow", table.note)
 
 
+class PlaceSparkTests(unittest.TestCase):
+    @staticmethod
+    def chart(*tracks):
+        group = fd.PositionGroup("", tuple(fd.PositionTrack(i, f"T{i}", pos, tuple(0 for _ in pos), played)
+                                           for i, (pos, played) in enumerate(tracks, start=1)), ())
+        return fd.PositionChart(matchdays=tuple(range(1, len(tracks[0][0]) + 1)), groups=(group,))
+
+    def test_a_spark_is_the_place_after_each_of_the_last_five_matches(self):
+        chart = self.chart(((9, 8, 7, 6, 5, 4, 3), (1, 2, 3, 4, 5, 6, 7)))
+        self.assertEqual(fd.place_sparks(chart), {1: (7, 6, 5, 4, 3)})
+
+    def test_a_matchday_without_a_match_adds_no_point(self):
+        chart = self.chart(((5, 4, 4, 3), (1, 2, 2, 3)))        # no match on matchday 3: the place is the same
+        self.assertEqual(fd.place_sparks(chart), {1: (5, 4, 3)})
+
+    def test_a_team_with_fewer_than_two_matches_has_no_spark(self):
+        chart = self.chart(((3, 3, 3), (0, 1, 1)), ((2, 2, 2), (0, 0, 0)))
+        self.assertEqual(fd.place_sparks(chart), {})
+
+    def test_no_chart_gives_no_sparks(self):
+        self.assertEqual(fd.place_sparks(None), {})
+
+
 class PositionTests(unittest.TestCase):
     def chart(self, fixtures, **build):
         ds = fd.build_dataset(info(), fixtures, **build)

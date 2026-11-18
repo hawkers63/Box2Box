@@ -427,6 +427,36 @@ class WindowTests(unittest.TestCase):
         letter = next(i for i in items if canvas.type(i) == "text")
         self.assertEqual(canvas.itemcget(letter, "fill"), app.view_theme.colours[canvas.itemcget(letter, "text")][1])
 
+    def test_the_form_cell_carries_a_place_spark_under_its_pills(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_view("Table")
+        app.update()
+        overlay = app.overlays["Table"]
+        row = app.table_rows.index(team(1))
+        self.assertEqual(overlay.sparks[(row, fm_review.FORM_COLUMN)], (1, 1))      # Hull led after both matches
+        canvas = app.sheets["Table"].MT
+        lines = [i for i in canvas.find_withtag(fm_review.SheetOverlay.TAG) if canvas.type(i) == "line"]
+        self.assertEqual(len(lines), len(overlay.sparks))
+        self.assertEqual(len(canvas.coords(lines[0])), 4)                           # two points, so one segment
+        self.assertEqual(canvas.itemcget(lines[0], "fill"), app.view_theme.muted)
+
+    def test_a_spark_rises_when_the_team_climbs(self):
+        app = self.app
+        overlay = app.overlays["Table"]
+        canvas = app.sheets["Table"].MT
+        app.install_dataset(dataset())
+        app.set_view("Table")
+        app.update()
+        row = 0
+        overlay.show({(row, fm_review.FORM_COLUMN): "WWL"}, {}, app.view_theme.colours, ("#000000", "#000000"),
+                     sparks={(row, fm_review.FORM_COLUMN): (9, 5, 2)}, spark_colour="#aaaaaa")
+        app.update()
+        line = next(i for i in canvas.find_withtag(fm_review.SheetOverlay.TAG) if canvas.type(i) == "line")
+        ys = canvas.coords(line)[1::2]
+        self.assertGreater(ys[0], ys[1])
+        self.assertGreater(ys[1], ys[2])                                            # canvas y grows downwards
+
     def test_zone_edges_and_the_colour_key(self):
         app = self.app
         app.install_dataset(dataset())

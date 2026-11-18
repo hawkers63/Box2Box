@@ -11,6 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Show only from a Table row**: with a club followed, right-clicking another club's row offers **Show only {your club} v {that club}**, which opens Results filtered to their meetings.
+- **Copy a club's results**: right-click any club's row (Results, Grid, Table or Analysis) and choose **Copy {club}'s results** to put that club's played matches on the clipboard for a post, as Markdown and HTML. The item is greyed for a club with no played match, and the club you follow does not change.
+- **A place spark in the Form column**: a thin line under the form pills shows the club's league place after each of its last five matches, a better place sitting higher. It is drawn for tables of up to 100 teams.
+- **A faint bevel on the form pills**: a lighter top edge and a darker bottom edge, thin enough to leave the letter's contrast untouched.
+
+### Changed
+
+- The "Unverified build" notice in the title band is now a small muted **UV** chip. Hovering it explains the build, that fmsave borrows the nearest known layouts, and that values are unconfirmed; clicking it opens the details. It disappears by itself once fmsave supports the build. The build-check note in exports is unchanged.
+
+
 ## [1.7] - 2026-11-18
 
 Adds a standalone Windows build and head-to-head from the right-click menu, and refreshes the GitHub front page.

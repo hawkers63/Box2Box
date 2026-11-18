@@ -1805,6 +1805,20 @@ def positions_by_matchday(
     )
 
 
+def place_sparks(chart: PositionChart | None, last: int = 5) -> dict[int, tuple[int, ...]]:
+    """Each team's league place after each of its last `last` scored matches, oldest first: the data behind
+    the little line in the Table's Form cell. A matchday the team did not play adds no point, and a team
+    with fewer than two matches has no spark. Empty without a chart."""
+    sparks: dict[int, tuple[int, ...]] = {}
+    for group in chart.groups if chart else ():
+        for track in group.tracks:
+            before = (0, *track.played)
+            places = [place for place, now, was in zip(track.positions, track.played, before) if now > was]
+            if len(places) >= 2:
+                sparks[track.team_id] = tuple(places[-last:])
+    return sparks
+
+
 # --------------------------------------------------------------------------- season comparison
 
 
