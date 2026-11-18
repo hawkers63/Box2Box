@@ -231,6 +231,55 @@ def _movement(row, previous: Mapping[int, tuple[int, int]], shown: int | None) -
     return f"▲{place - row.position}" if place > row.position else f"▼{row.position - place}" if place < row.position else "•"
 
 
+def table_note(lines: Sequence[TableLine]) -> str:
+    """The small note under a table: it is calculated, and what any shading, movement or star means."""
+    legend = zone_legend(lines)
+    note = "Table calculated from the results." + (f" Shaded: {legend}." if legend else "")
+    if any(t.movement for t in lines):
+        note += " ± is the change in place since the previous table."
+    if any(t.ppg.endswith("*") for t in lines):
+        note += " * a match with no score is left out of PPG."
+    return note
+
+
+def cut_table_note(cut: str, lines: Sequence[TableLine]) -> str:
+    """A table's note with, in front, how a cut table was cut ("Top 16 of 36 shown")."""
+    return (f"{cut}. " if cut else "") + table_note(lines)
+
+
+def standings_head(lines: Sequence[TableLine]) -> tuple[str, ...]:
+    """The columns of a weekly or final table; ± and PPG only where a line carries them."""
+    return (("±",) if any(t.movement for t in lines) else ()) + ("#", "Team", "P", "W", "D", "L", "F", "A", "GD", "Pts") +         (("PPG",) if any(t.ppg for t in lines) else ()) + ("Last six",)
+
+
+def standings_values(t: TableLine, lines: Sequence[TableLine]) -> tuple[str, ...]:
+    """One line of a table as text, in the order of standings_head."""
+    return (((t.movement,) if any(x.movement for x in lines) else ()) +
+            (str(t.pos), t.team, str(t.played), str(t.won), str(t.drawn), str(t.lost), str(t.goals_for),
+             str(t.goals_against), f"{t.goal_difference:+d}" if t.goal_difference else "0", str(t.points)) +
+            ((t.ppg,) if any(x.ppg for x in lines) else ()) + (t.form,))
+
+
+RECORD_HEAD = ("#", "Team", "P", "W", "D", "L", "F", "A", "Pts")
+SPLITS_NOTE = "Home and away records are calculated from the results, in the order of the overall table."
+
+
+def record_values(t: TableLine) -> tuple[str, ...]:
+    return (str(t.pos), t.team, str(t.played), str(t.won), str(t.drawn), str(t.lost), str(t.goals_for),
+            str(t.goals_against), str(t.points))
+
+
+def places_note(page: PlacesPage) -> str:
+    legend = " · ".join(name for zone, name in ZONE_NAMES.items() if any(r.zone == zone for r in page.rows))
+    return ("Place after each matchweek, calculated from the results; a blank means the club had not yet played. "
+            "Now is the latest place." + (f" Shaded: {legend}." if legend else ""))
+
+
+def side_label(match: BookMatch, side: str) -> str:
+    """A side's name as printed: with "*" after it when it went through a level tie."""
+    return getattr(match, side) + ("*" if match.advanced == side else "")
+
+
 def _table(rows, rules: fd.ZoneRules | None = None, previous: Mapping[int, tuple[int, int]] | None = None,
            unscored: Mapping[int, int] | None = None, marked: int | None = None,
            shown: int | None = None) -> tuple[TableLine, ...]:

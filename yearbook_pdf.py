@@ -90,7 +90,7 @@ def _form(letters: str) -> str:
 
 def side_text(match: yb.BookMatch, side: str) -> str:
     """A team's name as printed: escaped for the PDF, with "*" after it when it went through a level tie."""
-    return escape(getattr(match, side)) + ("*" if match.advanced == side else "")
+    return escape(yb.side_label(match, side))
 
 
 def _matches(matches, styles) -> Table:
@@ -111,13 +111,7 @@ def _matches(matches, styles) -> Table:
 
 def table_note(lines) -> str:
     """The small note under a table: it is calculated, and what any shading, movement or star means."""
-    legend = yb.zone_legend(lines)
-    note = "Table calculated from the results." + (f" Shaded: {legend}." if legend else "")
-    if any(t.movement for t in lines):
-        note += " ± is the change in place since the previous table."
-    if any(t.ppg.endswith("*") for t in lines):
-        note += " * a match with no score is left out of PPG."
-    return note
+    return yb.table_note(lines)
 
 
 MOVE_INK = {"▲": FORM_INK["W"], "▼": FORM_INK["L"]}      # a rise and a fall; anything else is muted
@@ -132,9 +126,7 @@ def _standings(lines, styles) -> Table:
     """A table with its movement and PPG columns only where the lines carry them. A marked club is bold with a
     rule under its row."""
     moves, ppg = any(t.movement for t in lines), any(t.ppg for t in lines)
-    head = (["±"] if moves else []) + ["#", "Team", "P", "W", "D", "L", "F", "A", "GD", "Pts"] + \
-           (["PPG"] if ppg else []) + ["Last six"]
-    rows = [head]
+    rows = [list(yb.standings_head(lines))]
     for t in lines:
         name = f"<b>{escape(t.team)}</b>" if t.marked else escape(t.team)
         rows.append(([Paragraph(_move(t.movement), styles["cell"])] if moves else []) +
@@ -164,7 +156,7 @@ def _standings(lines, styles) -> Table:
 
 def _record(lines, styles) -> Table:
     """A home or away record: places, results and goals, with no form."""
-    rows = [["#", "Team", "P", "W", "D", "L", "F", "A", "Pts"]] + \
+    rows = [list(yb.RECORD_HEAD)] + \
            [[str(t.pos), Paragraph(f"<b>{escape(t.team)}</b>" if t.marked else escape(t.team), styles["cell"]), t.played,
              t.won, t.drawn, t.lost, t.goals_for, t.goals_against, t.points] for t in lines]
     table = Table(rows, colWidths=[8 * mm, 52 * mm] + [9 * mm] * 6 + [11 * mm], hAlign="CENTER", repeatRows=1)
@@ -233,9 +225,7 @@ def _places_tables(page, styles) -> list[Table]:
 
 def _places_parts(page, styles) -> list[list]:
     """The parts of each landscape page of a places grid: heading, table and a note."""
-    legend = " · ".join(name for zone, name in yb.ZONE_NAMES.items() if any(r.zone == zone for r in page.rows))
-    note = ("Place after each matchweek, calculated from the results; a blank means the club had not yet played. "
-            "Now is the latest place." + (f" Shaded: {legend}." if legend else ""))
+    note = yb.places_note(page)
     parts = []
     for (first, last), table in zip(places_chunks(len(page.matchweeks)), _places_tables(page, styles)):
         weeks = page.matchweeks[first:last]
@@ -253,9 +243,8 @@ def _block_parts(page, styles) -> list:
     if isinstance(page, yb.CupBlock):
         note = [Paragraph(escape(page.footnote), styles["small"])] if page.footnote else []
         if page.table:                      # a league phase: its table after the day's results, cut to the top places
-            cut = f"{page.table_note}. " if page.table_note else ""
             note += [Spacer(1, 4 * mm), _standings(page.table, styles),
-                     Paragraph(escape(cut + table_note(page.table)), styles["small"])]
+                     Paragraph(escape(yb.cut_table_note(page.table_note, page.table)), styles["small"])]
         title = escape(page.heading)
     else:
         note, title = [], f"{escape(page.competition)} · {escape(page.heading)}"
@@ -266,8 +255,7 @@ def _matchweek_parts(page, styles) -> list:
     """The parts of a full matchweek: heading, results and table, kept together."""
     return [Paragraph(f"{escape(page.competition)} · {escape(page.heading)}", styles["heading"]),
             _matches(page.matches, styles), Spacer(1, 6 * mm), _standings(page.table, styles),
-            Paragraph(escape((page.table_note + ". " if page.table_note else "") + table_note(page.table)),
-                      styles["small"]), Spacer(1, 8 * mm)]
+            Paragraph(escape(yb.cut_table_note(page.table_note, page.table)), styles["small"]), Spacer(1, 8 * mm)]
 
 
 def _height(parts: list) -> float:
@@ -370,8 +358,7 @@ def _flow(book: yb.Yearbook) -> list:
                     for kind, record in (("home", home), ("away", away)):
                         flow += [KeepTogether([Paragraph(f"{escape(name)} · {kind} record", styles["heading"]),
                                                _record(record, styles), Spacer(1, 4 * mm)])]
-                    flow += [Paragraph("Home and away records are calculated from the results, in the order of "
-                                       "the overall table.", styles["small"]), Spacer(1, 8 * mm)]
+                    flow += [Paragraph(yb.SPLITS_NOTE, styles["small"]), Spacer(1, 8 * mm)]
     while flow and isinstance(flow[-1], PageBreak):          # a page break at the very end would print a blank page
         flow.pop()
     return flow
