@@ -2092,6 +2092,46 @@ class PathsTests(unittest.TestCase):
         )
 
 
+class BundleDirTests(unittest.TestCase):
+    """Where read-only bundled data (the icon, LICENSE) lives, apart from the files the app writes."""
+
+    def test_bundle_dir_is_the_source_folder_when_not_frozen(self):
+        self.assertEqual(
+            fm_review._resolve_bundle_dir(frozen=False, meipass=None, source=Path(r"C:\Box2Box\fm_review.py")),
+            Path(r"C:\Box2Box"),
+        )
+
+    def test_bundle_dir_is_the_pyinstaller_data_folder_when_frozen(self):
+        self.assertEqual(
+            fm_review._resolve_bundle_dir(
+                frozen=True,
+                meipass=r"C:\Users\Me\Desktop\Box2Box\_internal",
+                source=Path(r"C:\Users\Me\Desktop\Box2Box\_internal\fm_review.pyc"),
+            ),
+            Path(r"C:\Users\Me\Desktop\Box2Box\_internal"),
+        )
+
+    def test_a_frozen_build_without_a_data_folder_falls_back_to_the_source_folder(self):
+        self.assertEqual(
+            fm_review._resolve_bundle_dir(frozen=True, meipass=None, source=Path(r"C:\app\fm_review.pyc")),
+            Path(r"C:\app"),
+        )
+
+    def test_the_icon_and_licence_are_read_from_the_bundle_and_the_written_files_stay_beside_the_app(self):
+        self.assertEqual(fm_review.ICON_PATH, fm_review.BUNDLE_DIR / "icon" / "football-64-sky-blue.ico")
+        self.assertEqual(fm_review.LICENCE_PATH, fm_review.BUNDLE_DIR / "LICENSE")
+        for written in (fm_review.SETTINGS_PATH, fm_review.ERROR_LOG, fm_review.ARCHIVE_PATH, fm_review.NAMES_PATH):
+            self.assertEqual(written.parent, fm_review.APP_DIR)
+
+    def test_in_a_frozen_one_file_build_the_written_files_sit_beside_the_exe_not_in_the_temporary_folder(self):
+        exe = Path(r"C:\Users\Me\Box2Box.exe")
+        temporary = r"C:\Users\Me\AppData\Local\Temp\_MEI12345"
+        source = Path(temporary) / "fm_review.pyc"
+        app = fm_review._resolve_app_dir(frozen=True, executable=exe, source=source)
+        bundle = fm_review._resolve_bundle_dir(frozen=True, meipass=temporary, source=source)
+        self.assertEqual((app, bundle), (Path(r"C:\Users\Me"), Path(temporary)))
+
+
 class IconTests(unittest.TestCase):
     def test_the_icon_is_a_windows_icon(self):
         data = fm_review.ICON_PATH.read_bytes()

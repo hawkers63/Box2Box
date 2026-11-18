@@ -57,7 +57,7 @@ VERSION = "2.4"
 
 
 def _resolve_app_dir(*, frozen: bool, executable: Path, source: Path) -> Path:
-    """Where Box2Box reads and writes its own files (settings, error log, bundled assets).
+    """Where Box2Box reads and writes its own files (settings, error log, archive, competition names).
 
     In a frozen PyInstaller build, `__file__` points to the extracted `_internal` cache rather
     than the installation folder, so we read `sys.executable` instead — the `.exe` beside which
@@ -66,9 +66,21 @@ def _resolve_app_dir(*, frozen: bool, executable: Path, source: Path) -> Path:
     return executable.resolve().parent if frozen else source.resolve().parent
 
 
+def _resolve_bundle_dir(*, frozen: bool, meipass: str | None, source: Path) -> Path:
+    """Where the read-only data bundled with the app (the icon, LICENSE, fonts) lives. PyInstaller unpacks it to
+    `sys._MEIPASS` (the `_internal` folder of a one-folder build, a temporary folder for a one-file build), which is
+    not where the app's own writable files go."""
+    return Path(meipass) if frozen and meipass else source.resolve().parent
+
+
 APP_DIR = _resolve_app_dir(
     frozen=getattr(sys, "frozen", False),
     executable=Path(sys.executable),
+    source=Path(__file__),
+)
+BUNDLE_DIR = _resolve_bundle_dir(
+    frozen=getattr(sys, "frozen", False),
+    meipass=getattr(sys, "_MEIPASS", None),
     source=Path(__file__),
 )
 NAMES_PATH = APP_DIR / "competition_names.csv"
@@ -76,8 +88,8 @@ SETTINGS_PATH = APP_DIR / "box2box_settings.json"
 LEGACY_SETTINGS_PATH = APP_DIR / "fm_review_settings.json"
 ERROR_LOG = APP_DIR / "box2box_errors.log"
 ARCHIVE_PATH = APP_DIR / "box2box_archive.sqlite"        # every opened save is banked here (archive.py)
-LICENCE_PATH = APP_DIR / "LICENSE"
-ICON_PATH = APP_DIR / "icon" / "football-64-sky-blue.ico"
+LICENCE_PATH = BUNDLE_DIR / "LICENSE"
+ICON_PATH = BUNDLE_DIR / "icon" / "football-64-sky-blue.ico"
 APP_ID = "hawkers63.Box2Box"         # the taskbar's name for Box2Box, so it shows its own icon
 
 # Word for word the first line of LICENSE.
