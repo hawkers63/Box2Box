@@ -960,10 +960,12 @@ class WindowTests(unittest.TestCase):
     def test_a_view_is_chosen_by_typing_and_enter(self):
         app, pal = self.palette_app()
         app.open_palette()
-        app.update()                                         # focus moves to the box before keys are sent
+        box = pal.entry._entry
+        box.focus_force()                                    # a generated key only reaches the box that holds focus
+        self.assertTrue(self.wait_until(lambda: app.focus_get() is box), "the search box never took focus")
         pal.set_query("table")
         self.assertEqual(pal.results[0].title, "Table")
-        pal.entry._entry.event_generate("<Return>")
+        box.event_generate("<Return>")
         app.update()
         self.assertFalse(pal.is_open)
         self.assertEqual(app.view, "Table")
