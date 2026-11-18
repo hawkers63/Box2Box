@@ -18,6 +18,7 @@ import json
 import os
 import queue
 import re
+import sqlite3
 import sys
 import threading
 import time
@@ -52,7 +53,7 @@ import yearbook
 import yearbook_pdf
 
 APP_TITLE = "Box2Box"
-VERSION = "1.8"
+VERSION = "2.0"
 
 
 def _resolve_app_dir(*, frozen: bool, executable: Path, source: Path) -> Path:
@@ -1665,7 +1666,7 @@ class FMReviewApp(_Root):
         try:
             with archive.Archive.open(ARCHIVE_PATH) as book:
                 return book.season_labels()
-        except archive.ArchiveError:
+        except (archive.ArchiveError, sqlite3.Error):        # a locked or damaged file: no menu, not a broken one
             return []
 
     def _refresh_yearbook_menu(self) -> None:

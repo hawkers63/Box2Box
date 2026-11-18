@@ -9,6 +9,7 @@ import ctypes
 import dataclasses
 import json
 import sys
+import sqlite3
 import tempfile
 import time
 import tkinter as tk
@@ -1992,6 +1993,11 @@ class WindowTests(unittest.TestCase):
     def test_with_nothing_banked_the_yearbook_menu_says_to_bank_a_save_first_and_creates_no_file(self):
         self.assertEqual(self.yearbook_labels(), [("Bank a save first", "disabled")])
         self.assertFalse(fm_review.ARCHIVE_PATH.exists())
+
+    def test_a_locked_or_damaged_archive_leaves_the_yearbook_menu_empty_not_broken(self):
+        self.bank_into_archive()
+        with mock.patch.object(archive.Archive, "season_labels", side_effect=sqlite3.OperationalError("database is locked")):
+            self.assertEqual(self.yearbook_labels(), [("Bank a save first", "disabled")])
 
     def test_choosing_a_season_builds_and_renders_that_volume_off_the_main_thread(self):
         app = self.app

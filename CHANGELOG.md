@@ -1,8 +1,8 @@
 # Changelog
 
-**Release:** 1.8  
+**Release:** 2.0  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 1.8), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.0), launched with `Box2Box.bat`
 
 All notable changes to this project will be documented in this file.
 
@@ -10,6 +10,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [2.0] - 2026-11-18
+
+Keeps history across saves, and turns it into the Yearbook: a printable PDF of a whole season.
+
+### Added
+
+- **A local archive.** Every save you open is banked, after it has opened, into `box2box_archive.sqlite` beside the app. Fixtures are keyed on competition, season, the two clubs and which meeting it is, so a postponed match keeps its identity. A played result is never replaced by "not played" or a missing score, and importing the same saves in any order gives the same archive. A save that disagrees with the archive is refused as a different playthrough, and a failed import leaves the archive untouched. The detail bar reports each bank ("Banked: 412 new fixtures, 3 updated, 0 conflicts", or "Already banked.").
+- **The Yearbook (PDF).** *Export ▾ → Yearbook (PDF)* (and the command palette) writes one banked season as a book: matchweeks with their dates, results and the table after each, with the last six results; cup rounds and European nights in date order with aggregates on second legs; a title page that states which saves it was built from and any gap between them; and the final table of each completed league. A postponed match prints on the day it was played, marked "Matchweek N, rescheduled". Light, ink-friendly, no badges.
+- League tables as at a date in the data layer (`fm_data.standings_as_of`), and each club's nation kept on the loaded save.
+
+### Notes
+
+- Only competitions you have named appear in the book. When one is named "Premier League", the book keeps that league's country and the continental competitions.
+- The save stores no extra time, penalties or away goals, so the book never prints them: a tie level after both legs names the club that went through only when a later round shows it, otherwise it says "level".
+- New dependency: reportlab (with Pillow and charset-normalizer), and the DejaVu Sans font, which is included under its own licence.
 
 ## [1.8] - 2026-11-18
 
