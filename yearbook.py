@@ -18,6 +18,7 @@ from dataclasses import dataclass
 import archive as arch
 import fm_data as fd
 
+MAX_NAME_LENGTH = 24                    # a club name longer than this is printed as the game's short name, if it has one
 HOME_LEAGUE_NAME = "premier league"     # the competition whose nation is the book's home nation
 # The footnote for a "*": the save stores no shootout, extra-time or 90-minute score, so all that is known is that
 # the match or the aggregate was level and one side still went through.
@@ -135,6 +136,14 @@ def home_nation(competitions: Sequence[arch.ArchivedCompetition], names: Mapping
         if name and name.strip().casefold() == HOME_LEAGUE_NAME:
             return comp.nation
     return None
+
+
+def _display_names(fixtures: Sequence) -> dict[int, str]:
+    """Each club's name as printed: the full name, or the game's short name when the full one is long (so it cannot
+    run into the score) and a shorter one exists."""
+    full, short = fd.team_labels(fixtures), fd.team_labels(fixtures, short=True)
+    return {team: short[team] if len(name) > MAX_NAME_LENGTH and 0 < len(short.get(team, "")) < len(name) else name
+            for team, name in full.items()}
 
 
 def _table(rows) -> tuple[TableLine, ...]:
@@ -281,7 +290,7 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
         if not name or (home is not None and not comp.continental and comp.nation != home):
             continue
         fixtures = fd.season_fixtures(dataset, comp.key, season)
-        labels = fd.team_labels(fixtures)
+        labels = _display_names(fixtures)
         league = [f for f in fixtures if f.round is None and f.round_index is not None]
         cup = [f for f in fixtures if f.round is not None and f.round_index is not None]
         built = (_league_pages(name, league, labels, comp.tie_breaks) if league else []) + \

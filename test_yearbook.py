@@ -57,6 +57,27 @@ class LeaguePageTests(unittest.TestCase):
         self.assertEqual(page.table[0].team, "Hull City")
         self.assertEqual(page.table[0].points, 6)
 
+    @staticmethod
+    def long_named(home_name, home_short, **kw):
+        base = fx(D(2026, 8, 8), 1, 2, 2, 0, md=1, **kw)
+        return dataclasses.replace(base, home_club_name=home_name, home_club_short_name=home_short)
+
+    def test_a_long_club_name_is_replaced_by_the_games_short_name_in_the_results_and_the_table(self):
+        book = self.make([self.long_named("Al-Jazira Sports & Culture Club", "Al-Jazira SCC")])
+        (page,) = self.league_pages(book)
+        self.assertEqual(page.matches[0].home, "Al-Jazira SCC")
+        self.assertIn("Al-Jazira SCC", [t.team for t in page.table])
+
+    def test_a_name_that_is_not_long_is_kept_even_when_the_game_has_a_shorter_one(self):
+        book = self.make([self.long_named("Sheffield United", "Sheff Utd")])
+        (page,) = self.league_pages(book)
+        self.assertEqual(page.matches[0].home, "Sheffield United")
+
+    def test_a_long_name_stays_when_the_short_name_is_no_shorter(self):
+        book = self.make([self.long_named("Al-Jazira Sports & Culture Club", "Al-Jazira Sports & Culture Club")])
+        (page,) = self.league_pages(book)
+        self.assertEqual(page.matches[0].home, "Al-Jazira Sports & Culture Club")
+
     def test_a_played_match_with_no_recoverable_score_reads_n_a(self):
         book = self.make([fx(D(2026, 8, 8), 1, 2, None, None, played=True, md=1)])
         (page,) = self.league_pages(book)

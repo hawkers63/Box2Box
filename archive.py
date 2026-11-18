@@ -282,6 +282,16 @@ class Archive:
                 home_name=f.home_club_name or "", away_name=f.away_club_name or "", source_date=dataset.info.game_date))
         return records, skipped
 
+    def _fill_short_names(self, dataset) -> None:
+        """Record the game's short club names where the archive has none yet (first writer wins, so the order saves
+        arrive in never matters). Runs inside the caller's transaction."""
+        for fixtures in dataset.fixtures.values():
+            for f in fixtures:
+                for uid, short in ((f.home_club_uid, f.home_club_short_name), (f.away_club_uid, f.away_club_short_name)):
+                    if uid is not None and short:
+                        self._db.execute("UPDATE clubs SET short_name = ? WHERE uid = ? AND short_name IS NULL",
+                                         (short, uid))
+
     def _stored(self, key: FixtureKey) -> ArchivedFixture | None:
         row = self._db.execute(
             f"SELECT {', '.join(_COLUMNS)} FROM fixtures WHERE competition_key = ? AND season = ? AND home_uid = ? "
@@ -308,6 +318,8 @@ class Archive:
         game_date = _iso(info.game_date)
         if self._db.execute("SELECT 1 FROM imports WHERE file_name = ? AND game_date IS ?",
                             (info.file_name, game_date)).fetchone():
+            with self._db:                          # an archive banked before short names were kept: fill them in
+                self._fill_short_names(dataset)
             return BankReport(0, 0, 0, 0, 0, True)
         records, skipped = self._archived(dataset)
         self._check_world(records)
@@ -335,6 +347,7 @@ class Archive:
             for f in records:
                 for uid, name in ((f.key[2], f.home_name), (f.key[3], f.away_name)):
                     self._db.execute("INSERT OR IGNORE INTO clubs (uid, name) VALUES (?, ?)", (uid, name))
+            self._fill_short_names(dataset)
             for uid, nation in dataset.club_nations.items():
                 self._db.execute("UPDATE clubs SET nation_id = ? WHERE uid = ? AND nation_id IS NULL", (nation, uid))
             self._db.execute(
@@ -372,6 +385,7 @@ class Archive:
         import fm_data as fd
         from fmsave import CodedValue, CompetitionRound, Fixture
         columns = ", ".join(_COLUMNS)
+        short = {uid: name for uid, name in self._db.execute("SELECT uid, short_name FROM clubs") if name}
         fixtures = []
         for row in self._db.execute(f"SELECT {columns} FROM fixtures ORDER BY competition_key, season, date"):
             f = _fixture(row)
@@ -381,9 +395,10 @@ class Archive:
             fixtures.append(Fixture(
                 stage_id=0, competition_id=key[0], competition_name=None, round=round_, round_index=f.round_index,
                 date=f.date, kick_off_time=f.kick_off, season_start_year=key[1],
-                home_team_id=key[2], home_club_uid=key[2], home_club_name=f.home_name, home_club_short_name=f.home_name,
+                home_team_id=key[2], home_club_uid=key[2], home_club_name=f.home_name,
+                home_club_short_name=short.get(key[2], f.home_name),
                 home_team_slot=0, away_team_id=key[3], away_club_uid=key[3], away_club_name=f.away_name,
-                away_club_short_name=f.away_name, away_team_slot=0, home_goals=f.home_goals, away_goals=f.away_goals,
+                away_club_short_name=short.get(key[3], f.away_name), away_team_slot=0, home_goals=f.home_goals, away_goals=f.away_goals,
                 played=f.played, is_neutral_venue=False, stadium_uid=None, stadium_name=None, referee_id=None,
                 match_rules_template=(), unknown={}))
         known = self.competitions()

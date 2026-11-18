@@ -219,6 +219,23 @@ class BankTests(unittest.TestCase):
             report = a.bank(data)
         self.assertEqual(report.added, 2)
 
+    def test_the_games_short_club_names_are_kept(self):
+        with archive.Archive.open(self.path) as a:
+            a.bank(bank_dataset([fx(D(2026, 8, 8), 1, 2, 1, 0, md=1)]))
+        self.assertEqual(self.rows(table="clubs"), [(1, "Hull City", "Hull", 5), (2, "Leeds United", "Leeds", 5)])
+
+    def test_an_archive_banked_before_short_names_were_kept_gets_them_back_on_the_next_open_of_the_same_save(self):
+        data = bank_dataset([fx(D(2026, 8, 8), 1, 2, 1, 0, md=1)])
+        with archive.Archive.open(self.path) as a:
+            a.bank(data)
+        with contextlib.closing(sqlite3.connect(self.path)) as db:
+            db.execute("UPDATE clubs SET short_name = NULL")
+            db.commit()
+        with archive.Archive.open(self.path) as a:
+            report = a.bank(data)
+        self.assertTrue(report.already_banked)                                  # nothing else changed...
+        self.assertEqual([r[2] for r in self.rows(table="clubs")], ["Hull", "Leeds"])   # ...but the names are back
+
     def test_the_report_reads_in_words(self):
         report = archive.BankReport(added=412, updated=3, unchanged=0, conflicts=0, skipped_unresolved=0,
                                     already_banked=False)
@@ -349,6 +366,13 @@ class ReadBackTests(unittest.TestCase):
         self.assertEqual(table(original, 101, before), table(back, key, after))
         self.assertEqual(back.tie_breaks[key], (2, 0, 1))
         self.assertEqual(back.club_nations[1], 5)
+
+    def test_the_dataset_carries_the_short_names(self):
+        with archive.Archive.open(self.path) as a:
+            a.bank(bank_dataset([fx(D(2026, 8, 8), 1, 2, 1, 0, md=1)]))
+            fixtures = a.dataset().fixtures[12]
+        self.assertEqual(fd.team_labels(fixtures, short=True), {1: "Hull", 2: "Leeds"})
+        self.assertEqual(fd.team_labels(fixtures), {1: "Hull City", 2: "Leeds United"})
 
     def test_a_cup_round_comes_back_as_the_same_round(self):
         final = CodedValue(CompetitionRound.FINAL, 19)
