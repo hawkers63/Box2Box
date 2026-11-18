@@ -731,6 +731,7 @@ class FMReviewApp(_Root):
             self.post_menu.add_command(label=label, command=lambda k=kind: self.copy_for_post(k))
         self.export_menu.add_cascade(label="Copy for a post", menu=self.post_menu)
         self.yearbook_menu = tk.Menu(self.export_menu, tearoff=False, postcommand=self._refresh_yearbook_menu)
+        self.mark_club_var = tk.BooleanVar(value=False)         # off unless asked for, every time the app starts
         self.export_menu.add_cascade(label="Yearbook (PDF)", menu=self.yearbook_menu)
         self.export_menu.add_separator()
         self.export_menu.add_command(label="Open the export folder", command=self.open_export_folder)
@@ -1679,6 +1680,9 @@ class FMReviewApp(_Root):
             return
         for season, label in seasons:
             menu.add_command(label=label, command=lambda sn=season: self.export_yearbook(sn))
+        if self._followed_club():
+            menu.add_separator()
+            menu.add_checkbutton(label=f"Mark {self._followed_club()} in bold", variable=self.mark_club_var)
 
     def export_yearbook(self, season: int) -> None:
         """Build one season's Yearbook from the archive and write it as a PDF, on a background thread."""
@@ -1687,13 +1691,20 @@ class FMReviewApp(_Root):
         self._exporting = True
         self.export_button.configure(state="disabled", text="Exporting…")
         self.detail_label.configure(text="Building the Yearbook…")
-        threading.Thread(target=self._yearbook_worker, args=(season, dict(self.names), export_folder()),
+        marked = self._marked_club_uid()
+        threading.Thread(target=self._yearbook_worker, args=(season, dict(self.names), export_folder(), marked),
                          daemon=True).start()
 
-    def _yearbook_worker(self, season: int, names: dict[int, str], folder: Path) -> None:
+    def _marked_club_uid(self) -> int | None:
+        """The followed club's uid when the Yearbook menu's tick is on, else None."""
+        if not self.mark_club_var.get() or self.focus is None:
+            return None
+        return fd.team_club_uids(self.fixtures).get(self.focus)
+
+    def _yearbook_worker(self, season: int, names: dict[int, str], folder: Path, marked: int | None = None) -> None:
         try:
             with archive.Archive.open(ARCHIVE_PATH) as book:
-                built = yearbook.build_yearbook(book, season, names)
+                built = yearbook.build_yearbook(book, season, names, marked)
             folder.mkdir(parents=True, exist_ok=True)
             path = folder / f"Yearbook {built.season_label.replace('/', '-')}.pdf"
             yearbook_pdf.render(built, path)

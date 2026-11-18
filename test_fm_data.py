@@ -168,6 +168,10 @@ class LabelTests(unittest.TestCase):
                                     unresolved_away(fx(D(2026, 7, 2), 2, 3))])
         self.assertEqual(names, {team(1): "Hull City", team(1, 1): "Hull City", team(2): "Leeds United"})
 
+    def test_club_uids_cover_reserve_sides_and_skip_unresolved_teams(self):
+        uids = fd.team_club_uids([fx(D(2026, 7, 1), 1, 1, away_slot=1), unresolved_away(fx(D(2026, 7, 2), 2, 3))])
+        self.assertEqual(uids, {team(1): 1, team(1, 1): 1, team(2): 2})
+
 
 class TimelineTests(unittest.TestCase):
     def setUp(self):

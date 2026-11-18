@@ -2020,6 +2020,32 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(seen["path"], out / "Yearbook 2026.pdf")
         self.assertIn("Yearbook 2026.pdf", self.detail())
 
+    def test_the_yearbook_menu_offers_to_mark_the_followed_club_only_when_one_is_followed(self):
+        app = self.app
+        app.install_dataset(dataset())
+        self.bank_into_archive()
+        menu = app.yearbook_menu
+
+        def labels():
+            app._refresh_yearbook_menu()
+            return [menu.entrycget(i, "label") for i in range(menu.index("end") + 1) if menu.type(i) != "separator"]
+
+        app.set_focus(None)
+        self.assertEqual(labels(), ["2027", "2026"])
+        app.set_focus(team(2))
+        self.assertEqual(labels(), ["2027", "2026", "Mark Leeds United in bold"])
+        self.assertFalse(app.mark_club_var.get())
+
+    def test_the_followed_club_is_marked_in_the_book_only_when_the_tick_is_on(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_focus(team(2))
+        self.assertIsNone(app._marked_club_uid())
+        app.mark_club_var.set(True)
+        self.assertEqual(app._marked_club_uid(), 2)
+        app.set_focus(None)
+        self.assertIsNone(app._marked_club_uid())
+
     def test_a_failure_building_the_yearbook_is_shown_and_logged(self):
         app = self.app
         self.bank_into_archive()

@@ -812,6 +812,17 @@ def team_club_names(fixtures: Iterable[Fixture]) -> dict[int, str]:
     return names
 
 
+def team_club_uids(fixtures: Iterable[Fixture]) -> dict[int, int]:
+    """Each team's club uid, so that a club's reserve and youth sides share it. Teams the save cannot resolve have
+    no club uid and are left out."""
+    uids: dict[int, int] = {}
+    for f in fixtures:
+        for team_id, uid in ((f.home_team_id, f.home_club_uid), (f.away_team_id, f.away_club_uid)):
+            if uid is not None and team_id not in uids:
+                uids[team_id] = uid
+    return uids
+
+
 def underlying_category(comp: CompetitionInfo, dataset: Dataset) -> str:
     """What a competition is by its fixtures alone: the hub files a competition the user manages in as Your
     Club, which says nothing about whether it is a league or a cup."""
