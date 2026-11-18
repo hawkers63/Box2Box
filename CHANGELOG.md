@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **One-match competitions** (the Community Shield, the UEFA Super Cup) are a single dated block ("Community Shield · Sun 16 Aug") instead of a matchweek with a two-club table. A season opener keeps its place in date order.
+- **Play-offs are named:** cup rounds inside a league read "Championship play-offs, Semi-final, 1st leg". A continental competition's knockout rounds do not.
+- **European competitions read properly.** The league phase is "Matchday N" with its table cut to the top 16; the qualifying rounds are ties with 1st and 2nd legs and aggregates. The save reuses round numbers for separate qualifying rounds and may store a tie's legs in consecutive rounds, so the book now separates rounds by date and joins legs by the pair that plays them.
+
 ## [2.1] - 2026-11-18
 
 Refines the Yearbook after a first review of a real volume.
