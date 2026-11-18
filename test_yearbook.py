@@ -648,3 +648,29 @@ class ResultsStripTests(BookBuilder, unittest.TestCase):
     def test_ordinals_read_naturally(self):
         self.assertEqual([yearbook.ordinal(n) for n in (1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 24)],
                          ["1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "23rd", "24th"])
+
+
+class ExcludedCompetitionTests(BookBuilder, unittest.TestCase):
+    """The U18 competitions never appear in the book, even when the user has named them."""
+
+    FIXTURES = [fx(D(2026, 8, 8), 1, 2, 2, 0, md=1), fx(D(2026, 8, 15), 2, 1, 0, 1, md=2),
+                fx(D(2026, 8, 8), 3, 4, 1, 1, comp=102, md=1), fx(D(2026, 8, 15), 4, 3, 0, 0, comp=102, md=2)]
+    COMPS = [NS(id=101, database_id=12), NS(id=102, database_id=95041306)]
+
+    def build_with(self, names):
+        book, folder = banked(self.FIXTURES, competitions=self.COMPS)
+        self.addCleanup(folder.cleanup)
+        self.addCleanup(book.close)
+        return yearbook.build_yearbook(book, 2026, names)
+
+    def test_a_named_u18_competition_gets_no_pages_and_is_not_listed(self):
+        built = self.build_with({12: "Premier League", 95041306: "U18 Premier League"})
+        self.assertEqual({p.competition for p in built.pages if hasattr(p, "competition")}, {"Premier League"})
+        self.assertNotIn("U18", " ".join(built.pages[0].coverage_lines))
+
+    def test_both_u18_ids_are_excluded(self):
+        self.assertTrue({95041306, 95041309} <= set(yearbook.EXCLUDED_DATABASE_IDS))
+
+    def test_an_excluded_competition_named_premier_league_does_not_decide_the_home_nation(self):
+        built = self.build_with({12: "Premier League", 95041306: "Premier League"})
+        self.assertEqual({p.competition for p in built.pages if hasattr(p, "competition")}, {"Premier League"})

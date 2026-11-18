@@ -35,6 +35,27 @@ ZONE_TINT = {"promotion": "#bfe3c7", "playoff": "#f1dfa6", "relegation": "#f0bcb
              "ucl": "#b9d8f0", "europa": "#d7e8c0"}
 
 
+class BookDocTemplate(BaseDocTemplate):
+    """A document whose flowables may carry an `_outline` = (level, title): the PDF's contents. The bookmark lands on
+    the page the flowable was drawn on."""
+
+    def afterFlowable(self, flowable) -> None:
+        entry = getattr(flowable, "_outline", None)
+        if not entry:
+            return
+        if entry is getattr(self, "_outline_last", None):
+            return
+        self._outline_last = entry
+        level, title = entry
+        self._outline_depth = getattr(self, "_outline_depth", -1)
+        level = min(level, self._outline_depth + 1)                 # an outline may not skip a level
+        key = f"outline{getattr(self, '_outline_count', 0)}"
+        self._outline_count = getattr(self, "_outline_count", 0) + 1
+        self._outline_depth = level
+        self.canv.bookmarkPage(key)
+        self.canv.addOutlineEntry(title, key, level, closed=False)
+
+
 def _fonts_dir() -> Path:
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))     # a frozen build unpacks its data files here
     return base / "fonts"
@@ -293,32 +314,57 @@ def _flow(book: yb.Yearbook) -> list:
         else:
             flow.extend([NextPageTemplate(template), PageBreak()])
 
+    seen: set[str] = set()
+
+    def outlined(flowable, level: int, title: str):
+        """Bookmark a flowable. A KeepTogether is handed to the document as its parts, so its first part carries the
+        same entry (the document skips an entry it has just seen)."""
+        entry = (level, title)
+        flowable._outline = entry
+        if isinstance(flowable, KeepTogether) and flowable._content:
+            flowable._content[0]._outline = entry
+        return flowable
+
+    def competition_entry(flowable, name: str):
+        """Bookmark a competition at its first page; its play-off rounds belong to it."""
+        base = name.removesuffix(" play-offs")
+        if base not in seen:
+            seen.add(base)
+            outlined(flowable, 1, base)
+        return flowable
+
     for page in order_for_pages(book.pages):
         if isinstance(page, yb.TitlePage):
-            flow += [Spacer(1, 60 * mm), Paragraph(f"Football Yearbook {escape(page.season_label)}", styles["title"]),
+            heading = outlined(Paragraph(f"Football Yearbook {escape(page.season_label)}", styles["title"]), 0,
+                               f"Football Yearbook {page.season_label}")
+            flow += [Spacer(1, 60 * mm), heading,
                      Spacer(1, 8 * mm)] + [Paragraph(escape(line), styles["line"]) for line in page.coverage_lines]
             new_page()
         elif isinstance(page, yb.LeaguePage) and page.table:       # a matchweek and its table stay together
-            flow.append(KeepTogether(_matchweek_parts(page, styles)))
+            flow.append(competition_entry(KeepTogether(_matchweek_parts(page, styles)), page.competition))
         elif isinstance(page, (yb.LeaguePage, yb.CupBlock)):      # a cup day, or a postponed match played late
-            flow.append(KeepTogether(_block_parts(page, styles)))
+            flow.append(competition_entry(KeepTogether(_block_parts(page, styles)), page.competition))
         elif isinstance(page, yb.PlacesPage):
             switch_to("landscape")
             for number, parts in enumerate(_places_parts(page, styles)):
                 if number:
                     flow.append(PageBreak())
-                flow.append(KeepTogether(parts))
+                keep = KeepTogether(parts)
+                flow.append(outlined(keep, 1, f"{page.competition}: How they stood") if not number else keep)
             switch_to("portrait")
         elif isinstance(page, yb.FinalTablesPage):
             new_page()
             splits = {entry[0]: entry for entry in page.splits}
             strips = dict(page.strips)
+            first_table = True
             for name, lines in page.tables:
                 strip = ([Paragraph(f"{escape(name)} · from the results", styles["heading"])] +
                          [Paragraph(escape(text), styles["cell"]) for text in strips[name]]) if strips.get(name) else []
-                flow += [KeepTogether([Paragraph(f"{escape(name)} · final table", styles["heading"]),
-                                       _standings(lines, styles), Paragraph(table_note(lines), styles["small"]),
-                                       *strip, Spacer(1, 8 * mm)])]
+                final = KeepTogether([Paragraph(f"{escape(name)} · final table", styles["heading"]),
+                                      _standings(lines, styles), Paragraph(table_note(lines), styles["small"]),
+                                      *strip, Spacer(1, 8 * mm)])
+                flow.append(outlined(final, 1, "Final tables") if first_table else final)
+                first_table = False
                 if name in splits:
                     _, _, home, away = splits[name]
                     for kind, record in (("home", home), ("away", away)):
@@ -338,7 +384,7 @@ def render(book: yb.Yearbook, path: Path) -> None:
     path = Path(path)
     scrap = path.with_name(path.name + ".part")
     try:
-        doc = BaseDocTemplate(str(scrap), pagesize=A4, title=f"Football Yearbook {book.season_label}",
+        doc = BookDocTemplate(str(scrap), pagesize=A4, title=f"Football Yearbook {book.season_label}",
                               author="Box2Box")
 
         def footer(canvas, _doc) -> None:

@@ -161,7 +161,7 @@ class RenderTests(unittest.TestCase):
         self.assertEqual([type(p).__name__ for p in order], ["LeaguePage", "CupBlock"])
 
     def test_a_failure_while_drawing_leaves_no_file_and_no_scrap_behind(self):
-        with mock.patch.object(yearbook_pdf, "BaseDocTemplate") as doc:
+        with mock.patch.object(yearbook_pdf, "BookDocTemplate") as doc:
             doc.return_value.build.side_effect = RuntimeError("out of paper")
             with self.assertRaises(RuntimeError):
                 yearbook_pdf.render(book(week(1)), self.path)
@@ -170,7 +170,7 @@ class RenderTests(unittest.TestCase):
     def test_a_failure_keeps_an_earlier_book_that_was_already_there(self):
         yearbook_pdf.render(book(week(1)), self.path)
         before = self.path.read_bytes()
-        with mock.patch.object(yearbook_pdf, "BaseDocTemplate") as doc:
+        with mock.patch.object(yearbook_pdf, "BookDocTemplate") as doc:
             doc.return_value.build.side_effect = RuntimeError("out of paper")
             with self.assertRaises(RuntimeError):
                 yearbook_pdf.render(book(week(1), week(2)), self.path)
@@ -326,3 +326,42 @@ class ResultsStripDrawingTests(unittest.TestCase):
         self.assertLess(texts.index("Premier League · final table"), texts.index("Premier League · from the results"))
         for line in lines:
             self.assertIn(line, texts)
+
+
+def outline_of(*pages):
+    flow = yearbook_pdf._flow(book(*pages))
+    return [f._outline for f in flow if getattr(f, "_outline", None)]
+
+
+class OutlineTests(unittest.TestCase):
+    CUP = yb.CupBlock("FA Cup", "Quarter-final", "", "Wed 18 Mar", (yb.BookMatch("", "Leeds United", "Hull City", "2-0"),),
+                      D(2026, 3, 18))
+    FINAL = yb.FinalTablesPage((("Premier League", table("Hull City", "Leeds United")),))
+
+    def test_the_season_then_each_competition_once_then_the_closing_sections(self):
+        self.assertEqual(outline_of(week(1), self.CUP, week(2), places(), self.FINAL),
+                         [(0, "Football Yearbook 2026/27"), (1, "Premier League"), (1, "FA Cup"),
+                          (1, "Premier League: How they stood"), (1, "Final tables")])
+
+    def test_a_leagues_play_off_rounds_belong_to_the_league_not_a_new_entry(self):
+        playoffs = yb.CupBlock("Premier League play-offs", "Semi-final", "", "Sat 9 May", (yb.BookMatch("", "Leeds United", "Hull City", "1-0"),), D(2026, 5, 9))
+        self.assertEqual([t for _, t in outline_of(week(1), playoffs)], ["Football Yearbook 2026/27", "Premier League"])
+
+    def test_every_matchweek_is_not_bookmarked(self):
+        self.assertEqual(len(outline_of(*[week(n) for n in range(1, 9)])), 2)       # the season and the one league
+
+    def test_the_rendered_pdf_carries_the_outline_in_order(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "b.pdf"
+            yearbook_pdf.render(book(week(1), self.CUP, self.FINAL), path)
+            data = path.read_bytes()
+        self.assertIn(b"/Outlines", data)
+        titles = [t.decode("latin-1") for t in re.findall(rb"/Title \((.*?)\)", data)]
+        self.assertEqual(titles[1:], ["Football Yearbook 2026/27", "Premier League", "FA Cup", "Final tables"])   # [0] is the file's own title
+
+    def test_a_competition_bookmark_lands_on_its_first_page(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "b.pdf"
+            yearbook_pdf.render(book(week(1), self.FINAL), path)
+            data = path.read_bytes()
+        self.assertEqual(len(re.findall(rb"/Dest\s*\[", data)), 3)                    # season, league, final tables

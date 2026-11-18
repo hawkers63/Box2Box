@@ -27,6 +27,9 @@ ZONE_NAMES = {fd.ZONE_PROMOTION: "Promotion", fd.ZONE_UCL: "Champions League pla
 LEAGUE_PHASE_SHOWN = 16                 # a league phase's table shows this many places (the top 16 of a 36-club table)
 SAME_FIELD = 0.75                       # this share of a round's clubs playing the next round too: a league phase, not a knockout
 MAX_NAME_LENGTH = 24                    # a club name longer than this is printed as the game's short name, if it has one
+# Competitions that never appear in the book, even when named: the U18 Premier League and the U18 Professional
+# Development League (database ids). Youth competitions are not part of the season the book records.
+EXCLUDED_DATABASE_IDS = frozenset({95041306, 95041309})
 HOME_LEAGUE_NAME = "premier league"     # the competition whose nation is the book's home nation
 # The footnote for a "*": the save stores no shootout, extra-time or 90-minute score, so all that is known is that
 # the match or the aggregate was level and one side still went through.
@@ -185,7 +188,7 @@ def home_nation(competitions: Sequence[arch.ArchivedCompetition], names: Mapping
     None when no competition has that name (then every named league is included)."""
     for comp in competitions:
         name = names.get(comp.database_id)
-        if name and name.strip().casefold() == HOME_LEAGUE_NAME:
+        if comp.database_id not in EXCLUDED_DATABASE_IDS and name and name.strip().casefold() == HOME_LEAGUE_NAME:
             return comp.nation
     return None
 
@@ -622,7 +625,7 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
     unplayed = False
     for comp in sorted(competitions, key=lambda c: c.key):
         name = names.get(comp.database_id)
-        if not name or (home is not None and not comp.continental and comp.nation != home):
+        if not name or comp.database_id in EXCLUDED_DATABASE_IDS or (home is not None and not comp.continental and comp.nation != home):
             continue
         fixtures = fd.season_fixtures(dataset, comp.key, season)
         labels = _display_names(fixtures)
