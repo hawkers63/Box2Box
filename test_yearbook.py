@@ -346,6 +346,44 @@ class SingleMatchAndPlayOffTests(unittest.TestCase):
         self.assertTrue(block.heading.startswith("Championship play-offs, Semi-final"), block.heading)
 
 
+class ContinentalTests(unittest.TestCase):
+    """A continental competition (clubs from several nations) whose league phase is stored as matchdays."""
+    NATIONS = {1: 5, 2: 6, 3: 7, 4: 8, 5: 9}
+    NAMES = {14: "UEFA Champions League"}
+    COMPS = [NS(id=102, database_id=14)]
+
+    def make(self, fixtures):
+        book, folder = banked(fixtures, nations=self.NATIONS, competitions=self.COMPS, game=D(2027, 6, 1))
+        self.addCleanup(folder.cleanup)
+        self.addCleanup(book.close)
+        return yearbook.build_yearbook(book, 2026, self.NAMES)
+
+    LEAGUE = [fx(D(2026, 9, 15), 1, 2, 3, 0, comp=102, md=1), fx(D(2026, 9, 15), 3, 4, 0, 0, comp=102, md=1),
+              fx(D(2026, 9, 29), 1, 3, 2, 2, comp=102, md=2), fx(D(2026, 9, 29), 2, 4, 1, 0, comp=102, md=2)]
+
+    def test_a_league_phase_reads_matchday_and_its_table_is_cut_to_the_top_places(self):
+        with mock.patch.object(yearbook, "LEAGUE_PHASE_SHOWN", 2):
+            built = self.make(self.LEAGUE)
+        pages = [p for p in built.pages if isinstance(p, yearbook.LeaguePage)]
+        self.assertEqual([p.heading for p in pages], ["Matchday 1 · Tue 15 Sep", "Matchday 2 · Tue 29 Sep"])
+        self.assertEqual([len(p.table) for p in pages], [2, 2])
+        self.assertEqual(pages[0].table_note, "Top 2 of 4 shown")
+
+    def test_a_small_league_phase_shows_every_club_and_no_cut_note(self):
+        pages = [p for p in self.make(self.LEAGUE).pages if isinstance(p, yearbook.LeaguePage)]
+        self.assertEqual((len(pages[0].table), pages[0].table_note), (4, ""))
+
+    def test_a_continental_competitions_knockout_rounds_are_not_play_offs(self):
+        built = self.make(self.LEAGUE + [fx(D(2027, 3, 4), 1, 2, 1, 0, comp=102, md=3, rnd=QF)])
+        (block,) = [p for p in built.pages if isinstance(p, yearbook.CupBlock)]
+        self.assertTrue(block.heading.startswith("UEFA Champions League, Quarter-final"), block.heading)
+
+    def test_the_title_page_lists_competitions_not_their_play_off_blocks(self):
+        built = self.make(self.LEAGUE + [fx(D(2027, 3, 4), 1, 2, 1, 0, comp=102, md=3, rnd=QF)])
+        line = next(l for l in built.pages[0].coverage_lines if l.startswith("Competitions:"))
+        self.assertEqual(line, "Competitions: UEFA Champions League.")
+
+
 class ZoneTests(unittest.TestCase):
     NAMES = {12: "Premier League"}
     RELEGATION = NS(competition_id=101, promotion_places=0, playoff_places=0, relegation_places=1, rounds=(), unknown={})

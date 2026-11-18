@@ -131,7 +131,8 @@ def _matchweek_parts(page, styles) -> list:
     """The parts of a full matchweek: heading, results and table, kept together."""
     return [Paragraph(f"{escape(page.competition)} · {escape(page.heading)}", styles["heading"]),
             _matches(page.matches, styles), Spacer(1, 6 * mm), _standings(page.table, styles),
-            Paragraph(table_note(page.table), styles["small"]), Spacer(1, 8 * mm)]
+            Paragraph(escape((page.table_note + ". " if page.table_note else "") + table_note(page.table)),
+                      styles["small"]), Spacer(1, 8 * mm)]
 
 
 def _height(parts: list) -> float:
