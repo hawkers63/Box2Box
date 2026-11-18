@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Yearbook level ties use an asterisk.** A side that went through a level tie is marked `*` after its name, with one footnote under the block: "* went through a level tie, decided in extra time or on penalties". The save stores no shootout, extra-time or 90-minute score, so the book still never prints one. An aggregate stays in brackets on the second leg, and a level tie nobody is known to have won reads "(level)".
+- **European league phases read "Matchday N"** instead of "Round N", and get a table after the last day of each matchday, cut to the top 16 ("Top 16 of 36 shown"). A league phase is recognised by nearly the same clubs playing round after round, or a pair meeting again, so its drawn games no longer get tie notes.
+- **Long club names use the game's short name** (over 24 characters, and only when the game has a shorter one).
+- **Table zones in the final stretch.** A league table shows promotion, play-off and relegation places (and, for a 20-club top division, estimated Champions League and Europa League places) from the last 11 matches of a season of up to 38, or the last 10 of a longer one (Premier League from match 27, Championship from match 36), and always in the final table. Tinted position cells and a line under the table say what the shading means.
+- **Pages are a little more compact**, and a small block that comes just before a matchweek which cannot share its page now follows that matchweek instead of leaving an empty page.
+- **The archive upgrades itself to schema 2** (it now keeps each competition's zone rules and the game's short club names). Older archives are migrated on first open; opening a save you have already banked fills in what the older archive lacked.
+
 ## [2.0] - 2026-11-18
 
 Keeps history across saves, and turns it into the Yearbook: a printable PDF of a whole season.
