@@ -1,8 +1,8 @@
 # Changelog
 
-**Release:** 2.3  
+**Release:** 2.4  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 2.3), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.4), launched with `Box2Box.bat`
 
 All notable changes to this project will be documented in this file.
 
@@ -10,6 +10,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [2.4] - 2026-11-18
+
+Shows the whole season at a glance: where every club stood, week by week, and a few figures from the results.
+
+### Added
+
+- **How they stood:** for each league with tables for two or more matchweeks, a landscape page of every club's place after every matchweek, in the order of the latest table. A blank means the club had not yet played; the last column is the current place, shaded by zone. The places are the ones the weekly tables printed, so the grid and the book cannot disagree. Weeks that will not fit at 7 pt split into equal parts (for example matchweeks 1-23 and 24-46) with the same clubs on each; no week or club is ever dropped. The grid comes after the weekly pages and before the final tables, and appears for a season still in progress too. European league phases do not get one.
+- **From the results:** under the final table of each finished league, the most wins, best goal difference, fewest goals against and most draws; the biggest rise and biggest fall (a club's largest climb or drop between two matchweeks, naming both); and the longest winning and unbeaten runs. Clubs that share a record are all named. A club that had not played every week is left out of the rise and fall, and the note says so. A match with no score ends a run, and the strip says so. It names no player, manager or award, because the save holds none.
+
+### Changed
+
+- The Yearbook is drawn with two page layouts (portrait and landscape); the title page still carries no footer, and a book that ends on a grid no longer risks a blank last page.
 
 ## [2.3] - 2026-11-18
 

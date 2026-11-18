@@ -8,7 +8,7 @@
 
 A Windows desktop viewer for the fixtures, results, grids and league tables in a Football Manager 27 (or 26) save. Saves are read with [fmsave](https://rhiever.github.io/fmsave/) and are never modified.
 
-[![Release 2.3](https://img.shields.io/badge/Release-2.3-0EA5E9)](https://github.com/hawkers63/Box2Box/releases/latest)
+[![Release 2.4](https://img.shields.io/badge/Release-2.4-0EA5E9)](https://github.com/hawkers63/Box2Box/releases/latest)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)](https://www.microsoft.com/windows)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![GUI](https://img.shields.io/badge/GUI-CustomTkinter%20%2B%20tksheet-10B981)](https://customtkinter.tomschimansky.com/)
@@ -20,9 +20,9 @@ A Windows desktop viewer for the fixtures, results, grids and league tables in a
 
 **Database viewer** · entry point `fm_review.py` · launcher `Box2Box.bat`
 
-**Release:** 2.3  
+**Release:** 2.4  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 2.3), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.4), launched with `Box2Box.bat`
 
 </div>
 
@@ -333,6 +333,8 @@ A save keeps the current season's results but lets the past thin out, early cup 
 - Cup rounds and European nights in the same shape, in date order. The aggregate goes on the second leg; a side that went through a level tie is marked `*` after its name, with a footnote, when a later round shows it. A European league phase reads "Matchday N" and gets a table after each matchday, cut to the top 16.
 - League tables with promotion, play-off and relegation places (and estimated European places for a 20-club top division) shaded from the last 11 matches of the season, and always in the final table.
 - The final table of each league once all its matches are played, followed by its home and away records in the same order.
+- A landscape **How they stood** page for each league: every club's place after every matchweek, with a blank before it had played and the current place shaded by zone. Weeks that will not fit split into equal parts.
+- Under each final table, **From the results**: most wins, best goal difference, fewest goals against, most draws, the biggest rise and fall in the table, and the longest winning and unbeaten runs, all worked out from the results.
 - Optionally one club in bold with a rule under its row (*Export ▾ → Yearbook (PDF)* → "Mark {club} in bold", offered while a club is followed).
 - One light, ink-friendly style: no badges, no club colours.
 
@@ -467,6 +469,7 @@ The tests write only to temporary directories and do not need a real Football Ma
 
 | Release | Date | Highlights |
 | --- | --- | --- |
+| [**2.4**](https://github.com/hawkers63/Box2Box/releases/tag/v2.4) | 18&nbsp;Nov&nbsp;2026 | 🗓️ Yearbook "How they stood" grids of every club's place week by week, and a "From the results" strip under each final table |
 | [**2.3**](https://github.com/hawkers63/Box2Box/releases/tag/v2.3) | 18&nbsp;Nov&nbsp;2026 | 📈 Yearbook tables show movement since the last table, points per game, and home and away records; optionally mark one club in bold |
 | [**2.2**](https://github.com/hawkers63/Box2Box/releases/tag/v2.2) | 18&nbsp;Nov&nbsp;2026 | 🏆 The Yearbook reads the European cups properly (qualifying legs, Matchday tables), names play-offs, and gives one-match finals their own block |
 | [**2.1**](https://github.com/hawkers63/Box2Box/releases/tag/v2.1) | 18&nbsp;Nov&nbsp;2026 | 📖 Yearbook refinements: level ties marked with an asterisk, Matchday tables for European league phases, table zones and short club names |
