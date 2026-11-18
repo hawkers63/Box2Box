@@ -182,6 +182,7 @@ class Dataset:
     fixtures_without_competition: int
     zone_rules: Mapping[int, ZoneRules] = field(default_factory=dict)
     tie_breaks: Mapping[int, tuple[int, ...]] = field(default_factory=dict)
+    club_nations: Mapping[int, int] = field(default_factory=dict)      # club uid -> nation id, where the save says
     expected_goals: Mapping[tuple, ExpectedGoals] = field(default_factory=dict)   # keyed on fixture_key
     match_reports: Mapping[tuple, MatchStats] = field(default_factory=dict)        # keyed on fixture_key
     xg_report: XgReport | None = None    # None until the match statistics have been read
@@ -446,11 +447,14 @@ def build_dataset(
     fixtures = list(fixtures)
     rules = list(rules)
     reputation: dict[int, int] = {}
+    club_nations: dict[int, int] = {}
     managed_teams: set[int] = set()
     first_team_id: int | None = None
     for club in clubs:
         if club.reputation is not None:
             reputation[club.uid] = club.reputation
+        if getattr(club, "nation_id", None) is not None:
+            club_nations[club.uid] = club.nation_id
         if club.uid == info.managed_club_uid:
             own = [team for team in club.teams if not team.is_affiliate]
             managed_teams = {team.team_id for team in own}
@@ -501,6 +505,7 @@ def build_dataset(
         fixtures_without_competition=without_competition,
         zone_rules=link_zone_rules(rules, ordered),
         tie_breaks=link_tie_breaks(rules),
+        club_nations=club_nations,
     )
     return dataset if match_stats is None else with_expected_goals(dataset, match_stats)
 

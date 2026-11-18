@@ -607,6 +607,14 @@ class TieBreakTests(unittest.TestCase):
         self.assertIn("cannot follow", table.note)
 
 
+class ClubNationTests(unittest.TestCase):
+    def test_the_dataset_keeps_each_clubs_nation(self):
+        clubs = [NS(uid=1, reputation=10, teams=(), nation_id=5), NS(uid=2, reputation=10, teams=(), nation_id=None),
+                 NS(uid=3, reputation=10, teams=())]                        # a record with no nation field at all
+        ds = fd.build_dataset(info(), [fx(D(2026, 8, 1), 1, 2, 1, 0)], clubs=clubs)
+        self.assertEqual(dict(ds.club_nations), {1: 5})
+
+
 class PlaceSparkTests(unittest.TestCase):
     @staticmethod
     def chart(*tracks):

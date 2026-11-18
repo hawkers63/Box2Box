@@ -48,3 +48,5 @@ AGENTS.md
 
 # Private observer-game saves used for local testing
 games/
+
+box2box_archive.sqlite*
