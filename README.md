@@ -8,7 +8,7 @@
 
 A Windows desktop viewer for the fixtures, results, grids and league tables in a Football Manager 27 (or 26) save. Saves are read with [fmsave](https://rhiever.github.io/fmsave/) and are never modified.
 
-[![Release 2.4](https://img.shields.io/badge/Release-2.4-0EA5E9)](https://github.com/hawkers63/Box2Box/releases/latest)
+[![Release 2.4.1](https://img.shields.io/badge/Release-2.4.1-0EA5E9)](https://github.com/hawkers63/Box2Box/releases/latest)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)](https://www.microsoft.com/windows)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![GUI](https://img.shields.io/badge/GUI-CustomTkinter%20%2B%20tksheet-10B981)](https://customtkinter.tomschimansky.com/)
@@ -20,9 +20,9 @@ A Windows desktop viewer for the fixtures, results, grids and league tables in a
 
 **Database viewer** · entry point `fm_review.py` · launcher `Box2Box.bat`
 
-**Release:** 2.4  
+**Release:** 2.4.1  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 2.4), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.4.1), launched with `Box2Box.bat`
 
 </div>
 
@@ -353,7 +353,7 @@ There are two launchers, built with different tools, for different audiences.
 .\build_exe.ps1                                                     # every rebuild
 ```
 
-The output is `dist\Box2Box\` — about 64 MB with roughly 1,170 files. Zip that folder and move or share it. The exe is not code-signed; Windows SmartScreen will prompt the first time (pick **More info → Run anyway**).
+The output is `dist\Box2Box\` — about 80 MB with roughly 1,180 files. Zip that folder and move or share it. For one file instead, run `.\build_exe.ps1 -OneFile`: it writes `dist\Box2Box.exe` (about 37 MB), which unpacks itself to a temporary folder on every start and so opens a few seconds slower. In both builds your settings, error log, archive and `competition_names.csv` are kept beside the exe. The exe is not code-signed; Windows SmartScreen will prompt the first time (pick **More info → Run anyway**).
 
 **The C# launcher** (`Box2Box.exe` at the project root, built by `build_launcher.ps1`) is a small development wrapper that carries the Box2Box football icon and starts Box2Box through the project's own `.venv`. Build it once, from PowerShell in the Box2Box folder:
 
@@ -469,6 +469,7 @@ The tests write only to temporary directories and do not need a real Football Ma
 
 | Release | Date | Highlights |
 | --- | --- | --- |
+| [**2.4.1**](https://github.com/hawkers63/Box2Box/releases/tag/v2.4.1) | 18&nbsp;Nov&nbsp;2026 | 🔧 The standalone exe shows its icon and the full licence again; a single-file `Box2Box.exe` build is added |
 | [**2.4**](https://github.com/hawkers63/Box2Box/releases/tag/v2.4) | 18&nbsp;Nov&nbsp;2026 | 🗓️ Yearbook "How they stood" grids of every club's place week by week, and a "From the results" strip under each final table |
 | [**2.3**](https://github.com/hawkers63/Box2Box/releases/tag/v2.3) | 18&nbsp;Nov&nbsp;2026 | 📈 Yearbook tables show movement since the last table, points per game, and home and away records; optionally mark one club in bold |
 | [**2.2**](https://github.com/hawkers63/Box2Box/releases/tag/v2.2) | 18&nbsp;Nov&nbsp;2026 | 🏆 The Yearbook reads the European cups properly (qualifying legs, Matchday tables), names play-offs, and gives one-match finals their own block |

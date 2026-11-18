@@ -1,8 +1,8 @@
 # Changelog
 
-**Release:** 2.4  
+**Release:** 2.4.1  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 2.4), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.4.1), launched with `Box2Box.bat`
 
 All notable changes to this project will be documented in this file.
 
@@ -10,6 +10,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [2.4.1] - 2026-11-18
+
+Fixes the standalone build and adds a single-file build.
+
+### Fixed
+
+- **The standalone `Box2Box.exe` had no window icon, and About said "The LICENSE file was not found".** The icon and `LICENSE` are bundled data, which PyInstaller 6 unpacks into `_internal\`, but they were looked for beside the exe. Bundled data is now read from the bundle folder (`sys._MEIPASS` when frozen, the source folder otherwise). Everything the app writes or you edit (settings, the error log, `box2box_archive.sqlite`, `competition_names.csv`) still sits beside the exe.
+
+### Added
+
+- **A single-file build:** `.\build_exe.ps1 -OneFile` writes `dist\Box2Box.exe` (about 37 MB) from the new `Box2Box-onefile.spec`; the one-folder build is unchanged. The single exe unpacks itself to a temporary folder on each start, so it takes a few seconds longer to open; its settings, log, archive and names file are still written beside the exe, never in the temporary folder.
 
 ## [2.4] - 2026-11-18
 
