@@ -196,26 +196,15 @@ class CupBlockTests(unittest.TestCase):
                 self.assertNotIn("aet", m.note)
                 self.assertNotIn("pens", m.note)
 
-    def test_a_group_stage_where_a_pair_meets_in_two_rounds_has_no_tie_notes(self):
-        group = CodedValue(CompetitionRound.UNKNOWN, 1)
-        games = [fx(D(2026, 3, 4), 1, 2, 1, 1, comp=102, md=1, rnd=group), fx(D(2026, 3, 18), 2, 1, 0, 0, comp=102, md=2, rnd=group)]
-        blocks = self.blocks(self.make(games))
-        self.assertEqual(len(blocks), 2)
-        self.assertEqual({m.note for b in blocks for m in b.matches}, {""})
-        self.assertEqual({b.leg for b in blocks}, {""})
-
-    def test_a_block_with_no_level_tie_has_no_footnote(self):
-        first, second = self.blocks(self.make(self.tie()))
-        self.assertEqual((first.footnote, second.footnote), ("", ""))
-
-    def test_the_footnote_claims_only_what_the_save_supports(self):
-        self.assertNotIn("4-3", yearbook.LEVEL_TIE_FOOTNOTE)
-        self.assertIn("extra time or on penalties", yearbook.LEVEL_TIE_FOOTNOTE)
-
-    def test_the_rounds_of_a_group_stage_are_named_matchday_1_matchday_2(self):
-        group = CodedValue(CompetitionRound.UNKNOWN, 1)
-        games = [fx(D(2026, 3, 4), 1, 2, 1, 1, comp=102, md=1, rnd=group), fx(D(2026, 3, 18), 2, 1, 0, 0, comp=102, md=2, rnd=group)]
-        self.assertEqual([b.round_name for b in self.blocks(self.make(games))], ["Matchday 1", "Matchday 2"])
+    def test_two_legs_stored_in_consecutive_rounds_are_still_one_tie_with_its_aggregate(self):
+        legs = [fx(D(2026, 3, 4), 1, 2, 2, 0, comp=102, md=1, rnd=QF), fx(D(2026, 3, 4), 3, 4, 1, 1, comp=102, md=1, rnd=QF),
+                fx(D(2026, 3, 18), 2, 1, 2, 0, comp=102, md=2, rnd=QF), fx(D(2026, 3, 18), 4, 3, 0, 2, comp=102, md=2, rnd=QF),
+                fx(D(2026, 4, 8), 1, 3, 0, 0, comp=102, md=3, rnd=SF)]
+        blocks = self.blocks(self.make(legs))
+        self.assertEqual([(b.round_name, b.leg) for b in blocks[:2]], [("Quarter-final", "1st leg"), ("Quarter-final", "2nd leg")])
+        notes = {(m.home, m.away): (m.note, m.advanced) for m in blocks[1].matches}
+        self.assertEqual(notes[("Leeds United", "Hull City")], ("(2-2 agg)", "away"))       # level, Hull City went through
+        self.assertEqual(notes[("Derby County", "Sheffield United")], ("(1-3 agg)", ""))    # unlevel: just the aggregate
 
     def test_a_league_phase_where_no_pair_meets_twice_is_still_matchdays_not_ties(self):
         group = CodedValue(CompetitionRound.UNKNOWN, 1)

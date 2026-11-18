@@ -146,9 +146,17 @@ class RenderTests(unittest.TestCase):
         order = yearbook_pdf.order_for_pages([cup, self.full_week(1, clubs=6)])
         self.assertEqual([type(p).__name__ for p in order], ["CupBlock", "LeaguePage"])
 
+    def test_a_block_played_well_before_the_matchweek_keeps_its_place_even_when_they_do_not_fit(self):
+        shield = yb.CupBlock("Community Shield", "", "", "Sun 16 Aug",
+                             tuple(yb.BookMatch("", f"Home {i}", f"Away {i}", "2-1") for i in range(8)), D(2026, 8, 16))
+        week = self.full_week(1)
+        week = yb.LeaguePage(week.competition, 1, week.heading, week.matches, week.table, D(2026, 8, 21))
+        order = yearbook_pdf.order_for_pages([shield, week])
+        self.assertEqual([type(p).__name__ for p in order], ["CupBlock", "LeaguePage"])
+
     def test_pages_that_do_not_fit_together_are_reordered_matchweek_first(self):
-        cup = yb.CupBlock("FA Cup", "Fourth round", "", "Tue 4 Aug",
-                          tuple(yb.BookMatch("", f"Home {i}", f"Away {i}", "2-1") for i in range(6)), D(2026, 8, 4))
+        cup = yb.CupBlock("FA Cup", "Fourth round", "", "Fri 7 Aug",
+                          tuple(yb.BookMatch("", f"Home {i}", f"Away {i}", "2-1") for i in range(6)), D(2026, 8, 7))
         order = yearbook_pdf.order_for_pages([cup, self.full_week(1)])
         self.assertEqual([type(p).__name__ for p in order], ["LeaguePage", "CupBlock"])
 

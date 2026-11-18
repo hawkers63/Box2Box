@@ -110,6 +110,7 @@ def _standings(lines, styles) -> Table:
     return table
 
 
+MOVE_WITHIN_DAYS = 3        # only a block this close before a matchweek may follow it
 FRAME_WIDTH, FRAME_HEIGHT = A4[0] - 36 * mm, A4[1] - 34 * mm      # the text area of a page
 
 
@@ -153,8 +154,10 @@ def order_for_pages(pages: Sequence) -> list:
         if small:
             pending.append(page)
         elif full and pending:
-            together = sum(_height(_block_parts(b, styles)) for b in pending) + _height(_matchweek_parts(page, styles))
-            ordered += [page, *pending] if together > FRAME_HEIGHT else [*pending, page]
+            near = [b for b in pending if (page.when - b.when).days <= MOVE_WITHIN_DAYS]
+            early = [b for b in pending if b not in near]                  # a season opener keeps its place
+            together = sum(_height(_block_parts(b, styles)) for b in near) + _height(_matchweek_parts(page, styles))
+            ordered += [*early, page, *near] if together > FRAME_HEIGHT else [*early, *near, page]
             pending = []
         else:
             ordered += [*pending, page]

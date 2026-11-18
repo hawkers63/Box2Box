@@ -262,6 +262,39 @@ def _one_pool(fixtures: Sequence) -> bool:
     return len({find(t) for t in list(parent)}) == 1
 
 
+def _field_runs(fixtures: Sequence) -> list[list[int]]:
+    """Runs of consecutive round indexes whose rounds are played by nearly the same clubs (at least SAME_FIELD of
+    the larger field). A knockout halves its field each round, so a run is two legs of one round (length 2) or a
+    league phase or group stage (length 3 or more)."""
+    field: dict[int, set[int]] = defaultdict(set)
+    for f in fixtures:
+        field[f.round_index].update((f.home_team_id, f.away_team_id))
+    order = sorted(field)
+    runs: list[list[int]] = [[order[0]]] if order else []
+    for before, after in zip(order, order[1:]):
+        same = len(field[before] & field[after]) / max(len(field[before]), len(field[after])) >= SAME_FIELD
+        if same:
+            runs[-1].append(after)
+        else:
+            runs.append([after])
+    return runs
+
+
+def _with_legs_together(fixtures: Sequence, runs: list[list[int]]) -> list:
+    """Some two-legged ties store their second leg in the next round index. For a run of exactly two rounds, bring
+    each pair's second-round meeting into the first round so the pair reads as one tie of two legs."""
+    moves: dict[tuple[int, frozenset], int] = {}
+    for run in runs:
+        if len(run) == 2:
+            first = {frozenset((f.home_team_id, f.away_team_id)) for f in fixtures if f.round_index == run[0]}
+            for f in fixtures:
+                pair = frozenset((f.home_team_id, f.away_team_id))
+                if f.round_index == run[1] and pair in first:
+                    moves[(run[1], pair)] = run[0]
+    return [dataclasses.replace(f, round_index=moves[(f.round_index, frozenset((f.home_team_id, f.away_team_id)))])
+            if (f.round_index, frozenset((f.home_team_id, f.away_team_id))) in moves else f for f in fixtures]
+
+
 def _cup_blocks(name: str, cup_fixtures: Sequence, labels: Mapping[int, str],
                 tie_breaks: Sequence[int] = (), one_match: bool = False) -> list[CupBlock]:
     """The blocks of a cup or continental competition: a block for each round, leg and day with a played match.
@@ -272,23 +305,13 @@ def _cup_blocks(name: str, cup_fixtures: Sequence, labels: Mapping[int, str],
     matchdays = 0
     league_phase: set[int] = set()
     league_fixtures: list = []
-    rounds_of: dict[frozenset, set[int]] = defaultdict(set)
-    field_of: dict[int, set[int]] = defaultdict(set)
-    for f in cup_fixtures:
-        rounds_of[frozenset((f.home_team_id, f.away_team_id))].add(f.round_index)
-        field_of[f.round_index].update((f.home_team_id, f.away_team_id))
-    order = sorted(field_of)
-
-    def same_field(index: int) -> bool:
-        """Nearly the same clubs play the round before or after: a league phase, where a knockout loses about half."""
-        near = [order[i] for i in (order.index(index) - 1, order.index(index) + 1) if 0 <= i < len(order)]
-        return any(len(field_of[index] & field_of[n]) / max(len(field_of[index]), len(field_of[n])) >= SAME_FIELD
-                   for n in near)
+    runs = _field_runs(cup_fixtures)
+    league_rounds = {index for run in runs if len(run) >= 3 for index in run}      # a league phase or group stage
+    cup_fixtures = _with_legs_together(cup_fixtures, runs)
     for rnd in fd.cup_rounds(cup_fixtures, labels):
-        # A group stage looks like knockout rounds to cup_rounds (a side plays once a round), but its pairs meet
-        # again in another round; a knockout tie's legs and replay share one round.
-        knockout = (rnd.knockout and not same_field(rnd.index)
-                    and not any(len(rounds_of[frozenset((t.team_a, t.team_b))]) > 1 for t in rnd.ties))
+        # A group stage looks like knockout rounds to cup_rounds (a side plays once a round); the same clubs playing
+        # three or more rounds running tells it apart.
+        knockout = rnd.knockout and rnd.index not in league_rounds
         if not knockout:
             matchdays += 1
             league_phase.add(rnd.index)
