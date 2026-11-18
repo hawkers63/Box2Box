@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Head-to-head from the right-click menu** (Results, Grid, Table or Analysis): the greyed **Head-to-head…** is now active. On a row that names two clubs (a match or a Grid cell) it opens the inspector on every meeting between them across every competition and season the save holds; on a row that names only one club it reads **Head-to-head with {followed}** and compares the row's club with the one you follow. A pair with no meetings reads "No meetings in this save."
+- **Standalone Windows build** (`dist\Box2Box\Box2Box.exe`, built by `build_exe.ps1`): a self-contained folder that bundles Python, CustomTkinter, tksheet, tkinterdnd2 (with its tkdnd native library), fmsave, openpyxl and the app icon — unzip and double-click. Settings and the error log are written next to the exe, so the folder is portable. Startup is under three seconds; the exe is not code-signed, so Windows SmartScreen prompts the first time. The source-tree workflow (`Box2Box.bat`, the `.venv` and `build_launcher.ps1`) is unchanged.
 
 ### Changed
 

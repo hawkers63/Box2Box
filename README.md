@@ -104,7 +104,9 @@ Football Manager keeps every fixture and result of every competition in your sav
 
 ## 🚀 Quick start
 
-Double-click the **Box2Box** shortcut on the desktop (see below) or **Box2Box.bat**, then **Open save…**. Saves live in `Documents\Sports Interactive\Football Manager 27\games`. Reading one takes around half a minute. The save opens as soon as it has been read; its expected goals follow about 12 seconds later, while you browse. You can also drag a `.fm` save file onto the launcher to open it straight away, or onto the open window to switch to it: one save at a time, and not while another is still being read. Dropping onto the window uses `tkinterdnd2` (installed from `requirements.txt`); without it the window works as before and says so.
+The **standalone Windows build** is the quickest path: unzip the folder from the latest Release, then double-click `Box2Box.exe` inside it. Nothing to install: Python, the libraries and the app icon are bundled. Settings and the error log are written next to `Box2Box.exe`, so the folder is portable — put it on a USB stick or a different drive and it behaves the same. Windows SmartScreen may prompt the first time because the exe is not code-signed; pick **More info → Run anyway**.
+
+From source, double-click the **Box2Box** shortcut on the desktop (see below) or **Box2Box.bat**, then **Open save…**. Saves live in `Documents\Sports Interactive\Football Manager 27\games`. Reading one takes around half a minute. The save opens as soon as it has been read; its expected goals follow about 12 seconds later, while you browse. You can also drag a `.fm` save file onto the launcher to open it straight away, or onto the open window to switch to it: one save at a time, and not while another is still being read. Dropping onto the window uses `tkinterdnd2` (installed from `requirements.txt`); without it the window works as before and says so.
 
 From a terminal:
 
@@ -314,7 +316,18 @@ Exports go to `Documents\Box2Box` (*Export ▾ → Open the export folder*), one
 
 ## 🖥️ Start Box2Box from the desktop
 
-`Box2Box.exe` is a small launcher that carries the Box2Box football icon. It starts Box2Box exactly as `Box2Box.bat` does, with the project's own Python, and a save dropped onto it opens straight away. Build it once, from PowerShell in the Box2Box folder:
+There are two launchers, built with different tools, for different audiences.
+
+**The standalone build** (`dist\Box2Box\Box2Box.exe`, built by `build_exe.ps1`) is a self-contained Windows folder. It bundles Python, CustomTkinter, tksheet, tkinterdnd2 (with its tkdnd native library), fmsave, openpyxl and the app icon — nothing else needs installing. Settings and the error log are written next to the exe, so the folder is portable. A save dragged onto `Box2Box.exe` opens straight away, and a save dragged onto the window works too. Build it once, from PowerShell in the Box2Box folder:
+
+```powershell
+.\.venv\Scripts\python -m pip install -r requirements-build.txt     # once per machine
+.\build_exe.ps1                                                     # every rebuild
+```
+
+The output is `dist\Box2Box\` — about 64 MB with roughly 1,170 files. Zip that folder and move or share it. The exe is not code-signed; Windows SmartScreen will prompt the first time (pick **More info → Run anyway**).
+
+**The C# launcher** (`Box2Box.exe` at the project root, built by `build_launcher.ps1`) is a small development wrapper that carries the Box2Box football icon and starts Box2Box through the project's own `.venv`. Build it once, from PowerShell in the Box2Box folder:
 
 ```powershell
 .\build_launcher.ps1
