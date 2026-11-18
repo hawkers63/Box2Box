@@ -215,6 +215,21 @@ class CupBlockTests(unittest.TestCase):
         games = [fx(D(2026, 3, 4), 1, 2, 1, 1, comp=102, md=1, rnd=group), fx(D(2026, 3, 18), 2, 1, 0, 0, comp=102, md=2, rnd=group)]
         self.assertEqual([b.round_name for b in self.blocks(self.make(games))], ["Matchday 1", "Matchday 2"])
 
+    def test_a_league_phase_where_no_pair_meets_twice_is_still_matchdays_not_ties(self):
+        group = CodedValue(CompetitionRound.UNKNOWN, 1)
+        games = [fx(D(2026, 3, 4), 1, 2, 1, 1, comp=102, md=1, rnd=group), fx(D(2026, 3, 4), 3, 4, 0, 0, comp=102, md=1, rnd=group),
+                 fx(D(2026, 3, 18), 1, 3, 2, 2, comp=102, md=2, rnd=group), fx(D(2026, 3, 18), 2, 4, 1, 1, comp=102, md=2, rnd=group),
+                 fx(D(2026, 4, 1), 1, 4, 0, 0, comp=102, md=3, rnd=group), fx(D(2026, 4, 1), 2, 3, 3, 3, comp=102, md=3, rnd=group)]
+        blocks = self.blocks(self.make(games))
+        self.assertEqual([b.round_name for b in blocks], ["Matchday 1", "Matchday 2", "Matchday 3"])
+        self.assertEqual({m.note for b in blocks for m in b.matches}, {""})
+
+    def test_knockout_rounds_that_halve_the_field_are_still_ties(self):
+        games = [fx(D(2026, 3, 4), 1, 2, 1, 1, comp=102, md=1, rnd=QF), fx(D(2026, 3, 4), 3, 4, 2, 0, comp=102, md=1, rnd=QF),
+                 fx(D(2026, 4, 8), 1, 3, 0, 0, comp=102, md=2, rnd=SF)]
+        first = self.blocks(self.make(games))[0]
+        self.assertEqual(first.round_name, "Quarter-final")
+
     def test_a_league_phase_is_matches_with_no_tie_notes(self):
         group = CodedValue(CompetitionRound.UNKNOWN, 1)
         games = [fx(D(2026, 3, 4), h, a, 1, 1, comp=102, md=1, rnd=group)       # four sides, each playing three times

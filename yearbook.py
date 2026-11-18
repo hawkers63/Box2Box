@@ -24,6 +24,7 @@ import fm_data as fd
 ZONE_NAMES = {fd.ZONE_PROMOTION: "Promotion", fd.ZONE_UCL: "Champions League places (estimated)",
               fd.ZONE_EUROPA: "Europa League places (estimated)", fd.ZONE_PLAYOFF: "Play-offs",
               fd.ZONE_RELEGATION: "Relegation"}                 # from the top of a table down
+SAME_FIELD = 0.75                       # this share of a round's clubs playing the next round too: a league phase, not a knockout
 MAX_NAME_LENGTH = 24                    # a club name longer than this is printed as the game's short name, if it has one
 HOME_LEAGUE_NAME = "premier league"     # the competition whose nation is the book's home nation
 # The footnote for a "*": the save stores no shootout, extra-time or 90-minute score, so all that is known is that
@@ -241,12 +242,22 @@ def _cup_blocks(name: str, cup_fixtures: Sequence, labels: Mapping[int, str]) ->
     names: dict[tuple, str] = {}
     matchdays = 0
     rounds_of: dict[frozenset, set[int]] = defaultdict(set)
+    field_of: dict[int, set[int]] = defaultdict(set)
     for f in cup_fixtures:
         rounds_of[frozenset((f.home_team_id, f.away_team_id))].add(f.round_index)
+        field_of[f.round_index].update((f.home_team_id, f.away_team_id))
+    order = sorted(field_of)
+
+    def same_field(index: int) -> bool:
+        """Nearly the same clubs play the round before or after: a league phase, where a knockout loses about half."""
+        near = [order[i] for i in (order.index(index) - 1, order.index(index) + 1) if 0 <= i < len(order)]
+        return any(len(field_of[index] & field_of[n]) / max(len(field_of[index]), len(field_of[n])) >= SAME_FIELD
+                   for n in near)
     for rnd in fd.cup_rounds(cup_fixtures, labels):
         # A group stage looks like knockout rounds to cup_rounds (a side plays once a round), but its pairs meet
         # again in another round; a knockout tie's legs and replay share one round.
-        knockout = rnd.knockout and not any(len(rounds_of[frozenset((t.team_a, t.team_b))]) > 1 for t in rnd.ties)
+        knockout = (rnd.knockout and not same_field(rnd.index)
+                    and not any(len(rounds_of[frozenset((t.team_a, t.team_b))]) > 1 for t in rnd.ties))
         if not knockout:
             matchdays += 1
         round_name = rnd.name if knockout else f"Matchday {matchdays}"
