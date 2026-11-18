@@ -797,15 +797,31 @@ class WindowTests(unittest.TestCase):
         app = self.app
         app.install_dataset(dataset())                      # an unverified build, Hull City followed: a tinted band
         self.assertIsNotNone(app.club_tint)
-        self.assertIn("Unverified build", app.verify_label.cget("text"))
+        self.assertEqual(app.verify_label.cget("text"), "UV")      # Mark, 18 Nov: two letters, small, muted
         theme = app.theme
-        self.assertEqual(app.verify_label.cget("text_color"), theme.warning)
+        self.assertEqual(app.verify_label.cget("text_color"), theme.muted)
         self.assertEqual(app.verify_chip.cget("fg_color"), theme.panel)
         self.assertNotEqual(app.top_bar.cget("fg_color"), theme.panel)          # the band really is tinted
         for name in ("Cyber Pitch", "Deep Slate & Gold", "High-Contrast"):       # and so in every other theme
             app.set_theme(name)
-            self.assertEqual(app.verify_label.cget("text_color"), app.theme.warning, name)
+            self.assertEqual(app.verify_label.cget("text_color"), app.theme.muted, name)
             self.assertEqual(app.verify_chip.cget("fg_color"), app.theme.panel, name)
+
+    def test_the_uv_chip_explains_itself_in_a_tooltip(self):
+        app = self.app
+        app.install_dataset(dataset())
+        tip = app._build_notice_tip()
+        info = app.dataset.info
+        for part in (info.build, "borrow", info.fmsave_version, "Unverified"):
+            self.assertIn(part, tip)
+        self.assertNotIn("⚠", tip)
+        app.verify_label._label.event_generate("<Enter>", x=2, y=2)
+        app.update()
+        self.assertTrue(app.tooltip.is_shown)
+        self.assertEqual(app.tooltip.text, tip)
+        app.verify_label._label.event_generate("<Leave>")
+        app.update()
+        self.assertFalse(app.tooltip.is_shown)
 
     def test_the_unverified_build_notice_is_hidden_when_the_build_is_known(self):
         app = self.app

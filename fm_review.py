@@ -623,10 +623,13 @@ class FMReviewApp(_Root):
         # tint on the band never takes its colour: the one colour on the band that carries meaning.
         self.verify_chip = role("chip", ctk.CTkFrame(top, width=0, height=0, corner_radius=6))
         self.verify_chip.grid(row=0, column=3, padx=12, sticky="w")
-        self.verify_label = role("warning", ctk.CTkLabel(self.verify_chip, text="", cursor="hand2"))
-        self.verify_label.pack(padx=10, pady=2)
+        self.verify_label = role("muted", ctk.CTkLabel(self.verify_chip, text="", cursor="hand2",
+                                                       font=ctk.CTkFont(FONT, 11)))
+        self.verify_label.pack(padx=6, pady=0)
         for widget in (self.verify_chip, self.verify_label):
             widget.bind("<Button-1>", lambda _e: self.show_details())
+            widget.bind("<Enter>", self._show_build_tip)
+            widget.bind("<Leave>", lambda _e: self.tooltip.hide())
         self.verify_chip.grid_remove()
         self.progress = role("progress", ctk.CTkProgressBar(top, mode="indeterminate", width=180))
         self.progress.grid(row=0, column=4, padx=14)
@@ -1093,7 +1096,7 @@ class FMReviewApp(_Root):
         if info.managed_club_name:
             meta.append(info.managed_club_name)
         self.meta_label.configure(text="  ·  ".join(meta))
-        self._set_build_notice("" if info.known_build else "⚠ Unverified build: values unconfirmed (details)")
+        self._set_build_notice("" if info.known_build else "UV")
         self._refresh_status()
         self._set_controls_state("normal")
         self._sync_view_controls()
@@ -1103,6 +1106,17 @@ class FMReviewApp(_Root):
             self.select_competition(dataset.competitions[0].id)
         else:
             self._show_message("This save holds no fixtures that could be read.")
+
+    def _build_notice_tip(self) -> str:
+        """What the "UV" chip stands for, in words (the click opens the full details)."""
+        info = self.dataset.info
+        return (f"Unverified build: {info.game} {info.build} is not one fmsave {info.fmsave_version} has layouts "
+                "for yet, so it borrows the nearest known ones. Values are unconfirmed until fmsave "
+                "supports the build. Click for details.")
+
+    def _show_build_tip(self, event) -> None:
+        if self.dataset is not None:
+            self.tooltip.show(self._build_notice_tip(), event.x_root, event.y_root)
 
     def _set_build_notice(self, text: str) -> None:
         """Show the unverified-build notice on its chip, or hide the chip when the build is known."""
