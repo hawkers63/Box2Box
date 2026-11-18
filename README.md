@@ -16,13 +16,13 @@ A Windows desktop viewer for the fixtures, results, grids and league tables in a
 [![Tests](https://img.shields.io/badge/Tests-418%20passing-success)](#-tests)
 [![Licence](https://img.shields.io/badge/Licence-Proprietary%20%2F%20All%20Rights%20Reserved-red)](LICENSE)
 
-[![Get the latest release](https://img.shields.io/badge/Get-Box2Box%201.6-0EA5E9?style=for-the-badge&logo=github&logoColor=white)](https://github.com/hawkers63/Box2Box/releases/latest)
+[![Get the latest release](https://img.shields.io/badge/Get-Box2Box%201.7-0EA5E9?style=for-the-badge&logo=github&logoColor=white)](https://github.com/hawkers63/Box2Box/releases/latest)
 
 **Database viewer** · entry point `fm_review.py` · launcher `Box2Box.bat`
 
-**Release:** 1.6  
+**Release:** 1.7  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 1.6), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 1.7), launched with `Box2Box.bat`
 
 </div>
 
@@ -437,6 +437,7 @@ The tests write only to temporary directories and do not need a real Football Ma
 
 | Release | Date | Highlights |
 | --- | --- | --- |
+| [**1.7**](https://github.com/hawkers63/Box2Box/releases/tag/v1.7) | 18&nbsp;Nov&nbsp;2026 | 🖥️ A standalone Windows build, head-to-head from the right-click menu, and a refreshed front page on GitHub |
 | [**1.6**](https://github.com/hawkers63/Box2Box/releases/tag/v1.6) | 17&nbsp;Nov&nbsp;2026 | 🏟️ The cup bracket, every meeting between two clubs in the inspector, and season against season in Positions |
 | [**1.5**](https://github.com/hawkers63/Box2Box/releases/tag/v1.5) | 16&nbsp;Nov&nbsp;2026 | 📋 Copy for a post, the Ties panel, form tooltips and a scrolling inspector |
 | [**1.4**](https://github.com/hawkers63/Box2Box/releases/tag/v1.4) | 16&nbsp;Nov&nbsp;2026 | ⌨️ Drop a save on the window, the command palette, the right-click menu and the inspector drawer |

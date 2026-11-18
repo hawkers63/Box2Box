@@ -1,8 +1,8 @@
 # Changelog
 
-**Release:** 1.6  
+**Release:** 1.7  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 1.6), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 1.7), launched with `Box2Box.bat`
 
 All notable changes to this project will be documented in this file.
 
@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [1.7] - 2026-11-18
+
+Adds a standalone Windows build and head-to-head from the right-click menu, and refreshes the GitHub front page.
 
 ### Added
 
@@ -19,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **A new front page on GitHub.** The README has a logo (a sky-blue football on a dark green pitch between two penalty boxes, in `docs/images/`), badges, a contents list, a features table, Mermaid diagrams of how a save reaches the screen, the views, how Box2Box starts and how its modules fit together, a keyboard and mouse table, a feature tour in fold-out sections and a release history. Two examples that named real clubs and an in-game date now use the made-up league from the screenshots.
+- **fmsave bumped to 0.12.6** so it reads saves made after the 18 November 2026 Football Manager Steam update. Earlier versions refused them with a `ReaderCheckError` about the club table framing.
 
 ## [1.6] - 2026-11-17
 

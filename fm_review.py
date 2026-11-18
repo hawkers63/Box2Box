@@ -49,7 +49,7 @@ import palette
 import tooltip
 
 APP_TITLE = "Box2Box"
-VERSION = "1.6"
+VERSION = "1.7"
 
 
 def _resolve_app_dir(*, frozen: bool, executable: Path, source: Path) -> Path:
