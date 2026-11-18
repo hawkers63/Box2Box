@@ -19,7 +19,7 @@ from types import SimpleNamespace as NS
 from unittest import mock
 
 import fm_data as fd
-from test_fm_data import D, fx, info, unresolved_away
+from test_fm_data import D, fx, info, rules_listing, unresolved_away
 
 
 class ArchiveFileTests(unittest.TestCase):
@@ -148,11 +148,13 @@ class FixtureKeyTests(unittest.TestCase):
         self.assertEqual(archive.competition_key(8, None), -9)
 
 
-def bank_dataset(fixtures, *, file="a.fm", game=D(2026, 9, 1)):
-    """A Dataset in the one competition (database id 12) that every club is English in (nation 5)."""
+def bank_dataset(fixtures, *, file="a.fm", game=D(2026, 9, 1), nations=None, rules=()):
+    """A Dataset in the one competition (database id 12); every club is English (nation 5) unless `nations`
+    (club uid -> nation id) says otherwise."""
     base = dataclasses.replace(info(), file_name=file, path=file, game_date=game)
-    clubs = [NS(uid=i, reputation=1, teams=(), nation_id=5) for i in range(1, 6)]
-    return fd.build_dataset(base, fixtures, clubs=clubs, competitions=[NS(id=101, database_id=12)])
+    nations = nations or {i: 5 for i in range(1, 6)}
+    clubs = [NS(uid=i, reputation=1, teams=(), nation_id=n) for i, n in nations.items()]
+    return fd.build_dataset(base, fixtures, clubs=clubs, competitions=[NS(id=101, database_id=12)], rules=list(rules))
 
 
 def thirty(score=(1, 0), *, until=30):
@@ -258,6 +260,46 @@ class BankTests(unittest.TestCase):
                 a.bank(data)
             self.assertEqual(a.imports(), [])
         self.assertEqual((self.rows(), self.rows(table="imports"), self.rows(table="clubs")), ([], [], []))
+
+
+class CompetitionTests(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        self.path = Path(self.folder.name) / "archive.sqlite"
+
+    LEAGUE = [fx(D(2026, 8, 8), 1, 3, 1, 0, md=1), fx(D(2026, 8, 8), 2, 5, 1, 1, md=1),
+              fx(D(2026, 8, 15), 1, 4, 0, 4, md=2), fx(D(2026, 8, 15), 2, 3, 2, 2, md=2)]
+
+    def only(self, **bank):
+        with archive.Archive.open(self.path) as a:
+            a.bank(bank_dataset(self.LEAGUE, **bank))
+            (comp,) = a.competitions()
+        return comp
+
+    def test_a_competition_of_mostly_one_nation_belongs_to_it(self):
+        comp = self.only(nations={1: 5, 2: 5, 3: 5, 4: 5, 5: 7})
+        self.assertEqual((comp.key, comp.database_id, comp.nation, comp.continental, comp.seasons),
+                         (12, 12, 5, False, (2026,)))
+
+    def test_a_competition_of_several_nations_is_continental(self):
+        comp = self.only(nations={1: 5, 2: 5, 3: 6, 4: 6, 5: 7})
+        self.assertEqual((comp.nation, comp.continental), (None, True))
+
+    def test_the_tie_break_codes_are_kept(self):
+        comp = self.only(rules=[rules_listing(2, 0, 1)])
+        self.assertEqual(comp.tie_breaks, (2, 0, 1))
+
+    def test_the_newer_save_wins_on_a_competitions_metadata_whichever_is_banked_first(self):
+        early = bank_dataset(self.LEAGUE, file="early.fm", game=D(2026, 9, 1), rules=[rules_listing(2, 0, 1)])
+        late = bank_dataset(self.LEAGUE, file="late.fm", game=D(2026, 10, 1), rules=[rules_listing(0, 1)])
+        for order in ((early, late), (late, early)):
+            path = Path(self.folder.name) / f"{order[0].info.file_name}.sqlite"
+            with archive.Archive.open(path) as a:
+                for data in order:
+                    a.bank(data)
+                (comp,) = a.competitions()
+            self.assertEqual(comp.tie_breaks, (0, 1), order[0].info.file_name)
 
 
 if __name__ == "__main__":

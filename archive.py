@@ -26,7 +26,8 @@ CREATE TABLE imports (
     added INTEGER, updated INTEGER, unchanged INTEGER, conflicts INTEGER, skipped_unresolved INTEGER, warnings TEXT);
 CREATE TABLE clubs (uid INTEGER PRIMARY KEY, name TEXT, short_name TEXT, nation_id INTEGER);
 CREATE TABLE competitions (
-    key INTEGER PRIMARY KEY, database_id INTEGER, tie_breaks TEXT, nation INTEGER, continental INTEGER);
+    key INTEGER PRIMARY KEY, database_id INTEGER, tie_breaks TEXT, nation INTEGER, continental INTEGER,
+    source_date TEXT);
 CREATE TABLE fixtures (
     competition_key INTEGER NOT NULL, season INTEGER NOT NULL, home_uid INTEGER NOT NULL,
     away_uid INTEGER NOT NULL, meeting INTEGER NOT NULL,
@@ -170,6 +171,33 @@ class ImportRecord:
     warnings: tuple[str, ...]
 
 
+NATION_SHARE = 0.6     # a competition belongs to a nation when this share of its clubs (with a known nation) do
+
+
+@dataclass(frozen=True, slots=True)
+class ArchivedCompetition:
+    """A competition the archive holds. `nation` is inferred from its clubs; `continental` means it mixes nations."""
+
+    key: int
+    database_id: int | None
+    nation: int | None
+    continental: bool
+    tie_breaks: tuple[int, ...]
+    seasons: tuple[int, ...]
+
+
+def infer_nation(club_uids: set[int], club_nations: dict[int, int]) -> tuple[int | None, bool]:
+    """(nation, continental) for a competition's clubs: the nation of at least NATION_SHARE of those whose
+    nation is known; continental when they come from several nations with no such majority."""
+    known = [club_nations[uid] for uid in club_uids if uid in club_nations]
+    if not known:
+        return None, False
+    nation = max(set(known), key=lambda n: (known.count(n), n))
+    if known.count(nation) / len(known) >= NATION_SHARE:
+        return nation, False
+    return None, True
+
+
 _COLUMNS = ("competition_key", "season", "home_uid", "away_uid", "meeting", "date", "kick_off", "home_goals",
             "away_goals", "played", "round_index", "round_label", "round_raw", "home_name", "away_name", "source_date")
 
@@ -286,6 +314,7 @@ class Archive:
                     self._db.execute(
                         f"INSERT OR REPLACE INTO fixtures ({', '.join(_COLUMNS)}) VALUES ({', '.join('?' * 16)})",
                         _row(result.fixture))
+            self._bank_competitions(dataset, records)
             for f in records:
                 for uid, name in ((f.key[2], f.home_name), (f.key[3], f.away_name)):
                     self._db.execute("INSERT OR IGNORE INTO clubs (uid, name) VALUES (?, ?)", (uid, name))
@@ -296,6 +325,35 @@ class Archive:
                 "WHERE id = ?", (counts["added"], counts["updated"], counts["unchanged"], counts["conflict"], skipped,
                                  import_id))
         return BankReport(counts["added"], counts["updated"], counts["unchanged"], counts["conflict"], skipped, False)
+
+    def _bank_competitions(self, dataset, records: Sequence[ArchivedFixture]) -> None:
+        """Keep each competition's metadata from the newest save (ties go to the larger value, so the order saves
+        arrive in never matters)."""
+        clubs_in: dict[int, set[int]] = defaultdict(set)
+        for f in records:
+            clubs_in[f.key[0]].update((f.key[2], f.key[3]))
+        for comp in dataset.competitions:
+            key = competition_key(comp.id, comp.database_id)
+            nation, continental = infer_nation(clubs_in.get(key, set()), dict(dataset.club_nations))
+            codes = json.dumps(list(dataset.tie_breaks.get(comp.id, ())))
+            new = (_iso(dataset.info.game_date) or "", -1 if nation is None else nation, int(continental), codes)
+            row = self._db.execute("SELECT source_date, nation, continental, tie_breaks FROM competitions WHERE key = ?",
+                                   (key,)).fetchone()
+            if row and (row[0] or "", -1 if row[1] is None else row[1], row[2], row[3]) >= new:
+                continue
+            self._db.execute("INSERT OR REPLACE INTO competitions (key, database_id, tie_breaks, nation, continental, "
+                             "source_date) VALUES (?, ?, ?, ?, ?, ?)",
+                             (key, comp.database_id, codes, nation, int(continental), _iso(dataset.info.game_date)))
+
+    def competitions(self) -> list[ArchivedCompetition]:
+        """Every competition the archive holds, in key order."""
+        rows = self._db.execute("SELECT key, database_id, tie_breaks, nation, continental FROM competitions "
+                                "ORDER BY key").fetchall()
+        return [ArchivedCompetition(
+            key=r[0], database_id=r[1], nation=r[3], continental=bool(r[4]), tie_breaks=tuple(json.loads(r[2])),
+            seasons=tuple(x[0] for x in self._db.execute(
+                "SELECT DISTINCT season FROM fixtures WHERE competition_key = ? ORDER BY season", (r[0],))))
+            for r in rows]
 
     def imports(self) -> list[ImportRecord]:
         """Every banked save, oldest first."""
