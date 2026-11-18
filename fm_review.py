@@ -2656,6 +2656,11 @@ class FMReviewApp(_Root):
             (home_id, home), (away_id, away) = clubs
             entries.append(MenuEntry(f"Show only {home} v {away}",
                                      lambda pair=(home_id, away_id): self.set_opponent_filter(pair)))
+        if name == "Table" and len(clubs) == 1 and self.focus is not None and self.focus != clubs[0][0] \
+                and self.focus in self.labels:
+            row_id, row_label = clubs[0]
+            entries.append(MenuEntry(f"Show only {self.labels[self.focus]} v {row_label}",
+                                     lambda pair=(self.focus, row_id): self.set_opponent_filter(pair)))
         if clubs:
             entries += [MENU_SEPARATOR, self._head_to_head_entry(clubs), MENU_SEPARATOR]
         kinds = ((fx.EXCEL, "Excel workbook (.xlsx)"), (fx.HTML, "Web page (.html)"), (fx.CSV, "CSV files (.csv)"))

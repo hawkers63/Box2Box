@@ -1145,6 +1145,37 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(head_to_head.label, "Head-to-head (follow another club first)")
         self.assertIsNone(head_to_head.command)
 
+    def test_a_table_row_offers_show_only_the_followed_club_v_the_row_club(self):
+        app = self.menu_app(focus=team(1))
+        app.set_view("Table")
+        app.update()
+        other = next(i for i, t in enumerate(app.table_rows) if t not in (None, team(1)))
+        row_club = app.table_rows[other]
+        labels = [e.label for e in app._row_menu("Table", other, 0)]
+        self.assertIn(f"Show only Hull City v {app.labels[row_club]}", labels)
+
+    def test_show_only_from_a_table_row_filters_results_to_the_pair(self):
+        app = self.menu_app(focus=team(1))
+        app.set_view("Table")
+        app.update()
+        other = next(i for i, t in enumerate(app.table_rows) if t not in (None, team(1)))
+        row_club = app.table_rows[other]
+        next(e for e in app._row_menu("Table", other, 0) if e.label.startswith("Show only")).command()
+        self.assertEqual(app.opponent_filter, (team(1), row_club))
+        self.assertEqual(app.view, "Results")
+
+    def test_a_table_row_offers_no_show_only_for_the_followed_club_or_with_no_followed_club(self):
+        app = self.menu_app(focus=team(1))
+        app.set_view("Table")
+        app.update()
+        followed = app.table_rows.index(team(1))
+        self.assertFalse([e.label for e in app._row_menu("Table", followed, 0) if e.label.startswith("Show only")])
+        app = self.menu_app(focus=None)
+        app.set_view("Table")
+        app.update()
+        row = next(i for i, t in enumerate(app.table_rows) if t is not None)
+        self.assertFalse([e.label for e in app._row_menu("Table", row, 0) if e.label.startswith("Show only")])
+
     def test_after_head_to_head_the_next_sheet_selection_replaces_the_pair_in_the_drawer(self):
         app, drawer = self.inspector_app()
         app.install_dataset(dataset(extra=[fx(D(2026, 9, 12), 4, 1, comp=101, md=4)]))
