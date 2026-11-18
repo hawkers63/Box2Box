@@ -308,6 +308,22 @@ class ZoneTests(unittest.TestCase):
         (final,) = [p for p in built.pages if isinstance(p, yearbook.FinalTablesPage)]
         self.assertEqual([t.zone for t in final.tables[0][1]], ["", "relegation"])
 
+    def test_stray_extra_rounds_in_the_fixture_list_do_not_move_the_start_of_the_zones(self):
+        games = [fx(D(2026, 8, 1) + dt.timedelta(days=7 * i), h, a, 1, 0, md=i + 1) for i in range(38) for h, a in ((1, 2), (3, 4))]
+        games += [fx(D(2027, 5, 20), 5, 1, 1, 0, md=39), fx(D(2027, 5, 27), 1, 5, 1, 0, md=40)]    # two extra rounds
+        book, folder = banked(games, rules=[self.RELEGATION])
+        self.addCleanup(folder.cleanup)
+        self.addCleanup(book.close)
+        built = yearbook.build_yearbook(book, 2026, self.NAMES)
+        shown = [p.matchweek for p in built.pages if isinstance(p, yearbook.LeaguePage) and p.table and any(t.zone for t in p.table)]
+        self.assertEqual(min(shown), 27)                  # a 38-match season, not a 40-round fixture list
+
+    def test_the_legend_lists_zones_from_the_top_of_the_table_down(self):
+        lines = (yearbook.TableLine(1, "A", 1, 1, 0, 0, 1, 0, 1, 3, "W", "ucl"), yearbook.TableLine(2, "B", 1, 0, 1, 0, 0, 0, 0, 1, "D", "europa"),
+                 yearbook.TableLine(3, "C", 1, 0, 0, 1, 0, 1, -1, 0, "L", "relegation"))
+        self.assertEqual(yearbook.zone_legend(lines),
+                         "Champions League places (estimated) · Europa League places (estimated) · Relegation")
+
     def test_a_league_whose_rules_the_save_does_not_give_shows_no_zones(self):
         built = self.make(38, rules=())
         self.assertEqual({t.zone for t in self.week(built, 38).table}, {""})

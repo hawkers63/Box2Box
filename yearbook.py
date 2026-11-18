@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import statistics
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -20,8 +21,9 @@ import fm_data as fd
 
 # What each zone is called under a table. The save's rules hold promotion, play-off and relegation places; the
 # European places of a 20-team top division are estimated (see fm_data.zone_for_position).
-ZONE_NAMES = {fd.ZONE_PROMOTION: "Promotion", fd.ZONE_PLAYOFF: "Play-offs", fd.ZONE_RELEGATION: "Relegation",
-              fd.ZONE_UCL: "Champions League places (estimated)", fd.ZONE_EUROPA: "Europa League places (estimated)"}
+ZONE_NAMES = {fd.ZONE_PROMOTION: "Promotion", fd.ZONE_UCL: "Champions League places (estimated)",
+              fd.ZONE_EUROPA: "Europa League places (estimated)", fd.ZONE_PLAYOFF: "Play-offs",
+              fd.ZONE_RELEGATION: "Relegation"}                 # from the top of a table down
 MAX_NAME_LENGTH = 24                    # a club name longer than this is printed as the game's short name, if it has one
 HOME_LEAGUE_NAME = "premier league"     # the competition whose nation is the book's home nation
 # The footnote for a "*": the save stores no shootout, extra-time or 90-minute score, so all that is known is that
@@ -179,7 +181,12 @@ def _league_pages(name: str, league: Sequence, labels: Mapping[int, str], tie_br
     for f in league:
         rounds.setdefault(f.round_index, []).append(f)
     starts = {ri: min(f.date for f in group if f.date) for ri, group in rounds.items() if any(f.date for f in group)}
-    zones_from = zones_from_matchweek(len(rounds))
+    # The season's length is what most clubs play: the fixture list can hold extra rounds (play-offs) beyond it.
+    played_by: dict[int, int] = defaultdict(int)
+    for f in league:
+        played_by[f.home_team_id] += 1
+        played_by[f.away_team_id] += 1
+    zones_from = zones_from_matchweek(statistics.median_low(played_by.values()) if played_by else 0)
 
     def rescheduled(f) -> bool:
         later = [d for ri, d in starts.items() if ri > f.round_index]
