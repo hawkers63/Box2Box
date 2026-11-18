@@ -615,6 +615,39 @@ class ClubNationTests(unittest.TestCase):
         self.assertEqual(dict(ds.club_nations), {1: 5})
 
 
+class StandingsAsOfTests(unittest.TestCase):
+    SEASON = [fx(D(2026, 8, 8), 1, 2, 2, 1, md=1), fx(D(2026, 8, 8), 3, 4, 0, 0, md=1),
+              fx(D(2026, 8, 15), 1, 3, 1, 0, md=2), fx(D(2026, 8, 20), 4, 2, 3, 3, md=2)]    # the last one is moved
+
+    @staticmethod
+    def table(fixtures, through, **kw):
+        return fd.standings_as_of(fixtures, fd.team_labels(fixtures), through=through, **kw)
+
+    def test_the_table_after_the_first_weekend_lists_every_club_with_what_it_has_played(self):
+        rows = self.table(self.SEASON, D(2026, 8, 9))
+        self.assertEqual([(r.position, r.team, r.played, r.points) for r in rows],
+                         [(1, "Hull City", 1, 3), (2, "Derby County", 1, 1), (3, "Sheffield United", 1, 1),
+                          (4, "Leeds United", 1, 0)])
+
+    def test_a_match_played_after_the_date_is_not_counted_so_games_in_hand_show(self):
+        rows = {r.team: r.played for r in self.table(self.SEASON, D(2026, 8, 16))}
+        self.assertEqual(rows, {"Hull City": 2, "Sheffield United": 2, "Derby County": 1, "Leeds United": 1})
+
+    def test_the_whole_season_through_a_late_date_counts_everything(self):
+        rows = {r.team: (r.played, r.points) for r in self.table(self.SEASON, D(2026, 8, 31))}
+        self.assertEqual(rows["Derby County"], (2, 2))
+        self.assertEqual(rows["Leeds United"], (2, 1))
+
+    def test_the_competitions_tie_breaks_decide_level_teams(self):
+        rows = self.table(TIE_BREAK_SEASON, D(2026, 8, 22), tie_breaks=(2, 0, 1))
+        self.assertEqual([r.team for r in rows][:3], ["Derby County", "Hull City", "Leeds United"])
+
+    def test_form_is_the_last_six_results_by_that_date(self):
+        run = [fx(D(2026, 8, 1) + dt.timedelta(days=7 * i), 1, 2, 1, 0, md=i + 1) for i in range(8)]
+        rows = {r.team: r.form for r in self.table(run, D(2026, 9, 25))}      # seven of the eight are by then
+        self.assertEqual((rows["Hull City"], rows["Leeds United"]), ("WWWWWW", "LLLLLL"))
+
+
 class PlaceSparkTests(unittest.TestCase):
     @staticmethod
     def chart(*tracks):

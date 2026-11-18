@@ -1242,6 +1242,23 @@ def _stored_tables_for(
     return [t for t in tables if t.rows and {r.team_id for r in t.rows} <= teams]
 
 
+def standings_as_of(
+    fixtures: Sequence[Fixture],
+    labels: Mapping[int, str],
+    *,
+    through: dt.date,
+    tie_breaks: Sequence[int] = (),
+    form_length: int = 6,
+) -> tuple[StandingRow, ...]:
+    """The table as it stood at the end of `through`, worked out from the results: a match played after that
+    date does not count yet (so a postponed match leaves games in hand), but every club still appears. Level
+    teams are separated as `tie_breaks` list; form is the last `form_length` results by then. Calculated, never
+    the game's stored table."""
+    by_then = [f if f.date is not None and f.date <= through else replace(f, played=False)
+               for f in fixtures]
+    return calculate_standings(by_then, labels, _forms(by_then, length=form_length), tie_breaks=tie_breaks)
+
+
 def _forms(
     fixtures: Iterable[Fixture],
     *,
