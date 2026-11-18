@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace as NS
+from unittest import mock
 
 import archive
 import fm_data as fd
@@ -229,6 +230,35 @@ class CupBlockTests(unittest.TestCase):
                  fx(D(2026, 4, 8), 1, 3, 0, 0, comp=102, md=2, rnd=SF)]
         first = self.blocks(self.make(games))[0]
         self.assertEqual(first.round_name, "Quarter-final")
+
+    GROUP = CodedValue(CompetitionRound.UNKNOWN, 1)
+
+    def swiss(self):
+        """Four clubs, three matchdays, no pair twice; matchday 1 is split over two days."""
+        g = self.GROUP
+        return [fx(D(2026, 3, 4), 1, 2, 3, 0, comp=102, md=1, rnd=g), fx(D(2026, 3, 5), 3, 4, 0, 0, comp=102, md=1, rnd=g),
+                fx(D(2026, 3, 18), 1, 3, 2, 2, comp=102, md=2, rnd=g), fx(D(2026, 3, 18), 2, 4, 1, 0, comp=102, md=2, rnd=g),
+                fx(D(2026, 4, 1), 1, 4, 0, 0, comp=102, md=3, rnd=g), fx(D(2026, 4, 1), 2, 3, 3, 3, comp=102, md=3, rnd=g)]
+
+    def test_a_league_phase_gets_a_table_after_the_last_day_of_each_matchday_cut_to_the_top_places(self):
+        with mock.patch.object(yearbook, "LEAGUE_PHASE_SHOWN", 2):
+            blocks = self.blocks(self.make(self.swiss()))
+        self.assertEqual([bool(b.table) for b in blocks], [False, True, True, True])       # not after 4 March, after 5 March
+        after_one = blocks[1]
+        self.assertEqual([(t.pos, t.team, t.points) for t in after_one.table], [(1, "Hull City", 3), (2, "Derby County", 1)])
+        self.assertEqual(len(after_one.table), 2)
+        self.assertEqual(after_one.table_note, "Top 2 of 4 shown")
+
+    def test_a_small_league_phase_shows_every_club_and_makes_no_cut_note(self):
+        blocks = self.blocks(self.make(self.swiss()))
+        self.assertEqual((len(blocks[-1].table), blocks[-1].table_note), (4, ""))
+
+    def test_knockout_blocks_and_separate_groups_have_no_table(self):
+        self.assertEqual({bool(b.table) for b in self.blocks(self.make(self.tie()))}, {False})
+        g = self.GROUP
+        groups = [fx(D(2026, 3, 4), 1, 2, 1, 0, comp=102, md=1, rnd=g), fx(D(2026, 3, 4), 3, 4, 0, 0, comp=102, md=1, rnd=g),
+                  fx(D(2026, 3, 18), 2, 1, 2, 2, comp=102, md=2, rnd=g), fx(D(2026, 3, 18), 4, 3, 1, 1, comp=102, md=2, rnd=g)]
+        self.assertEqual({bool(b.table) for b in self.blocks(self.make(groups))}, {False})
 
     def test_a_league_phase_is_matches_with_no_tie_notes(self):
         group = CodedValue(CompetitionRound.UNKNOWN, 1)

@@ -117,6 +117,10 @@ def _block_parts(page, styles) -> list:
     """The parts of a small block (a cup day, or a postponed league match played late)."""
     if isinstance(page, yb.CupBlock):
         note = [Paragraph(escape(page.footnote), styles["small"])] if page.footnote else []
+        if page.table:                      # a league phase: its table after the day's results, cut to the top places
+            cut = f"{page.table_note}. " if page.table_note else ""
+            note += [Spacer(1, 4 * mm), _standings(page.table, styles),
+                     Paragraph(escape(cut + table_note(page.table)), styles["small"])]
         title = escape(page.heading)
     else:
         note, title = [], f"{escape(page.competition)} · {escape(page.heading)}"

@@ -108,6 +108,14 @@ class RenderTests(unittest.TestCase):
         data = self.render(book(cup, week(1)))
         self.assertEqual(len(re.findall(rb"/Type\s*/Page\b", data)), 2)        # the title page, then one page for both
 
+    def test_a_league_phase_block_renders_with_its_cut_table_and_says_it_is_cut(self):
+        lines = tuple(yb.TableLine(i, f"Club {i}", 1, 1, 0, 0, 2, 0, 2, 3, "W") for i in range(1, 17))
+        block = yb.CupBlock("Champions League", "Matchday 1", "", "Wed 16 Sep",
+                            (yb.BookMatch("", "Club 1", "Club 17", "2-0"),), D(2026, 9, 16), lines, "Top 16 of 36 shown")
+        parts = yearbook_pdf._block_parts(block, yearbook_pdf._styles())
+        self.assertTrue(any("Top 16 of 36 shown" in getattr(p, "text", "") for p in parts))
+        self.assertTrue(self.render(book(block)).startswith(b"%PDF-"))
+
     def test_a_zoned_table_renders(self):
         zoned = yb.LeaguePage("Premier League", 30, "Matchweek 30 · Sat 8 – Mon 10 Aug",
                               (yb.BookMatch("Sat 8", "Hull City", "Leeds United", "2-0"),),

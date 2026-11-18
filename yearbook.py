@@ -24,6 +24,7 @@ import fm_data as fd
 ZONE_NAMES = {fd.ZONE_PROMOTION: "Promotion", fd.ZONE_UCL: "Champions League places (estimated)",
               fd.ZONE_EUROPA: "Europa League places (estimated)", fd.ZONE_PLAYOFF: "Play-offs",
               fd.ZONE_RELEGATION: "Relegation"}                 # from the top of a table down
+LEAGUE_PHASE_SHOWN = 16                 # a league phase's table shows this many places (the top 16 of a 36-club table)
 SAME_FIELD = 0.75                       # this share of a round's clubs playing the next round too: a league phase, not a knockout
 MAX_NAME_LENGTH = 24                    # a club name longer than this is printed as the game's short name, if it has one
 HOME_LEAGUE_NAME = "premier league"     # the competition whose nation is the book's home nation
@@ -82,6 +83,8 @@ class CupBlock:
     date_text: str
     matches: tuple[BookMatch, ...]
     when: dt.date
+    table: tuple[TableLine, ...] = ()      # a league phase: the table after the last day of a matchday
+    table_note: str = ""                   # "Top 16 of 36 shown" when the table is cut
 
     @property
     def heading(self) -> str:
@@ -236,11 +239,33 @@ def _tie_note(tie: fd.CupTie, two_legged: bool) -> tuple[str, str]:
     return "", ""
 
 
-def _cup_blocks(name: str, cup_fixtures: Sequence, labels: Mapping[int, str]) -> list[CupBlock]:
-    """The blocks of a cup or continental competition: a block for each round, leg and day with a played match."""
+def _one_pool(fixtures: Sequence) -> bool:
+    """Whether every club in these fixtures is linked to every other through the matches played (one league
+    table), as opposed to separate groups."""
+    parent: dict[int, int] = {}
+
+    def find(x: int) -> int:
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for f in fixtures:
+        parent[find(f.home_team_id)] = find(f.away_team_id)
+    return len({find(t) for t in list(parent)}) == 1
+
+
+def _cup_blocks(name: str, cup_fixtures: Sequence, labels: Mapping[int, str],
+                tie_breaks: Sequence[int] = ()) -> list[CupBlock]:
+    """The blocks of a cup or continental competition: a block for each round, leg and day with a played match.
+    A league phase (one pool of clubs playing matchday after matchday) also gets its table, cut to the top places,
+    after the last day of each matchday."""
     grouped: dict[tuple, list[BookMatch]] = {}
     names: dict[tuple, str] = {}
     matchdays = 0
+    league_phase: set[int] = set()
+    league_fixtures: list = []
     rounds_of: dict[frozenset, set[int]] = defaultdict(set)
     field_of: dict[int, set[int]] = defaultdict(set)
     for f in cup_fixtures:
@@ -260,6 +285,8 @@ def _cup_blocks(name: str, cup_fixtures: Sequence, labels: Mapping[int, str]) ->
                     and not any(len(rounds_of[frozenset((t.team_a, t.team_b))]) > 1 for t in rnd.ties))
         if not knockout:
             matchdays += 1
+            league_phase.add(rnd.index)
+            league_fixtures += [f for t in rnd.ties for f in t.fixtures]
         round_name = rnd.name if knockout else f"Matchday {matchdays}"
         for tie in rnd.ties:
             legs = tie.fixtures
@@ -277,9 +304,18 @@ def _cup_blocks(name: str, cup_fixtures: Sequence, labels: Mapping[int, str]) ->
                 grouped.setdefault(key, []).append(
                     BookMatch("", labels.get(f.home_team_id, ""), labels.get(f.away_team_id, ""), _score(f), note,
                               advanced))
-    return [CupBlock(name, names[key], key[2], f"{_day(key[0])} {key[0]:%b}",
-                     tuple(sorted(matches, key=lambda m: (m.home, m.away))), key[0])
-            for key, matches in sorted(grouped.items())]
+    last_day = {key[1]: max(k[0] for k in grouped if k[1] == key[1]) for key in grouped if key[1] in league_phase}
+    pooled = bool(league_fixtures) and _one_pool(league_fixtures)
+    blocks = []
+    for key, matches in sorted(grouped.items()):
+        table, note = (), ""
+        if pooled and key[1] in league_phase and key[0] == last_day[key[1]]:
+            rows = fd.standings_as_of(league_fixtures, labels, through=key[0], tie_breaks=tie_breaks)
+            table = _table(rows[:LEAGUE_PHASE_SHOWN])
+            note = f"Top {len(table)} of {len(rows)} shown" if len(rows) > len(table) else ""
+        blocks.append(CupBlock(name, names[key], key[2], f"{_day(key[0])} {key[0]:%b}",
+                               tuple(sorted(matches, key=lambda m: (m.home, m.away))), key[0], table, note))
+    return blocks
 
 
 def _title_lines(coverage: arch.BookCoverage, included: Sequence[str], home: int | None) -> tuple[str, ...]:
@@ -337,7 +373,7 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
         cup = [f for f in fixtures if f.round is not None and f.round_index is not None]
         rules = dataset.zone_rules.get(comp.key)
         built = (_league_pages(name, league, labels, comp.tie_breaks, rules) if league else []) + \
-            (_cup_blocks(name, cup, labels) if cup else [])
+            (_cup_blocks(name, cup, labels, comp.tie_breaks) if cup else [])
         if not built:
             continue
         order[name] = len(order)
