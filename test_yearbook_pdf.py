@@ -44,6 +44,20 @@ class FormColourTests(unittest.TestCase):
             self.assertGreaterEqual(palette.contrast_ratio(colour, "#ffffff"), 4.5, letter)
 
 
+class ZoneTintTests(unittest.TestCase):
+    def test_every_named_zone_has_a_tint_the_black_figures_read_on(self):
+        self.assertEqual(set(yearbook_pdf.ZONE_TINT), set(yb.ZONE_NAMES))
+        self.assertEqual(len(set(yearbook_pdf.ZONE_TINT.values())), len(yb.ZONE_NAMES))
+        for zone, tint in yearbook_pdf.ZONE_TINT.items():
+            self.assertGreaterEqual(palette.contrast_ratio(tint, "#000000"), 7.0, zone)
+
+    def test_the_note_under_a_table_names_the_zones_shown_and_says_it_is_calculated(self):
+        plain = (yb.TableLine(1, "Hull City", 3, 2, 1, 0, 5, 2, 3, 7, "WWD"),)
+        zoned = plain + (yb.TableLine(2, "Leeds United", 3, 0, 1, 2, 2, 5, -3, 1, "LLD", "relegation"),)
+        self.assertEqual(yearbook_pdf.table_note(plain), "Table calculated from the results.")
+        self.assertEqual(yearbook_pdf.table_note(zoned), "Table calculated from the results. Shaded: Relegation.")
+
+
 class MarkTests(unittest.TestCase):
     def test_the_side_that_went_through_a_level_tie_gets_an_asterisk_after_its_name(self):
         m = yb.BookMatch("", "Birmingham City", "Cardiff City", "0-0", "", advanced="away")
@@ -93,6 +107,13 @@ class RenderTests(unittest.TestCase):
                           D(2026, 8, 1))
         data = self.render(book(cup, week(1)))
         self.assertEqual(len(re.findall(rb"/Type\s*/Page\b", data)), 2)        # the title page, then one page for both
+
+    def test_a_zoned_table_renders(self):
+        zoned = yb.LeaguePage("Premier League", 30, "Matchweek 30 · Sat 8 – Mon 10 Aug",
+                              (yb.BookMatch("Sat 8", "Hull City", "Leeds United", "2-0"),),
+                              (yb.TableLine(1, "Hull City", 3, 2, 1, 0, 5, 2, 3, 7, "WWD", "ucl"),
+                               yb.TableLine(2, "Leeds United", 3, 0, 1, 2, 2, 5, -3, 1, "LLD", "relegation")), D(2026, 8, 8))
+        self.assertTrue(self.render(book(zoned)).startswith(b"%PDF-"))
 
     def test_a_block_with_a_marked_side_renders_with_its_footnote(self):
         cup = yb.CupBlock("League Cup", "Round 2", "", "Sat 8 Aug",

@@ -18,6 +18,10 @@ from dataclasses import dataclass
 import archive as arch
 import fm_data as fd
 
+# What each zone is called under a table. The save's rules hold promotion, play-off and relegation places; the
+# European places of a 20-team top division are estimated (see fm_data.zone_for_position).
+ZONE_NAMES = {fd.ZONE_PROMOTION: "Promotion", fd.ZONE_PLAYOFF: "Play-offs", fd.ZONE_RELEGATION: "Relegation",
+              fd.ZONE_UCL: "Champions League places (estimated)", fd.ZONE_EUROPA: "Europa League places (estimated)"}
 MAX_NAME_LENGTH = 24                    # a club name longer than this is printed as the game's short name, if it has one
 HOME_LEAGUE_NAME = "premier league"     # the competition whose nation is the book's home nation
 # The footnote for a "*": the save stores no shootout, extra-time or 90-minute score, so all that is known is that
@@ -48,6 +52,7 @@ class TableLine:
     goal_difference: int
     points: int
     form: str
+    zone: str = ""                 # promotion, play-off, relegation or a European place; "" for none
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,17 +151,35 @@ def _display_names(fixtures: Sequence) -> dict[int, str]:
             for team, name in full.items()}
 
 
-def _table(rows) -> tuple[TableLine, ...]:
+def zones_from_matchweek(rounds: int) -> int:
+    """The first matchweek whose table shows zones: the last 11 matches of a season of up to 38, the last 10 of a
+    longer one (a 20-club league from match 27, a 24-club league from match 36). Earlier, a zone says little."""
+    return rounds - (11 if rounds <= 38 else 10)
+
+
+def zone_legend(table: Sequence[TableLine]) -> str:
+    """The zones present in a table, named, as one line; empty when it shows none."""
+    present = {t.zone for t in table if t.zone}
+    return " · ".join(name for zone, name in ZONE_NAMES.items() if zone in present)
+
+
+def _table(rows, rules: fd.ZoneRules | None = None) -> tuple[TableLine, ...]:
+    """A table's lines; with the competition's rules, each line carries its zone."""
     return tuple(TableLine(r.position, r.team, r.played, r.won, r.drawn, r.lost, r.goals_for, r.goals_against,
-                           r.goal_difference, r.points, r.form) for r in rows)
+                           r.goal_difference, r.points, r.form,
+                           fd.zone_for_position(r.position, len(rows), rules) if rules is not None else "")
+                 for r in rows)
 
 
-def _league_pages(name: str, league: Sequence, labels: Mapping[int, str], tie_breaks: Sequence[int]) -> list[LeaguePage]:
-    """The matchweek pages of one league, and a block for each day a postponed match was played."""
+def _league_pages(name: str, league: Sequence, labels: Mapping[int, str], tie_breaks: Sequence[int],
+                  rules: fd.ZoneRules | None = None) -> list[LeaguePage]:
+    """The matchweek pages of one league, and a block for each day a postponed match was played. Zones are shown
+    from zones_from_matchweek on."""
     rounds: dict[int, list] = {}
     for f in league:
         rounds.setdefault(f.round_index, []).append(f)
     starts = {ri: min(f.date for f in group if f.date) for ri, group in rounds.items() if any(f.date for f in group)}
+    zones_from = zones_from_matchweek(len(rounds))
 
     def rescheduled(f) -> bool:
         later = [d for ri, d in starts.items() if ri > f.round_index]
@@ -175,7 +198,8 @@ def _league_pages(name: str, league: Sequence, labels: Mapping[int, str], tie_br
             first, last = on_time[0].date, max(f.date for f in on_time)
             table = fd.standings_as_of(league, labels, through=last, tie_breaks=tie_breaks)
             pages.append(LeaguePage(name, ri + 1, f"Matchweek {ri + 1} · {_span(first, last)}",
-                                    tuple(line(f, first) for f in on_time), _table(table), first))
+                                    tuple(line(f, first) for f in on_time),
+                                    _table(table, rules if ri + 1 >= zones_from else None), first))
         for day in sorted({f.date for f in played if rescheduled(f)}):
             moved = [f for f in played if rescheduled(f) and f.date == day]
             pages.append(LeaguePage(name, ri + 1, f"Matchweek {ri + 1}, rescheduled · {_span(day, day)}",
@@ -293,7 +317,8 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
         labels = _display_names(fixtures)
         league = [f for f in fixtures if f.round is None and f.round_index is not None]
         cup = [f for f in fixtures if f.round is not None and f.round_index is not None]
-        built = (_league_pages(name, league, labels, comp.tie_breaks) if league else []) + \
+        rules = dataset.zone_rules.get(comp.key)
+        built = (_league_pages(name, league, labels, comp.tie_breaks, rules) if league else []) + \
             (_cup_blocks(name, cup, labels) if cup else [])
         if not built:
             continue
@@ -302,7 +327,8 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
         pages += built
         if league and all(f.played for f in league):
             last = max(f.date for f in league if f.date)
-            finals.append((name, _table(fd.standings_as_of(league, labels, through=last, tie_breaks=comp.tie_breaks))))
+            finals.append((name, _table(fd.standings_as_of(league, labels, through=last, tie_breaks=comp.tie_breaks),
+                                        rules)))
     pages.sort(key=lambda p: _page_key(p, order))
     label = fd.season_label(season, [f for fixtures in dataset.fixtures.values() for f in fixtures])
     coverage = dataclasses.replace(coverage, in_progress=unplayed)         # judged on the competitions in the book

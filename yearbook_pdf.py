@@ -28,6 +28,9 @@ FONT, BOLD = "DejaVuSans", "DejaVuSans-Bold"
 INK, MUTED, RULE = "#1a1a1a", "#555555", "#bbbbbb"
 # Form letters in three colours that read on white paper (each is at least 4.5:1 against white).
 FORM_INK = {"W": "#1b6e2e", "D": "#7a5c00", "L": "#a8261e"}
+# Light tints for a table's position cell, one per zone, that black figures read on.
+ZONE_TINT = {"promotion": "#bfe3c7", "playoff": "#f1dfa6", "relegation": "#f0bcb6",
+             "ucl": "#b9d8f0", "europa": "#d7e8c0"}
 
 
 def _fonts_dir() -> Path:
@@ -83,13 +86,21 @@ def _matches(matches, styles) -> Table:
     return table
 
 
+def table_note(lines) -> str:
+    """The small note under a table: it is calculated, and what any shading means."""
+    legend = yb.zone_legend(lines)
+    return "Table calculated from the results." + (f" Shaded: {legend}." if legend else "")
+
+
 def _standings(lines, styles) -> Table:
     head = ["#", "Team", "P", "W", "D", "L", "F", "A", "GD", "Pts", "Last six"]
     rows = [head] + [[str(t.pos), Paragraph(escape(t.team), styles["cell"]), t.played, t.won, t.drawn, t.lost,
                       t.goals_for, t.goals_against, f"{t.goal_difference:+d}" if t.goal_difference else "0",
                       t.points, Paragraph(_form(t.form), styles["cell"])] for t in lines]
     table = Table(rows, colWidths=[8 * mm, 52 * mm] + [9 * mm] * 7 + [11 * mm, 27 * mm], hAlign="CENTER", repeatRows=1)
-    table.setStyle(TableStyle([
+    zones = [("BACKGROUND", (0, i), (0, i), colors.HexColor(ZONE_TINT[t.zone]))
+             for i, t in enumerate(lines, start=1) if t.zone in ZONE_TINT]
+    table.setStyle(TableStyle(zones + [
         ("FONTNAME", (0, 0), (-1, 0), BOLD), ("FONTNAME", (0, 1), (-1, -1), FONT), ("FONTSIZE", (0, 0), (-1, -1), 8.5),
         ("FONTNAME", (9, 1), (9, -1), BOLD), ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eeeeee")),
         ("ALIGN", (2, 0), (9, -1), "CENTER"), ("LINEBELOW", (0, 0), (-1, 0), 0.6, colors.HexColor(INK)),
@@ -116,7 +127,7 @@ def _matchweek_parts(page, styles) -> list:
     """The parts of a full matchweek: heading, results and table, kept together."""
     return [Paragraph(f"{escape(page.competition)} · {escape(page.heading)}", styles["heading"]),
             _matches(page.matches, styles), Spacer(1, 6 * mm), _standings(page.table, styles),
-            Paragraph("Table calculated from the results.", styles["small"]), Spacer(1, 8 * mm)]
+            Paragraph(table_note(page.table), styles["small"]), Spacer(1, 8 * mm)]
 
 
 def _height(parts: list) -> float:
@@ -167,7 +178,8 @@ def _flow(book: yb.Yearbook) -> list:
             new_page()
             for name, lines in page.tables:
                 flow += [KeepTogether([Paragraph(f"{escape(name)} · final table", styles["heading"]),
-                                       _standings(lines, styles), Spacer(1, 8 * mm)])]
+                                       _standings(lines, styles), Paragraph(table_note(lines), styles["small"]),
+                                       Spacer(1, 8 * mm)])]
     return flow
 
 

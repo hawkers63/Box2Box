@@ -19,14 +19,14 @@ from fmsave import CodedValue, CompetitionRound
 from test_fm_data import D, fx, info
 
 
-def banked(fixtures, *, nations=None, competitions=None, game=D(2026, 12, 31), path=None):
+def banked(fixtures, *, nations=None, competitions=None, game=D(2026, 12, 31), path=None, rules=()):
     """Bank one save of `fixtures` into a temporary archive and return (archive, folder)."""
     folder = tempfile.TemporaryDirectory()
     base = dataclasses.replace(info(), file_name="a.fm", path="a.fm", game_date=game)
     nations = nations or {i: 5 for i in range(1, 6)}
     clubs = [NS(uid=i, reputation=1, teams=(), nation_id=n) for i, n in nations.items()]
     comps = competitions or [NS(id=101, database_id=12)]
-    data = fd.build_dataset(base, fixtures, clubs=clubs, competitions=comps)
+    data = fd.build_dataset(base, fixtures, clubs=clubs, competitions=comps, rules=list(rules))
     book = archive.Archive.open(Path(folder.name) / "archive.sqlite")
     book.bank(data)
     return book, folder
@@ -275,6 +275,46 @@ class WholeBookTests(unittest.TestCase):
         unfinished = self.make(self.SEASON + [fx(D(2026, 8, 22), 1, 4, md=3)])
         self.assertFalse([p for p in unfinished.pages if isinstance(p, yearbook.FinalTablesPage)])
         self.assertIn("Season in progress", " ".join(unfinished.pages[0].coverage_lines))
+
+
+class ZoneTests(unittest.TestCase):
+    NAMES = {12: "Premier League"}
+    RELEGATION = NS(competition_id=101, promotion_places=0, playoff_places=0, relegation_places=1, rounds=(), unknown={})
+
+    def make(self, rounds, rules=(RELEGATION,)):
+        """Two clubs meeting once a week for `rounds` matchweeks: Hull City always win, so Leeds are bottom."""
+        games = [fx(D(2026, 8, 1) + dt.timedelta(days=7 * i), 1, 2, 1, 0, md=i + 1) for i in range(rounds)]
+        book, folder = banked(games, rules=list(rules))
+        self.addCleanup(folder.cleanup)
+        self.addCleanup(book.close)
+        return yearbook.build_yearbook(book, 2026, self.NAMES)
+
+    @staticmethod
+    def week(built, n):
+        return next(p for p in built.pages if isinstance(p, yearbook.LeaguePage) and p.matchweek == n)
+
+    def test_zones_start_in_the_last_eleven_matches_of_a_38_match_season_and_the_last_ten_of_a_46_match_one(self):
+        self.assertEqual((yearbook.zones_from_matchweek(38), yearbook.zones_from_matchweek(46)), (27, 36))
+
+    def test_the_table_shows_no_zones_before_that_point_and_zones_from_it(self):
+        built = self.make(38)
+        self.assertEqual({t.zone for t in self.week(built, 26).table}, {""})
+        self.assertEqual([t.zone for t in self.week(built, 27).table], ["", "relegation"])
+        self.assertEqual(yearbook.zone_legend(self.week(built, 27).table), "Relegation")
+        self.assertEqual(yearbook.zone_legend(self.week(built, 26).table), "")
+
+    def test_the_final_table_always_shows_the_zones(self):
+        built = self.make(38)
+        (final,) = [p for p in built.pages if isinstance(p, yearbook.FinalTablesPage)]
+        self.assertEqual([t.zone for t in final.tables[0][1]], ["", "relegation"])
+
+    def test_a_league_whose_rules_the_save_does_not_give_shows_no_zones(self):
+        built = self.make(38, rules=())
+        self.assertEqual({t.zone for t in self.week(built, 38).table}, {""})
+
+    def test_a_short_league_shows_zones_from_the_start(self):
+        built = self.make(5)
+        self.assertEqual([t.zone for t in self.week(built, 1).table], ["", "relegation"])
 
 
 if __name__ == "__main__":
