@@ -8,5 +8,9 @@ openpyxl==3.1.5
 et-xmlfile==2.0.0
 # Dropping a save onto the window (added 16 Nov 2026)
 tkinterdnd2==0.7.0
+# The Yearbook PDF (added 18 Nov 2026); pillow and charset-normalizer are reportlab's own dependencies
+reportlab==5.1.0
+pillow==13.0.0
+charset-normalizer==3.5.2
 # Also installed (via fmsave[pandas]) for the later analysis and export step, not used yet:
 # pandas==3.1.1

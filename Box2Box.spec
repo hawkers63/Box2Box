@@ -17,6 +17,7 @@ a = Analysis(
         (str(TKDND_SOURCE), "tkinterdnd2/tkdnd"),
         (str(ROOT / "LICENSE"), "."),
         (str(ROOT / "icon" / "football-64-sky-blue.ico"), "icon"),
+        (str(ROOT / "fonts"), "fonts"),
     ],
     hiddenimports=[],
     hookspath=[],
