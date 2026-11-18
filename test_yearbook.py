@@ -171,6 +171,14 @@ class CupBlockTests(unittest.TestCase):
                 self.assertNotIn("aet", m.note)
                 self.assertNotIn("pens", m.note)
 
+    def test_a_group_stage_where_a_pair_meets_in_two_rounds_has_no_tie_notes(self):
+        group = CodedValue(CompetitionRound.UNKNOWN, 1)
+        games = [fx(D(2026, 3, 4), 1, 2, 1, 1, comp=102, md=1, rnd=group), fx(D(2026, 3, 18), 2, 1, 0, 0, comp=102, md=2, rnd=group)]
+        blocks = self.blocks(self.make(games))
+        self.assertEqual(len(blocks), 2)
+        self.assertEqual({m.note for b in blocks for m in b.matches}, {""})
+        self.assertEqual({b.leg for b in blocks}, {""})
+
     def test_a_league_phase_is_matches_with_no_tie_notes(self):
         group = CodedValue(CompetitionRound.UNKNOWN, 1)
         games = [fx(D(2026, 3, 4), h, a, 1, 1, comp=102, md=1, rnd=group)       # four sides, each playing three times
@@ -181,7 +189,7 @@ class CupBlockTests(unittest.TestCase):
 
 class WholeBookTests(unittest.TestCase):
     NAMES = {12: "Premier League", 14: "FA Cup"}
-    COMPS = [NS(id=101, database_id=12), NS(id=102, database_id=14)]
+    COMPS = [NS(id=101, database_id=12), NS(id=102, database_id=14), NS(id=103, database_id=16)]
 
     def make(self, fixtures, coverage=None):
         book, folder = banked(fixtures, competitions=self.COMPS, game=D(2026, 8, 20))
@@ -206,8 +214,13 @@ class WholeBookTests(unittest.TestCase):
         text = " ".join(title.coverage_lines)
         self.assertEqual(title.season_label, "2026")
         for part in ("2 banked saves", "1 September 2026", "1 October 2026", "No save was banked between 1 Sep and 1 Oct",
-                     "Season in progress", "Premier League", "FA Cup"):
+                     "Season complete", "Premier League", "FA Cup"):
             self.assertIn(part, text)
+
+    def test_a_single_save_reads_as_one_date(self):
+        cover = archive.BookCoverage(1, D(2026, 9, 1), D(2026, 9, 1), (), False)
+        text = " ".join(self.make(self.SEASON, cover).pages[0].coverage_lines)
+        self.assertIn("Built from 1 banked save, in-game 1 September 2026.", text)
 
     def test_the_title_page_says_when_no_competition_is_named_premier_league(self):
         book, folder = banked(self.SEASON, competitions=self.COMPS, game=D(2026, 8, 20))
@@ -215,6 +228,10 @@ class WholeBookTests(unittest.TestCase):
         self.addCleanup(book.close)
         built = yearbook.yearbook_from(book.dataset(), book.competitions(), book.coverage(2026), 2026, {14: "FA Cup"})
         self.assertIn("No competition is named Premier League", " ".join(built.pages[0].coverage_lines))
+
+    def test_a_season_is_in_progress_only_if_a_competition_in_the_book_has_matches_to_play(self):
+        extra = [fx(D(2026, 8, 22), 2, 3, comp=103, md=1)]            # an unnamed competition: not in the book
+        self.assertIn("Season complete", " ".join(self.make(self.SEASON + extra).pages[0].coverage_lines))
 
     def test_final_tables_appear_only_when_every_league_match_is_played(self):
         done = self.make(self.SEASON)

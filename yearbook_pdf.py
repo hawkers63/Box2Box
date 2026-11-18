@@ -105,11 +105,11 @@ def _flow(book: yb.Yearbook) -> list:
             flow += [Spacer(1, 60 * mm), Paragraph(f"Football Yearbook {escape(page.season_label)}", styles["title"]),
                      Spacer(1, 8 * mm)] + [Paragraph(escape(line), styles["line"]) for line in page.coverage_lines]
             new_page()
-        elif isinstance(page, yb.LeaguePage) and page.table:
-            new_page()
-            flow += [Paragraph(f"{escape(page.competition)} · {escape(page.heading)}", styles["heading"]),
-                     _matches(page.matches, styles), Spacer(1, 6 * mm), _standings(page.table, styles),
-                     Paragraph("Table calculated from the results.", styles["small"]), Spacer(1, 8 * mm)]
+        elif isinstance(page, yb.LeaguePage) and page.table:       # a matchweek and its table stay together
+            flow.append(KeepTogether([Paragraph(f"{escape(page.competition)} · {escape(page.heading)}", styles["heading"]),
+                                      _matches(page.matches, styles), Spacer(1, 6 * mm), _standings(page.table, styles),
+                                      Paragraph("Table calculated from the results.", styles["small"]),
+                                      Spacer(1, 8 * mm)]))
         elif isinstance(page, yb.LeaguePage):                              # a postponed match, played late
             flow.append(KeepTogether([Paragraph(f"{escape(page.competition)} · {escape(page.heading)}", styles["heading"]),
                                       _matches(page.matches, styles), Spacer(1, 4 * mm)]))

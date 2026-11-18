@@ -9,7 +9,9 @@ out; a calculated table says it is calculated; nothing the save does not hold (e
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
+from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
@@ -186,17 +188,23 @@ def _cup_blocks(name: str, cup_fixtures: Sequence, labels: Mapping[int, str]) ->
     """The blocks of a cup or continental competition: a block for each round, leg and day with a played match."""
     grouped: dict[tuple, list[BookMatch]] = {}
     names: dict[tuple, str] = {}
+    rounds_of: dict[frozenset, set[int]] = defaultdict(set)
+    for f in cup_fixtures:
+        rounds_of[frozenset((f.home_team_id, f.away_team_id))].add(f.round_index)
     for rnd in fd.cup_rounds(cup_fixtures, labels):
+        # A group stage looks like knockout rounds to cup_rounds (a side plays once a round), but its pairs meet
+        # again in another round; a knockout tie's legs and replay share one round.
+        knockout = rnd.knockout and not any(len(rounds_of[frozenset((t.team_a, t.team_b))]) > 1 for t in rnd.ties)
         for tie in rnd.ties:
             legs = tie.fixtures
-            two_legged = rnd.knockout and len(legs) == 2 and not fd.is_replay(*legs)
+            two_legged = knockout and len(legs) == 2 and not fd.is_replay(*legs)
             for n, f in enumerate(legs):
                 if not f.played or not f.date:
                     continue
                 leg = ""
-                if rnd.knockout and len(legs) == 2:
+                if knockout and len(legs) == 2:
                     leg = ("1st leg", "2nd leg")[n] if two_legged else ("Replay" if n == 1 else "")
-                deciding = rnd.knockout and n == len(legs) - 1
+                deciding = knockout and n == len(legs) - 1
                 note = _tie_note(tie, labels, two_legged) if deciding else ""
                 key = (f.date, rnd.index, leg)
                 names[key] = rnd.name
@@ -210,9 +218,10 @@ def _cup_blocks(name: str, cup_fixtures: Sequence, labels: Mapping[int, str]) ->
 def _title_lines(coverage: arch.BookCoverage, included: Sequence[str], home: int | None) -> tuple[str, ...]:
     lines = []
     if coverage.saves:
+        first = f"{coverage.first_date.day} {coverage.first_date:%B %Y}"
+        last = f"{coverage.last_date.day} {coverage.last_date:%B %Y}"
         lines.append(f"Built from {coverage.saves} banked save{'s' if coverage.saves != 1 else ''}, in-game "
-                     f"{coverage.first_date.day} {coverage.first_date:%B %Y} to "
-                     f"{coverage.last_date.day} {coverage.last_date:%B %Y}.")
+                     f"{first if first == last else f'{first} to {last}'}.")
     else:
         lines.append("No banked save falls inside this season's dates.")
     for first, last in coverage.gaps:
@@ -250,6 +259,7 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
     pages: list = []
     order: dict[str, int] = {}
     finals: list[tuple[str, tuple[TableLine, ...]]] = []
+    unplayed = False
     for comp in sorted(competitions, key=lambda c: c.key):
         name = names.get(comp.database_id)
         if not name or (home is not None and not comp.continental and comp.nation != home):
@@ -263,12 +273,14 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
         if not built:
             continue
         order[name] = len(order)
+        unplayed = unplayed or any(not f.played for f in league + cup)
         pages += built
         if league and all(f.played for f in league):
             last = max(f.date for f in league if f.date)
             finals.append((name, _table(fd.standings_as_of(league, labels, through=last, tie_breaks=comp.tie_breaks))))
     pages.sort(key=lambda p: _page_key(p, order))
     label = fd.season_label(season, [f for fixtures in dataset.fixtures.values() for f in fixtures])
+    coverage = dataclasses.replace(coverage, in_progress=unplayed)         # judged on the competitions in the book
     head = [TitlePage(label, _title_lines(coverage, list(order), home))]
     tail = [FinalTablesPage(tuple(finals))] if finals else []
     return Yearbook(label, coverage, tuple(head + pages + tail))
