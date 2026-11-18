@@ -44,6 +44,17 @@ class FormColourTests(unittest.TestCase):
             self.assertGreaterEqual(palette.contrast_ratio(colour, "#ffffff"), 4.5, letter)
 
 
+class MarkTests(unittest.TestCase):
+    def test_the_side_that_went_through_a_level_tie_gets_an_asterisk_after_its_name(self):
+        m = yb.BookMatch("", "Birmingham City", "Cardiff City", "0-0", "", advanced="away")
+        self.assertEqual(yearbook_pdf.side_text(m, "home"), "Birmingham City")
+        self.assertEqual(yearbook_pdf.side_text(m, "away"), "Cardiff City*")
+
+    def test_names_are_escaped_for_the_pdf_and_no_mark_means_no_asterisk(self):
+        m = yb.BookMatch("", "Al-Jazira Sports & Culture Club", "Hull City", "2-1")
+        self.assertEqual(yearbook_pdf.side_text(m, "home"), "Al-Jazira Sports &amp; Culture Club")
+
+
 class RenderTests(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
@@ -82,6 +93,11 @@ class RenderTests(unittest.TestCase):
                           D(2026, 8, 1))
         data = self.render(book(cup, week(1)))
         self.assertEqual(len(re.findall(rb"/Type\s*/Page\b", data)), 2)        # the title page, then one page for both
+
+    def test_a_block_with_a_marked_side_renders_with_its_footnote(self):
+        cup = yb.CupBlock("League Cup", "Round 2", "", "Sat 8 Aug",
+                          (yb.BookMatch("", "Birmingham City", "Cardiff City", "0-0", "", advanced="away"),), D(2026, 8, 8))
+        self.assertTrue(self.render(book(cup)).startswith(b"%PDF-"))
 
     def test_a_failure_while_drawing_leaves_no_file_and_no_scrap_behind(self):
         with mock.patch.object(yearbook_pdf, "SimpleDocTemplate") as doc:

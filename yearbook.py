@@ -19,6 +19,9 @@ import archive as arch
 import fm_data as fd
 
 HOME_LEAGUE_NAME = "premier league"     # the competition whose nation is the book's home nation
+# The footnote for a "*": the save stores no shootout, extra-time or 90-minute score, so all that is known is that
+# the match or the aggregate was level and one side still went through.
+LEVEL_TIE_FOOTNOTE = "* went through a level tie, decided in extra time or on penalties"
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +31,7 @@ class BookMatch:
     away: str
     score: str
     note: str = ""
+    advanced: str = ""             # "home" or "away": the side that went through a level tie, marked with "*"
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +77,11 @@ class CupBlock:
     @property
     def heading(self) -> str:
         return f"{self.competition}, {self.round_name}{', ' + self.leg if self.leg else ''} · {self.date_text}"
+
+    @property
+    def footnote(self) -> str:
+        """What a "*" in this block means; empty when no side in it is marked."""
+        return LEVEL_TIE_FOOTNOTE if any(m.advanced for m in self.matches) else ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,29 +174,32 @@ def _league_pages(name: str, league: Sequence, labels: Mapping[int, str], tie_br
     return pages
 
 
-def _tie_note(tie: fd.CupTie, labels: Mapping[int, str], two_legged: bool) -> str:
-    """The note under a tie's deciding match: an aggregate for two legs; "advance" or "level" for a drawn
-    deciding match. The save stores no extra time or penalties, so neither is ever printed: a winner is named
-    only when `tie.winner` is evidenced (the side plays in a later round)."""
+def _tie_note(tie: fd.CupTie, two_legged: bool) -> tuple[str, str]:
+    """(note, advanced) for a tie's deciding match. The note is the aggregate for two legs, or "(level)" for a
+    level tie nobody is known to have won. `advanced` is "home" or "away" for the side that went through a level
+    tie, only when `tie.winner` is evidenced (the side plays in a later round). The save stores no extra time or
+    penalties, so neither is ever printed."""
     last = tie.fixtures[-1]
-    advanced = labels.get(tie.winner, "") if tie.winner is not None and tie.how == "next round" else ""
+    went_through = tie.winner is not None and tie.how == "next round"
+    side = ("home" if tie.winner == last.home_team_id else "away") if went_through else ""
     if two_legged:
         goals = fd.Tie(tie.round_index, tie.team_a, tie.team_b, tie.fixtures[0], last).aggregate
         if goals is None:
-            return ""
+            return "", ""
         home, away = goals[1], goals[0]                           # the second leg's home side first
         if home != away:
-            return f"({home}-{away} agg)"
-        return f"({home}-{away} agg; {advanced} advance)" if advanced else f"({home}-{away} agg, level)"
+            return f"({home}-{away} agg)", ""
+        return (f"({home}-{away} agg)", side) if side else (f"({home}-{away} agg, level)", "")
     if fd.has_score(last) and last.home_goals == last.away_goals:
-        return f"({advanced} advance)" if advanced else "(level)"
-    return ""
+        return ("", side) if side else ("(level)", "")
+    return "", ""
 
 
 def _cup_blocks(name: str, cup_fixtures: Sequence, labels: Mapping[int, str]) -> list[CupBlock]:
     """The blocks of a cup or continental competition: a block for each round, leg and day with a played match."""
     grouped: dict[tuple, list[BookMatch]] = {}
     names: dict[tuple, str] = {}
+    matchdays = 0
     rounds_of: dict[frozenset, set[int]] = defaultdict(set)
     for f in cup_fixtures:
         rounds_of[frozenset((f.home_team_id, f.away_team_id))].add(f.round_index)
@@ -195,6 +207,9 @@ def _cup_blocks(name: str, cup_fixtures: Sequence, labels: Mapping[int, str]) ->
         # A group stage looks like knockout rounds to cup_rounds (a side plays once a round), but its pairs meet
         # again in another round; a knockout tie's legs and replay share one round.
         knockout = rnd.knockout and not any(len(rounds_of[frozenset((t.team_a, t.team_b))]) > 1 for t in rnd.ties)
+        if not knockout:
+            matchdays += 1
+        round_name = rnd.name if knockout else f"Matchday {matchdays}"
         for tie in rnd.ties:
             legs = tie.fixtures
             two_legged = knockout and len(legs) == 2 and not fd.is_replay(*legs)
@@ -205,11 +220,12 @@ def _cup_blocks(name: str, cup_fixtures: Sequence, labels: Mapping[int, str]) ->
                 if knockout and len(legs) == 2:
                     leg = ("1st leg", "2nd leg")[n] if two_legged else ("Replay" if n == 1 else "")
                 deciding = knockout and n == len(legs) - 1
-                note = _tie_note(tie, labels, two_legged) if deciding else ""
+                note, advanced = _tie_note(tie, two_legged) if deciding else ("", "")
                 key = (f.date, rnd.index, leg)
-                names[key] = rnd.name
+                names[key] = round_name
                 grouped.setdefault(key, []).append(
-                    BookMatch("", labels.get(f.home_team_id, ""), labels.get(f.away_team_id, ""), _score(f), note))
+                    BookMatch("", labels.get(f.home_team_id, ""), labels.get(f.away_team_id, ""), _score(f), note,
+                              advanced))
     return [CupBlock(name, names[key], key[2], f"{_day(key[0])} {key[0]:%b}",
                      tuple(sorted(matches, key=lambda m: (m.home, m.away))), key[0])
             for key, matches in sorted(grouped.items())]

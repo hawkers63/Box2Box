@@ -61,9 +61,15 @@ def _form(letters: str) -> str:
     return "".join(f'<font color="{FORM_INK[c]}">{c}</font>' if c in FORM_INK else escape(c) for c in letters)
 
 
+def side_text(match: yb.BookMatch, side: str) -> str:
+    """A team's name as printed: escaped for the PDF, with "*" after it when it went through a level tie."""
+    return escape(getattr(match, side)) + ("*" if match.advanced == side else "")
+
+
 def _matches(matches, styles) -> Table:
-    rows = [[m.date_text, Paragraph(escape(m.home), styles["home"]), m.score, Paragraph(escape(m.away), styles["cell"]),
-             Paragraph(escape(m.note), styles["small"])] for m in matches]
+    rows = [[m.date_text, Paragraph(side_text(m, "home"), styles["home"]), m.score,
+             Paragraph(side_text(m, "away"), styles["cell"]), Paragraph(escape(m.note), styles["small"])]
+            for m in matches]
     table = Table(rows, colWidths=[15 * mm, 48 * mm, 14 * mm, 48 * mm, 49 * mm], hAlign="CENTER")
     table.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (0, -1), FONT), ("FONTSIZE", (0, 0), (0, -1), 8.5),
@@ -114,8 +120,9 @@ def _flow(book: yb.Yearbook) -> list:
             flow.append(KeepTogether([Paragraph(f"{escape(page.competition)} · {escape(page.heading)}", styles["heading"]),
                                       _matches(page.matches, styles), Spacer(1, 4 * mm)]))
         elif isinstance(page, yb.CupBlock):
+            note = [Paragraph(escape(page.footnote), styles["small"])] if page.footnote else []
             flow.append(KeepTogether([Paragraph(escape(page.heading), styles["heading"]),
-                                      _matches(page.matches, styles), Spacer(1, 4 * mm)]))
+                                      _matches(page.matches, styles), *note, Spacer(1, 4 * mm)]))
         elif isinstance(page, yb.FinalTablesPage):
             new_page()
             for name, lines in page.tables:

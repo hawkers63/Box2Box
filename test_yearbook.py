@@ -149,7 +149,8 @@ class CupBlockTests(unittest.TestCase):
     def test_a_level_aggregate_names_who_advanced_only_when_a_later_round_shows_them(self):
         later = [fx(D(2026, 4, 8), 1, 3, 0, 0, comp=102, md=2, rnd=SF)]         # Hull City play on, Leeds do not
         _, second = self.blocks(self.make(self.tie() + later))[:2]
-        self.assertEqual(second.matches[0].note, "(2-2 agg; Hull City advance)")
+        self.assertEqual((second.matches[0].note, second.matches[0].advanced), ("(2-2 agg)", "away"))   # Hull City are the away side
+        self.assertEqual(second.footnote, yearbook.LEVEL_TIE_FOOTNOTE)
 
     def test_an_unlevel_aggregate_is_just_the_aggregate_from_the_second_legs_home_side(self):
         legs = [fx(D(2026, 3, 4), 4, 3, 3, 0, comp=102, md=1, rnd=QF), fx(D(2026, 3, 18), 3, 4, 1, 3, comp=102, md=1, rnd=QF)]
@@ -159,10 +160,11 @@ class CupBlockTests(unittest.TestCase):
     def test_a_drawn_single_match_names_who_advanced_when_a_later_round_shows_them_and_else_says_level(self):
         drawn = [fx(D(2026, 3, 4), 1, 2, 1, 1, comp=102, md=1, rnd=QF)]
         (block,) = self.blocks(self.make(drawn))
-        self.assertEqual(block.matches[0].note, "(level)")
+        self.assertEqual((block.matches[0].note, block.matches[0].advanced, block.footnote), ("(level)", "", ""))
         later = drawn + [fx(D(2026, 4, 8), 2, 3, 0, 0, comp=102, md=2, rnd=SF)]
         first = self.blocks(self.make(later, nations={i: 5 for i in range(1, 6)}))[0]
-        self.assertEqual(first.matches[0].note, "(Leeds United advance)")
+        self.assertEqual((first.matches[0].note, first.matches[0].advanced), ("", "away"))      # Leeds United went through
+        self.assertEqual(first.footnote, yearbook.LEVEL_TIE_FOOTNOTE)
 
     def test_the_book_never_prints_extra_time_or_penalties(self):
         built = self.make(self.tie() + [fx(D(2026, 4, 8), 1, 3, 1, 1, comp=102, md=2, rnd=SF)])
@@ -178,6 +180,19 @@ class CupBlockTests(unittest.TestCase):
         self.assertEqual(len(blocks), 2)
         self.assertEqual({m.note for b in blocks for m in b.matches}, {""})
         self.assertEqual({b.leg for b in blocks}, {""})
+
+    def test_a_block_with_no_level_tie_has_no_footnote(self):
+        first, second = self.blocks(self.make(self.tie()))
+        self.assertEqual((first.footnote, second.footnote), ("", ""))
+
+    def test_the_footnote_claims_only_what_the_save_supports(self):
+        self.assertNotIn("4-3", yearbook.LEVEL_TIE_FOOTNOTE)
+        self.assertIn("extra time or on penalties", yearbook.LEVEL_TIE_FOOTNOTE)
+
+    def test_the_rounds_of_a_group_stage_are_named_matchday_1_matchday_2(self):
+        group = CodedValue(CompetitionRound.UNKNOWN, 1)
+        games = [fx(D(2026, 3, 4), 1, 2, 1, 1, comp=102, md=1, rnd=group), fx(D(2026, 3, 18), 2, 1, 0, 0, comp=102, md=2, rnd=group)]
+        self.assertEqual([b.round_name for b in self.blocks(self.make(games))], ["Matchday 1", "Matchday 2"])
 
     def test_a_league_phase_is_matches_with_no_tie_notes(self):
         group = CodedValue(CompetitionRound.UNKNOWN, 1)
