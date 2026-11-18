@@ -19,7 +19,7 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from typing import NamedTuple
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2          # 2: competitions.zone_rules
 
 _SCHEMA = """
 CREATE TABLE meta (schema_version INTEGER NOT NULL);
@@ -29,7 +29,7 @@ CREATE TABLE imports (
 CREATE TABLE clubs (uid INTEGER PRIMARY KEY, name TEXT, short_name TEXT, nation_id INTEGER);
 CREATE TABLE competitions (
     key INTEGER PRIMARY KEY, database_id INTEGER, tie_breaks TEXT, nation INTEGER, continental INTEGER,
-    source_date TEXT);
+    source_date TEXT, zone_rules TEXT);
 CREATE TABLE fixtures (
     competition_key INTEGER NOT NULL, season INTEGER NOT NULL, home_uid INTEGER NOT NULL,
     away_uid INTEGER NOT NULL, meeting INTEGER NOT NULL,
@@ -186,6 +186,7 @@ class ArchivedCompetition:
     continental: bool
     tie_breaks: tuple[int, ...]
     seasons: tuple[int, ...]
+    zones: tuple[int, int, int] | None = None      # (promotion, play-off, relegation) places, from the game's rules
 
 
 def infer_nation(club_uids: set[int], club_nations: dict[int, int]) -> tuple[int | None, bool]:
@@ -255,6 +256,11 @@ class Archive:
                     db.execute("INSERT INTO meta (schema_version) VALUES (?)", (SCHEMA_VERSION,))
             else:
                 found = db.execute("SELECT schema_version FROM meta").fetchone()[0]
+                if found < SCHEMA_VERSION:
+                    with db:                                  # older archives are upgraded in place, keeping their data
+                        if found < 2:
+                            db.execute("ALTER TABLE competitions ADD COLUMN zone_rules TEXT")
+                        db.execute("UPDATE meta SET schema_version = ?", (SCHEMA_VERSION,))
                 if found > SCHEMA_VERSION:
                     db.close()
                     raise ArchiveError(f"This archive was written by a newer Box2Box (schema {found}); "
@@ -292,6 +298,16 @@ class Archive:
                         self._db.execute("UPDATE clubs SET short_name = ? WHERE uid = ? AND short_name IS NULL",
                                          (short, uid))
 
+    def _fill_zone_rules(self, dataset) -> None:
+        """Record zone rules for competitions whose rules the archive does not hold yet (an archive upgraded from
+        schema 1). Never overwrites rules already there. Runs inside the caller's transaction."""
+        for comp in dataset.competitions:
+            rules = dataset.zone_rules.get(comp.id)
+            if rules:
+                self._db.execute("UPDATE competitions SET zone_rules = ? WHERE key = ? AND (zone_rules IS NULL OR zone_rules = '')",
+                                 (json.dumps([rules.promotion, rules.playoff, rules.relegation]),
+                                  competition_key(comp.id, comp.database_id)))
+
     def _stored(self, key: FixtureKey) -> ArchivedFixture | None:
         row = self._db.execute(
             f"SELECT {', '.join(_COLUMNS)} FROM fixtures WHERE competition_key = ? AND season = ? AND home_uid = ? "
@@ -318,8 +334,9 @@ class Archive:
         game_date = _iso(info.game_date)
         if self._db.execute("SELECT 1 FROM imports WHERE file_name = ? AND game_date IS ?",
                             (info.file_name, game_date)).fetchone():
-            with self._db:                          # an archive banked before short names were kept: fill them in
+            with self._db:                          # an archive banked before short names or zone rules were kept
                 self._fill_short_names(dataset)
+                self._fill_zone_rules(dataset)
             return BankReport(0, 0, 0, 0, 0, True)
         records, skipped = self._archived(dataset)
         self._check_world(records)
@@ -413,7 +430,9 @@ class Archive:
         dataset = fd.build_dataset(info, fixtures, clubs=clubs,
                                    competitions=[NS(id=c.key, database_id=c.database_id if c.key >= 0 else None)
                                                  for c in known])
-        return dataclasses.replace(dataset, tie_breaks={c.key: c.tie_breaks for c in known if c.tie_breaks})
+        return dataclasses.replace(
+            dataset, tie_breaks={c.key: c.tie_breaks for c in known if c.tie_breaks},
+            zone_rules={c.key: fd.ZoneRules(*c.zones) for c in known if c.zones})
 
     def _bank_competitions(self, dataset, records: Sequence[ArchivedFixture]) -> None:
         """Keep each competition's metadata from the newest save (ties go to the larger value, so the order saves
@@ -425,21 +444,25 @@ class Archive:
             key = competition_key(comp.id, comp.database_id)
             nation, continental = infer_nation(clubs_in.get(key, set()), dict(dataset.club_nations))
             codes = json.dumps(list(dataset.tie_breaks.get(comp.id, ())))
-            new = (_iso(dataset.info.game_date) or "", -1 if nation is None else nation, int(continental), codes)
-            row = self._db.execute("SELECT source_date, nation, continental, tie_breaks FROM competitions WHERE key = ?",
-                                   (key,)).fetchone()
-            if row and (row[0] or "", -1 if row[1] is None else row[1], row[2], row[3]) >= new:
+            rules = dataset.zone_rules.get(comp.id)
+            zones = json.dumps([rules.promotion, rules.playoff, rules.relegation]) if rules else ""
+            new = (_iso(dataset.info.game_date) or "", -1 if nation is None else nation, int(continental), codes, zones)
+            row = self._db.execute("SELECT source_date, nation, continental, tie_breaks, zone_rules FROM competitions "
+                                   "WHERE key = ?", (key,)).fetchone()
+            if row and (row[0] or "", -1 if row[1] is None else row[1], row[2], row[3], row[4] or "") >= new:
                 continue
             self._db.execute("INSERT OR REPLACE INTO competitions (key, database_id, tie_breaks, nation, continental, "
-                             "source_date) VALUES (?, ?, ?, ?, ?, ?)",
-                             (key, comp.database_id, codes, nation, int(continental), _iso(dataset.info.game_date)))
+                             "source_date, zone_rules) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                             (key, comp.database_id, codes, nation, int(continental), _iso(dataset.info.game_date),
+                              zones))
 
     def competitions(self) -> list[ArchivedCompetition]:
         """Every competition the archive holds, in key order."""
-        rows = self._db.execute("SELECT key, database_id, tie_breaks, nation, continental FROM competitions "
+        rows = self._db.execute("SELECT key, database_id, tie_breaks, nation, continental, zone_rules FROM competitions "
                                 "ORDER BY key").fetchall()
         return [ArchivedCompetition(
             key=r[0], database_id=r[1], nation=r[3], continental=bool(r[4]), tie_breaks=tuple(json.loads(r[2])),
+            zones=tuple(json.loads(r[5])) if r[5] else None,
             seasons=tuple(x[0] for x in self._db.execute(
                 "SELECT DISTINCT season FROM fixtures WHERE competition_key = ? ORDER BY season", (r[0],))))
             for r in rows]

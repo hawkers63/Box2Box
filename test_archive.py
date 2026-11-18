@@ -55,6 +55,21 @@ class ArchiveFileTests(unittest.TestCase):
         with self.connect() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM clubs").fetchone()[0], 1)
 
+    def test_a_version_1_archive_is_migrated_to_the_current_schema_keeping_its_data(self):
+        with archive.Archive.open(self.path):
+            pass
+        with self.connect() as db:
+            db.execute("INSERT INTO clubs (uid, name, short_name, nation_id) VALUES (1, 'Hull City', 'Hull', 5)")
+            db.execute("ALTER TABLE competitions DROP COLUMN zone_rules")          # what a version 1 file looks like
+            db.execute("UPDATE meta SET schema_version = 1")
+            db.commit()
+        with archive.Archive.open(self.path):
+            pass
+        self.assertEqual(self.version(), archive.SCHEMA_VERSION)
+        with self.connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM clubs").fetchone()[0], 1)
+            db.execute("SELECT zone_rules FROM competitions")                      # the column is back
+
     def test_a_newer_schema_is_refused_and_left_alone(self):
         with archive.Archive.open(self.path):
             pass
@@ -318,6 +333,31 @@ class CompetitionTests(unittest.TestCase):
     def test_a_competition_of_several_nations_is_continental(self):
         comp = self.only(nations={1: 5, 2: 5, 3: 6, 4: 6, 5: 7})
         self.assertEqual((comp.nation, comp.continental), (None, True))
+
+    def test_the_zone_rules_are_kept_and_handed_back_with_the_dataset(self):
+        rules = NS(competition_id=101, promotion_places=1, playoff_places=2, relegation_places=3, rounds=(), unknown={})
+        with archive.Archive.open(self.path) as a:
+            a.bank(bank_dataset(self.LEAGUE, rules=[rules]))
+            (comp,) = a.competitions()
+            zones = a.dataset().zone_rules[12]
+        self.assertEqual(comp.zones, (1, 2, 3))
+        self.assertEqual((zones.promotion, zones.playoff, zones.relegation), (1, 2, 3))
+
+    def test_zone_rules_missing_from_an_older_archive_come_back_when_the_same_save_is_opened_again(self):
+        rules = NS(competition_id=101, promotion_places=1, playoff_places=2, relegation_places=3, rounds=(), unknown={})
+        data = bank_dataset(self.LEAGUE, rules=[rules])
+        with archive.Archive.open(self.path) as a:
+            a.bank(data)
+        with contextlib.closing(sqlite3.connect(self.path)) as db:
+            db.execute("UPDATE competitions SET zone_rules = NULL")
+            db.commit()
+        with archive.Archive.open(self.path) as a:
+            self.assertTrue(a.bank(data).already_banked)
+            (comp,) = a.competitions()
+        self.assertEqual(comp.zones, (1, 2, 3))
+
+    def test_a_competition_with_no_rules_has_no_zones(self):
+        self.assertIsNone(self.only().zones)
 
     def test_the_tie_break_codes_are_kept(self):
         comp = self.only(rules=[rules_listing(2, 0, 1)])
