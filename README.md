@@ -8,7 +8,7 @@
 
 A Windows desktop viewer for the fixtures, results, grids and league tables in a Football Manager 27 (or 26) save. Saves are read with [fmsave](https://rhiever.github.io/fmsave/) and are never modified.
 
-[![Release 2.7](https://img.shields.io/badge/Release-2.7-0EA5E9)](https://github.com/hawkers63/Box2Box/releases/latest)
+[![Release 2.8](https://img.shields.io/badge/Release-2.8-0EA5E9)](https://github.com/hawkers63/Box2Box/releases/latest)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)](https://www.microsoft.com/windows)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![GUI](https://img.shields.io/badge/GUI-CustomTkinter%20%2B%20tksheet-10B981)](https://customtkinter.tomschimansky.com/)
@@ -20,9 +20,9 @@ A Windows desktop viewer for the fixtures, results, grids and league tables in a
 
 **Database viewer** · entry point `fm_review.py` · launcher `Box2Box.bat`
 
-**Release:** 2.7  
+**Release:** 2.8  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 2.7), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.8), launched with `Box2Box.bat`
 
 </div>
 
@@ -326,7 +326,7 @@ A save keeps the current season's results but lets the past thin out, early cup 
 - Banking the same saves in any order gives the same archive. Opening a save twice changes nothing and says "Already banked."
 - A save whose results disagree with the archive's looks like a different playthrough, so it is refused with a plain message and the archive is left alone. A failed import leaves the archive exactly as it was.
 
-**The book.** *Export ▾ → Yearbook (PDF)* lists every banked season, one volume each. Each season opens a small menu: **Save the latest edition**, **Build it again**, **Read before saving…** and the editions already saved, newest first (choosing one opens it). Editions are kept in `Documents\Box2Box\Yearbooks\<season>\`, named from the last in-game date the archive holds, so a new save banked later adds a new edition and leaves the older ones alone; saving the same coverage twice says so and writes nothing. **Read before saving…** shows the book page by page in a window, with a list of competitions to jump to, and **Save this edition** from there. The PDF has a contents (bookmarks) for the season, each competition, how they stood and the final tables. The book contains:
+**The book.** *Export ▾ → Yearbook (PDF)* lists every banked season, one volume each. Each season opens a small menu: **Save the latest edition**, **Build it again**, **Read before saving…** and the editions already saved, newest first (choosing one opens it). Editions are kept in `Documents\Box2Box\Yearbooks\<season>\`, named from the last in-game date the archive holds, so a new save banked later adds a new edition and leaves the older ones alone; saving the same coverage twice says so and writes nothing. **Read before saving…** shows the book in a window, with a list of competitions and a strip of nearby chapters to jump to, and **Save this edition** from there. Read one page at a time or as **reader spreads** (two pages of the window side by side, not two printed pages of the PDF; a window narrower than about 1300 px shows single pages). Home and End go to the first and last page. Choosing another season loads it into the same window, and each volume reopens at the page you left it on. **Save this edition** saves exactly the book you are reading; if a newer save has been banked since, it names both editions and asks which to save. The PDF has a contents (bookmarks) for the season, each competition, how they stood and the final tables. The book contains:
 
 - A title page that says which saves it was built from and flags any stretch with no save banked.
 - League matchweeks with their dates and results, and the table as it stood after each one: places gained or lost since the previous table (±), points per game (PPG, which leaves out a match with no score and says so) and the last six results. A match postponed and played late prints on the day it was played, marked "Matchweek N, rescheduled", and the table leaves it out until then.
@@ -471,6 +471,7 @@ The tests write only to temporary directories and do not need a real Football Ma
 
 | Release | Date | Highlights |
 | --- | --- | --- |
+| [**2.8**](https://github.com/hawkers63/Box2Box/releases/tag/v2.8) | 19&nbsp;Nov&nbsp;2026 | 📖 Yearbook reader spreads, bookmarks and a chapter strip; saves the edition you are reading; Schedule and Hub show when they are open |
 | [**2.7**](https://github.com/hawkers63/Box2Box/releases/tag/v2.7) | 19&nbsp;Nov&nbsp;2026 | 🗓️ Schedule view, manager hub, and badge contrast fixes meeting WCAG AA |
 | [**2.6**](https://github.com/hawkers63/Box2Box/releases/tag/v2.6) | 19&nbsp;Nov&nbsp;2026 | 📈 The archive remembers expected goals, and the Yearbook's final tables show xG, xGA and goals minus xG where the saves kept them |
 | [**2.5**](https://github.com/hawkers63/Box2Box/releases/tag/v2.5) | 19&nbsp;Nov&nbsp;2026 | 📚 Yearbook editions are kept side by side, the PDF has a contents, and the book can be read in the window before it is saved |

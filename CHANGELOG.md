@@ -1,8 +1,8 @@
 # Changelog
 
-**Release:** 2.7  
+**Release:** 2.8  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 2.7), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.8), launched with `Box2Box.bat`
 
 All notable changes to this project will be documented in this file.
 
@@ -10,6 +10,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [2.8] - 2026-11-19
+
+A better way to read the Yearbook before you save it, and the edition you save is the one you read.
+
+### Added
+
+- **Reader spreads.** In *Read before saving…*, choose **Single page** or **Reader spread** at the foot of the window. A reader spread puts two pages of the window side by side; it is not two printed pages of the PDF. The title page and an odd last page stand alone, and a window narrower than about 1300 px shows single pages until it is widened. Your choice is remembered.
+- **Chapter strip.** A row of the chapters near the page you are reading sits above the book; click one to jump to it. Long competition names are shortened in the strip, and the full list stays on the left.
+- **Bookmarks.** Each season's volume reopens at the page you left it on, even after closing Box2Box. A newer edition of the same volume reopens at the same page when it still has it, and at the title page otherwise.
+- **Home and End** go to the first and last page of the book.
+
+### Changed
+
+- **Schedule and Hub show when they are open.** Their buttons beside Inspector take the accent colour while their view is on screen.
+- **The reading window looks more like a book**: serif headings and a hairline frame round the title page. Tables keep their plain face and colours.
+
+### Fixed
+
+- **Choosing another season while the reading window is open** now loads that season into the window. Before, it brought the season already open to the front.
+- **Save this edition saves the book you are reading.** If a newer save has been banked since the book was built, Box2Box names both editions and asks: refresh to the newer edition and save that, save the edition you are reading, or save nothing.
 
 ## [2.7] - 2026-11-19
 
