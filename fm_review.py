@@ -53,6 +53,8 @@ import yearbook
 import yearbook_editions
 import yearbook_pdf
 import yearbook_read
+import fm_manager_hub as fmh
+import fm_schedule_view as fsv
 
 APP_TITLE = "Box2Box"
 VERSION = "2.7"
@@ -102,7 +104,9 @@ ALL_TEAMS = "All teams"
 EXPORT_LABEL = "Export ▾"
 HUB = "Competitions"
 ANALYSIS = "Analysis"
-VIEWS = ("Results", "Grid", "Table", ANALYSIS, HUB)
+SCHEDULE = "Schedule"
+MANAGER_HUB = "Hub"
+VIEWS = ("Results", "Grid", "Table", ANALYSIS, SCHEDULE, MANAGER_HUB, HUB)
 ANALYSES = ("Form", "Positions", "xG", "Ties", "Bracket")
 POSITIONS_MODES = ("Matchday chart", "Season vs season")
 GROUPINGS = (fd.GROUP_BY_WEEK, fd.GROUP_BY_MATCHDAY, fd.GROUP_BY_DATE)
@@ -760,6 +764,8 @@ class FMReviewApp(_Root):
         self._resize_job: str | None = None       # the view switch's counts follow the window's width
         self._drop_note_job: str | None = None    # clears a refused drop's reason after a while
         self._dataset_serial = 0                  # bumped per installed save
+        self._schedule_serial = 0                 # bumped when followed club or save changes
+        self._followed_uid: fd.FollowedClub | None = None   # persists across competition changes; resets on new save
         self._club_cache: tuple[int, tuple[fd.ClubEntry, ...]] | None = None    # the palette's clubs, per save
         self.opponent_filter: tuple[int, int] | None = None   # Results shows only matches between these two teams
         self._selection: tuple | None = None      # what the inspector describes: ("match", Fixture), ("club", id), ("hub", id)
@@ -838,6 +844,8 @@ class FMReviewApp(_Root):
             self.theme_menu.add_radiobutton(label=theme.name, variable=self.theme_name, value=theme.name,
                                             command=lambda name=theme.name: self.set_theme(name))
         self.theme_menu.add_separator()
+        self.theme_menu.add_command(label="Follow club…", command=self._show_palette_key)
+        self._follow_menu_item = self.theme_menu.index("end")
         self.theme_menu.add_command(label="Club colours…", command=self.show_club_colours)
         self._club_menu_item = self.theme_menu.index("end")
         # The followed club's two colours along the foot of the title band, shown while it has some.
@@ -970,6 +978,12 @@ class FMReviewApp(_Root):
         self.bracket_view = bracket.BracketView(content, px=self.px, font=(FONT, 10), theme=self.theme)
         self.bracket_view.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
         self.bracket_view.grid_remove()                                  # the Analysis view's Bracket panel shows it
+        self._schedule_view = fsv.ScheduleView(content, fg_color="transparent")
+        self._schedule_view.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
+        self._schedule_view.grid_remove()
+        self._manager_hub_view = fmh.ManagerHubView(content, fg_color="transparent")
+        self._manager_hub_view.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
+        self._manager_hub_view.grid_remove()
         self.tooltip = tooltip.Tooltip(self, theme=self.theme)        # over the form pills
         for name, overlay in self.overlays.items():
             overlay.on_hover = lambda row, column, index, x, y, n=name: self._on_pill_hover(n, row, column, index, x, y)
@@ -1018,6 +1032,10 @@ class FMReviewApp(_Root):
             # In a text box Ctrl+K would also delete to the end of the line: open the palette instead of that.
             self.team_box.bind(key, self._on_palette_key, add=True)
             self.search_entry.bind(key, self._on_palette_key, add=True)
+        for key in ("<Control-S>",):
+            self.bind(key, lambda _e: self.set_view(SCHEDULE))
+        for key in ("<Control-H>",):
+            self.bind(key, lambda _e: self.set_view(MANAGER_HUB))
 
     def _make_sheet(self, parent, own_menu: bool = False, **options) -> Sheet:
         """A sheet in the shared style; its colours come from the theme (see _recolour). With `own_menu`
@@ -1325,6 +1343,11 @@ class FMReviewApp(_Root):
         self.progress.grid_remove()
         self.open_button.configure(state="normal")
         self.reopen_button.configure(state="normal")
+        if kind == "schedule_ready":
+            serial, sched, snap = payload
+            if serial == self._schedule_serial:
+                self.install_schedule_views(sched, snap)
+            return
         if kind == "xg":
             self.install_expected_goals(payload)
             self._start_xg_banking(payload)
@@ -1342,6 +1365,8 @@ class FMReviewApp(_Root):
         self._selection = None
         self.dataset = dataset
         self._dataset_serial += 1
+        self._followed_uid = None
+        self._schedule_serial += 1
         self.settings["last_save"] = dataset.info.path
         self._write_settings()
         info = dataset.info
@@ -1642,6 +1667,13 @@ class FMReviewApp(_Root):
     def set_focus(self, team_id: int | None) -> None:
         self.opponent_filter = None
         self.focus = team_id if team_id in self.labels else None
+        if team_id is not None and self.dataset:
+            identity = self.dataset.teams.get(team_id)
+            if identity and identity.club_uid is not None:
+                new_uid = fd.FollowedClub(club_uid=identity.club_uid,
+                                          name=self.labels.get(team_id, ""))
+                if new_uid != self._followed_uid:
+                    self._set_followed_uid(new_uid)
         self._show_followed_team()
         self._update_club_tint()
         self.render()
@@ -1655,6 +1687,42 @@ class FMReviewApp(_Root):
         self.team_box.set(self.labels[self.focus] if self.focus is not None else ALL_TEAMS)
         if disabled:
             self.team_box.configure(state="disabled")
+
+    def _set_followed_uid(self, club: fd.FollowedClub | None) -> None:
+        """Update the followed club and start a background worker to build schedule/snapshot data."""
+        self._followed_uid = club
+        self._schedule_serial += 1
+        serial = self._schedule_serial
+        ds = self.dataset
+        if ds is None or club is None:
+            return
+        theme = self.view_theme
+        names = self.names
+
+        def _worker():
+            sched = fd.club_schedule(ds, club)
+            snap = fd.manager_snapshot(ds, club)
+            self.events.put(("schedule_ready", (serial, sched, snap)))
+
+        import threading
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _clear_followed_uid(self) -> None:
+        """Remove the followed club; the Schedule and Hub views will show their empty states."""
+        self._followed_uid = None
+        self._schedule_serial += 1
+
+    def install_schedule_views(self, sched: fd.Schedule, snap: fd.ManagerSnapshot) -> None:
+        """Install schedule and snapshot data into the custom views (main thread only)."""
+        theme = self.view_theme
+        self._schedule_view.install_schedule(sched, theme)
+        self._manager_hub_view.install_snapshot(snap, theme, self.names)
+        if self.view in (SCHEDULE, MANAGER_HUB):
+            self.render()
+
+    def _show_palette_key(self) -> None:
+        """Open the command palette (the user can then search and follow a club)."""
+        self._on_palette_key()
 
     def _view_count(self, view: str) -> str:
         """The count shown beside a view's name on the switch, or ''. Cheap: one coverage count, or one team's
@@ -1705,7 +1773,7 @@ class FMReviewApp(_Root):
 
     def set_view(self, view: str) -> None:
         self.view = view
-        if view != HUB:
+        if view not in (HUB, SCHEDULE, MANAGER_HUB):
             self.last_comp_view = view
         self._sync_view_controls()
         self.render()                          # which also selects the view's label on the switch
@@ -1725,7 +1793,7 @@ class FMReviewApp(_Root):
         elif self.view == ANALYSIS:
             self.analysis_label.pack(side="left", padx=(0, 6))
             self.analysis_switch.pack(side="left")
-        state = "normal" if self.dataset and self.view != HUB else "disabled"
+        state = "normal" if self.dataset and self.view not in (HUB, SCHEDULE, MANAGER_HUB) else "disabled"
         for widget in (self.season_menu, self.team_box, self.group_switch, self.split_switch,
                        self.analysis_switch, self.positions_mode_switch):
             widget.configure(state=state)
@@ -1997,6 +2065,12 @@ class FMReviewApp(_Root):
         if self.view == HUB:
             self._render_competitions()
             return
+        if self.view == SCHEDULE:
+            self._show_custom_view(self._schedule_view)
+            return
+        if self.view == MANAGER_HUB:
+            self._show_custom_view(self._manager_hub_view)
+            return
         if self.comp_id is None:
             return
         text = fd.coverage(self.fixtures).describe()
@@ -2015,6 +2089,8 @@ class FMReviewApp(_Root):
     def _show_sheet(self, name: str) -> Sheet:
         self.message.grid_remove()
         self.bracket_view.grid_remove()
+        self._schedule_view.grid_remove()
+        self._manager_hub_view.grid_remove()
         self._shown = name
         for key, sheet in self.sheets.items():
             if key == name:
@@ -2026,11 +2102,25 @@ class FMReviewApp(_Root):
     def _show_message(self, text: str) -> None:
         self._shown = None
         self.bracket_view.grid_remove()
+        self._schedule_view.grid_remove()
+        self._manager_hub_view.grid_remove()
         for sheet in self.sheets.values():
             sheet.grid_remove()
         self.message_label.configure(text=text)
         self.reopen_button.pack_forget()
         self.message.grid()
+
+    def _show_custom_view(self, widget) -> None:
+        """Show one of the custom (non-sheet) views, hiding everything else."""
+        self.message.grid_remove()
+        self.bracket_view.grid_remove()
+        for sheet in self.sheets.values():
+            sheet.grid_remove()
+        for w in (self._schedule_view, self._manager_hub_view):
+            if w is widget:
+                w.grid()
+            else:
+                w.grid_remove()
 
     def _show_welcome(self) -> None:
         self._show_message("Open a Football Manager 27 save to browse its fixtures and results.\n\n"
@@ -2729,6 +2819,10 @@ class FMReviewApp(_Root):
             add(cp.ACTION, "Club colours…", self.show_club_colours)
         if self.focus is not None:
             add(cp.ACTION, "Clear followed team", lambda: self.set_focus(None))
+        if self._followed_uid is not None:
+            add(cp.ACTION, f"Schedule: {self._followed_uid.name}", lambda: self.set_view(SCHEDULE))
+            add(cp.ACTION, f"Hub: {self._followed_uid.name}", lambda: self.set_view(MANAGER_HUB))
+            add(cp.ACTION, "Clear followed club", self._clear_followed_uid)
         if ds is not None:
             for comp in ds.competitions:
                 add(cp.COMPETITION, fd.competition_list_label(comp, self.names),

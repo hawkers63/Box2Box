@@ -2314,6 +2314,104 @@ class WindowTests(unittest.TestCase):
             self.assertIn("Open latest Yearbook", titles())
 
 
+class ScheduleHubWiringTests(unittest.TestCase):
+    """Tests for the Schedule and Hub view wiring added in v2.7 stage 5."""
+
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        folder = Path(self.folder.name)
+        patches = [
+            mock.patch.object(fm_review, "SETTINGS_PATH", folder / "settings.json"),
+            mock.patch.object(fm_review, "NAMES_PATH", folder / "names.csv"),
+            mock.patch.object(fm_review, "ERROR_LOG", folder / "errors.log"),
+            mock.patch.object(fm_review, "ARCHIVE_PATH", folder / "archive.sqlite"),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        ctk.set_appearance_mode("dark")
+        self.app = fm_review.FMReviewApp()
+        self.app.geometry("1300x800+-4000+0")
+        self.app.report_callback_exception = lambda *exc: (_ for _ in ()).throw(exc[1])
+        self.app.update()
+
+    def tearDown(self):
+        stop = time.monotonic() + 0.3
+        while time.monotonic() < stop:
+            self.app.update()
+            time.sleep(0.02)
+        self.app.destroy()
+        self.folder.cleanup()
+
+    def test_schedule_and_hub_appear_in_views(self):
+        self.assertIn(fm_review.SCHEDULE, fm_review.VIEWS)
+        self.assertIn(fm_review.MANAGER_HUB, fm_review.VIEWS)
+
+    def test_install_dataset_clears_followed_uid(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_focus(team(1))               # team_id 100; club uid 1
+        self.assertIsNotNone(app._followed_uid)
+        app.install_dataset(dataset())       # new save
+        self.assertIsNone(app._followed_uid)
+
+    def test_set_focus_with_valid_team_sets_followed_uid(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_focus(team(1))               # team_id 100; club uid 1
+        self.assertIsNotNone(app._followed_uid)
+        self.assertEqual(app._followed_uid.club_uid, 1)
+
+    def test_set_focus_none_does_not_clear_followed_uid(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_focus(team(1))
+        self.assertIsNotNone(app._followed_uid)
+        app.set_focus(None)
+        self.assertIsNotNone(app._followed_uid, "browsing other competitions must not clear _followed_uid")
+
+    def test_set_view_schedule_shows_schedule_view(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_view(fm_review.SCHEDULE)
+        app.update()
+        self.assertTrue(app._schedule_view.winfo_ismapped())
+        self.assertFalse(app._manager_hub_view.winfo_ismapped())
+
+    def test_set_view_hub_shows_manager_hub_view(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_view(fm_review.MANAGER_HUB)
+        app.update()
+        self.assertTrue(app._manager_hub_view.winfo_ismapped())
+        self.assertFalse(app._schedule_view.winfo_ismapped())
+
+    def test_schedule_and_hub_do_not_update_last_comp_view(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_view("Results")
+        app.set_view(fm_review.SCHEDULE)
+        self.assertEqual(app.last_comp_view, "Results")
+        app.set_view(fm_review.MANAGER_HUB)
+        self.assertEqual(app.last_comp_view, "Results")
+
+    def test_sync_view_controls_disables_season_and_team_for_schedule(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_view(fm_review.SCHEDULE)
+        app.update()
+        self.assertEqual(app.season_menu.cget("state"), "disabled")
+        self.assertEqual(app.team_box.cget("state"), "disabled")
+
+    def test_sync_view_controls_disables_season_and_team_for_hub(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_view(fm_review.MANAGER_HUB)
+        app.update()
+        self.assertEqual(app.season_menu.cget("state"), "disabled")
+        self.assertEqual(app.team_box.cget("state"), "disabled")
+
+
 class PathsTests(unittest.TestCase):
     """Where settings and the error log live, depending on whether the app is frozen."""
 
