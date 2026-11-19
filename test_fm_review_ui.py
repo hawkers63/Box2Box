@@ -2461,6 +2461,40 @@ class ScheduleHubWiringTests(unittest.TestCase):
         self.assertEqual(app.season_menu.cget("state"), "disabled")
         self.assertEqual(app.team_box.cget("state"), "disabled")
 
+    def _fg(self, button) -> str:
+        c = button.cget("fg_color")
+        return c if isinstance(c, str) else c[0]
+
+    def test_schedule_button_shows_active_colour_when_schedule_view_is_open(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_view(fm_review.SCHEDULE)
+        app.update()
+        self.assertEqual(self._fg(app.schedule_button), app.theme.accent[0])
+
+    def test_hub_button_shows_active_colour_when_hub_view_is_open(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_view(fm_review.MANAGER_HUB)
+        app.update()
+        self.assertEqual(self._fg(app.hub_button), app.theme.accent[0])
+
+    def test_schedule_button_returns_to_quiet_when_another_view_is_open(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_view(fm_review.SCHEDULE)
+        app.set_view("Results")
+        app.update()
+        self.assertEqual(self._fg(app.schedule_button), app.theme.quiet[0])
+
+    def test_hub_button_returns_to_quiet_when_another_view_is_open(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_view(fm_review.MANAGER_HUB)
+        app.set_view("Results")
+        app.update()
+        self.assertEqual(self._fg(app.hub_button), app.theme.quiet[0])
+
 
 class PathsTests(unittest.TestCase):
     """Where settings and the error log live, depending on whether the app is frozen."""

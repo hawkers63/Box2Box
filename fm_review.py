@@ -1117,6 +1117,7 @@ class FMReviewApp(_Root):
         self.theme = theme
         self.theme_name.set(theme.name)
         self._recolour()
+        self._update_header_buttons()
         self._update_club_tint()
         self._fill_competition_list()
         if self.about_window is not None and self.about_window.winfo_exists():
@@ -1816,6 +1817,18 @@ class FMReviewApp(_Root):
         for widget in (self.season_menu, self.team_box, self.group_switch, self.split_switch,
                        self.analysis_switch, self.positions_mode_switch):
             widget.configure(state=state)
+        self._update_header_buttons()
+
+    def _update_header_buttons(self) -> None:
+        """Mark the Schedule or Hub button as active when its view is open."""
+        t = self.theme
+        for button, view in ((self.schedule_button, SCHEDULE), (self.hub_button, MANAGER_HUB)):
+            active = self.view == view
+            button.configure(
+                fg_color=t.accent[0] if active else t.quiet[0],
+                hover_color=t.accent_hover if active else t.quiet_hover,
+                text_color=t.accent[1] if active else t.quiet[1],
+            )
 
     def _on_table_split(self, value: str) -> None:
         self.table_split = value
