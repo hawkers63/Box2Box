@@ -13,17 +13,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.7] - 2026-11-19
 
-UI/UX foundations: schedule view and manager hub data contracts, shared visual primitives.
+A club's whole season in one place: the Schedule and the Hub.
 
 ### Added
 
-- **Schedule data contracts.** `ScheduleItem`, `Schedule`, `ScheduleCompetition` frozen dataclasses; `club_schedule` builds a club's fixture list from any `Dataset`; `match_timing` and `countdown_text` classify and label each fixture; `WHEN_*` constants for the six timing states; conservative pre-kick-off cut-off (same-day unfinished matches are upcoming, not played).
-- **Manager hub data contract.** `ManagerSnapshot` frozen dataclass; `manager_snapshot` bundles followed-club identity, managed flag, manager name, next upcoming fixture, recent form and league rank. Works with no managed club, no followed club, no league table, no player reports.
-- **Schedule view module** (`fm_schedule_view.py`). `ScheduleFilter` (frozen; competition, venue, month, result, free-text search); `apply_filter` pure function (AND combination, case-insensitive search, unplayed matches excluded from result filter). `ScheduleView` Canvas-backed widget: bounded rendering, live filters with a chip and a Clear button, jumps to the next upcoming fixture on load, double-click / right-click hooks for the inspector.
-- **Manager hub view module** (`fm_manager_hub.py`). `hub_rows` pure function; `ManagerHubView` CTkFrame showing club name, role, league position, form string and next fixture with competition and countdown.
-- **Badge contrast.** `WIN_BG` darkened to `#04875e` (was `#059669`); `DRAW_BG` darkened to `#ae5f05` (was `#d97706`). Both meet WCAG AA 4.5:1 with white text across all four themes. Measured ratios: Midnight Emerald W 4.53:1, D 4.73:1, L 4.83:1, ? 8.05:1; High-Contrast W 10.92:1, D 12.58:1, L 7.59:1, ? 11.38:1.
-- **Venue metadata.** `Dataset.teams` (home ground per team), `Dataset.grounds` (stadium records), `Dataset.ground_failure` (coverage state); `FollowedClub` with `SCOPE_SENIOR`/`SCOPE_RESERVE`; `FixtureRef`, `fixture_refs`, `resolve_fixture`; `RankBefore`, `rank_before`; `FormBefore`, `form_before`; `default_followed_club`, `team_identities`, `followed_team_ids`.
-- **Yearbook biggest rise/fall** now names every club that shares the identical move (was only the first alphabetically).
+- **Schedule view** (Ctrl+Shift+S, the view switch or the palette). Every fixture of the club you follow, across all its competitions, with the scope named at the top. Filter by competition, home or away, month, result or a search; a chip shows active filters and Clear removes them. It opens at the next match to play, and a same-day match not yet finished counts as still to play.
+- **Hub view** (Ctrl+Shift+H, the view switch or the palette). The followed club at a glance: its role, league position, recent form and next match with a countdown. It works on observer saves and when no club is followed.
+- **The followed club stays followed.** Follow a club from the right-click menu, the palette or Theme ▾ → Follow club…, and it stays followed while you browse other competitions; opening a new save clears it. The palette also offers "Clear followed club".
+
+### Changed
+
+- **Result pills read better.** The win and draw colours are a little darker, so white text on them meets the WCAG AA 4.5:1 contrast ratio in every theme.
+
+### Fixed
+
+- **Yearbook biggest rise and fall** name every club that shares the move, not only the first.
 
 ## [2.6] - 2026-11-19
 
