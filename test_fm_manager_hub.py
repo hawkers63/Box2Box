@@ -20,10 +20,8 @@ def _followed(name="Hull City"):
 
 
 def _rank(rank=3, points=45):
-    r = MagicMock(spec=fd.RankBefore)
-    r.rank = rank
-    r.points = points
-    return r
+    return fd.RankBefore(position=rank, of=20, points=points, played=10, cutoff=fd.Cutoff(dt.date(2099, 10, 1), None),
+                         unscored=0)
 
 
 def _schedule_item(opponent="Burnley", venue="H", outcome="W", played=True,

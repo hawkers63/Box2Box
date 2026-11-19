@@ -12,6 +12,7 @@ from types import SimpleNamespace as NS
 from unittest import mock
 
 import fm_data as fd
+from fmsave import CodedValue, CompetitionRound
 from test_fm_data import CLUBS, D, FakeSave, club, fx, info, team, unresolved_away
 
 
@@ -582,6 +583,16 @@ class ManagerSnapshotTests(unittest.TestCase):
         # scope label should contain some useful text, not an empty string
         self.assertGreater(len(self.snap.next_scope_label), 0)
 
+    def test_the_rank_before_a_league_match_is_calculated_from_that_league(self):
+        rank = self.snap.rank_before_next
+        self.assertIsNotNone(rank)
+        self.assertEqual((rank.position, rank.of, rank.points, rank.played), (1, 4, 6, 2))
+
+    def test_there_is_no_rank_before_a_cup_match(self):
+        ds = dataset([fx(D(2026, 8, 8), 1, 2, 2, 1, md=1),
+                      fx(D(2026, 9, 12), 1, 4, comp=102, rnd=CodedValue(CompetitionRound.QUARTER_FINAL, 16))])
+        self.assertIsNone(fd.manager_snapshot(ds, fd.FollowedClub(1)).rank_before_next)
+
     def test_form_covers_recent_played_matches(self):
         # two played matches → form should have two entries
         self.assertEqual(len(self.snap.form), 2)
@@ -611,3 +622,115 @@ class ManagerSnapshotTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# The Hub's matchday stepper (made-up clubs and dates)
+# ---------------------------------------------------------------------------
+
+INVENTED = {1: ("Northbridge Rovers", "Northbridge"), 2: ("Eastholm Athletic", "Eastholm"),
+            3: ("Westford Town", "Westford"), 4: ("Southmere United", "Southmere"), 5: ("Kingsbay City", "Kingsbay")}
+CUP_ROUND = CodedValue(CompetitionRound.QUARTER_FINAL, 16)
+NORTHBRIDGE = fd.FollowedClub(1, name="Northbridge Rovers")
+
+
+def invented(make, game_date=D(2099, 8, 25)):
+    with mock.patch.dict(CLUBS, INVENTED):
+        return dataset(make(), game_date=game_date, clubs=[club(n) for n in range(1, 6)])
+
+
+def stepper_season():
+    return [
+        fx(D(2099, 8, 8), 1, 2, 2, 1, md=1), fx(D(2099, 8, 8), 3, 4, 1, 1, md=1),
+        fx(D(2099, 8, 15), 3, 1, 0, 0, md=2, ko=None),             # no kick-off time: a prior-day snapshot
+        fx(D(2099, 8, 15), 2, 4, 2, 0, md=2, ko=(12, 0)),          # the same day, earlier: still not counted
+        fx(D(2099, 8, 18), 1, 4, 1, 0, comp=102, rnd=CUP_ROUND),   # a cup win between matchdays
+        fx(D(2099, 9, 5), 1, 4, md=3),                             # matchday 3, postponed past matchday 4
+        fx(D(2099, 8, 22), 2, 3, md=3),
+        fx(D(2099, 8, 29), 2, 1, md=4), fx(D(2099, 8, 29), 4, 3, md=4),
+    ]
+
+
+class HubSeasonTests(unittest.TestCase):
+    def setUp(self):
+        self.ds = invented(stepper_season)
+        self.season = fd.hub_season(self.ds, NORTHBRIDGE)
+
+    def test_the_steps_are_the_clubs_league_matchdays_in_date_order_keeping_their_numbers(self):
+        self.assertEqual([s.title for s in self.season.steps], ["Matchday 1", "Matchday 2", "Matchday 4", "Matchday 3"])
+        self.assertEqual([s.date for s in self.season.steps], [D(2099, 8, 8), D(2099, 8, 15), D(2099, 8, 29),
+                                                               D(2099, 9, 5)])
+
+    def test_each_step_is_labelled_with_its_matchday_and_its_snapshot_date_never_a_week(self):
+        labels = [s.label for s in self.season.steps]
+        self.assertEqual(labels[0], "Matchday 1 · Before kick-off, Sat 8 Aug 15:00")
+        self.assertEqual(labels[1], "Matchday 2 · Prior-day snapshot: results to the end of Fri 14 Aug "
+                                    "(no kick-off time stored)")
+        self.assertEqual(labels[3], "Matchday 3 · Before kick-off, Sat 5 Sep 15:00")
+        self.assertFalse(any("week" in label.casefold() for label in labels))
+
+    def test_nothing_from_the_chosen_match_or_after_it_reaches_its_snapshot(self):
+        before_md2 = self.season.steps[1]
+        self.assertEqual((before_md2.table.position, before_md2.table.played, before_md2.table.points), (1, 1, 3))
+        eastholm = next(r for r in before_md2.table.excerpt if r.team == "Eastholm Athletic")
+        self.assertEqual(eastholm.played, 1)            # its 12:00 match that day is left out: no time on the target
+        self.assertEqual(before_md2.form.letters, "W")
+        before_md4 = self.season.steps[2]
+        self.assertEqual(before_md4.form.letters, "WDW")                 # every competition, the cup win included
+        self.assertEqual(before_md4.table.played, 2)                     # the postponed matchday 3 is not counted
+
+    def test_each_step_names_the_match_it_stands_before(self):
+        self.assertEqual([(s.fixture.opponent, s.fixture.venue) for s in self.season.steps],
+                         [("Eastholm Athletic", "H"), ("Westford Town", "A"), ("Eastholm Athletic", "A"),
+                          ("Southmere United", "H")])
+
+    def test_the_table_excerpt_is_a_few_rows_round_the_club_with_the_club_marked(self):
+        table = self.season.steps[2].table
+        self.assertLessEqual(len(table.excerpt), fd.HUB_EXCERPT * 2 + 1)
+        self.assertEqual([r.club for r in table.excerpt].count(True), 1)
+        self.assertEqual(table.of, 4)
+        self.assertEqual(self.season.league_id, 101)
+
+    def test_today_is_the_first_step_still_to_come_by_the_saves_own_date(self):
+        self.assertEqual(self.season.today, 2)                             # 25 Aug: before matchday 4
+        self.assertEqual(fd.hub_season(invented(stepper_season, D(2099, 8, 29)), NORTHBRIDGE).today, 2)
+        self.assertEqual(fd.hub_season(invented(stepper_season, D(2099, 8, 1)), NORTHBRIDGE).today, 0)
+
+    def test_an_unknown_save_date_has_no_today(self):
+        self.assertIsNone(fd.hub_season(invented(stepper_season, None), NORTHBRIDGE).today)
+
+    def test_before_the_first_match_the_table_has_no_games_and_says_so(self):
+        first = self.season.steps[0]
+        self.assertEqual((first.table.played, first.form.letters), (0, ""))
+
+    def test_a_completed_season_ends_with_a_step_after_the_last_match(self):
+        def done():
+            return [fx(D(2099, 8, 8), 1, 2, 2, 1, md=1), fx(D(2099, 8, 8), 3, 4, 1, 1, md=1),
+                    fx(D(2099, 8, 15), 3, 1, 0, 2, md=2), fx(D(2099, 8, 15), 2, 4, 2, 0, md=2)]
+        season = fd.hub_season(invented(done, D(2099, 9, 1)), NORTHBRIDGE)
+        self.assertEqual([s.title for s in season.steps], ["Matchday 1", "Matchday 2", "End of season"])
+        last = season.steps[-1]
+        self.assertIsNone(last.fixture)
+        self.assertEqual((last.table.played, last.table.points, last.form.letters), (2, 6, "WW"))
+        self.assertEqual(last.label, "End of season · every match played, the last on Sat 15 Aug")
+        self.assertEqual(season.today, 2)
+
+    def test_a_cup_only_club_steps_through_its_matches_with_no_league_rank(self):
+        def cups():
+            return stepper_season() + [fx(D(2099, 8, 19), 5, 2, 0, 1, comp=102, rnd=CUP_ROUND),
+                                       fx(D(2099, 9, 2), 5, 3, comp=102, rnd=CUP_ROUND)]
+        season = fd.hub_season(invented(cups), fd.FollowedClub(5, name="Kingsbay City"))
+        self.assertEqual([s.title for s in season.steps], ["Match 1", "Match 2"])
+        self.assertEqual({s.table for s in season.steps}, {None})
+        self.assertIsNone(season.league_id)
+
+    def test_an_undated_match_is_left_off_the_stepper_and_counted(self):
+        def undated():
+            return stepper_season() + [fx(None, 1, 3, md=5)]
+        season = fd.hub_season(invented(undated), NORTHBRIDGE)
+        self.assertEqual(len(season.steps), 4)
+        self.assertEqual(season.undated, 1)
+
+    def test_a_club_with_no_matches_has_no_steps(self):
+        season = fd.hub_season(self.ds, fd.FollowedClub(77))
+        self.assertEqual((season.steps, season.today), ((), None))

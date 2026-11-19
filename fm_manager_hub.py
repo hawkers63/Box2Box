@@ -48,7 +48,7 @@ def hub_rows(snapshot: fd.ManagerSnapshot, competition_names: dict[int, str] | N
     # League position
     if snapshot.rank_before_next is not None:
         rb = snapshot.rank_before_next
-        pos_text = f"{rb.rank}"
+        pos_text = f"{rb.position}"
         if rb.points is not None:
             pos_text += f" ({rb.points} pts)"
         rows.append(HubRow("Position", pos_text))

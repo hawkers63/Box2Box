@@ -3179,15 +3179,135 @@ def manager_snapshot(dataset: Dataset, followed: FollowedClub, *, max_form: int 
         next_scope_label = ""
 
     rank = None
-    if next_item is not None:
-        try:
-            rank = rank_before(dataset, next_item.fixture, next_item.team_id)
-        except Exception:
-            rank = None
+    if next_item is not None and _is_league(next_item.fixture):
+        league = [g for g in dataset.fixtures_for(next_item.competition_id) if season_key(g) == season]
+        rank = rank_before(league, team_labels(league), next_item.fixture, next_item.team_id,
+                           tie_breaks=dataset.tie_breaks.get(next_item.competition_id, ()))
 
     return ManagerSnapshot(followed=followed, managed=managed, manager_name=manager_name,
                            next_item=next_item, next_scope_label=next_scope_label,
                            form=form, rank_before_next=rank)
+
+
+# --------------------------------------------------------------------------- the Hub's matchday stepper
+
+HUB_EXCERPT = 2            # table rows shown above and below the followed club
+END_OF_SEASON = "End of season"
+
+
+@dataclass(frozen=True, slots=True)
+class ExcerptRow:
+    position: int
+    team: str
+    played: int
+    goal_difference: int
+    points: int
+    club: bool             # the followed club's row
+
+
+@dataclass(frozen=True, slots=True)
+class HubTable:
+    """The followed club's league place at one step, calculated from the results counted by then (not the game's
+    stored table, so its tie-break and deduction caveats apply), with a few rows round it."""
+
+    position: int
+    of: int
+    points: int
+    played: int
+    unscored: int          # matches counted that were played with no recoverable score, so left out of the table
+    excerpt: tuple[ExcerptRow, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class HubStep:
+    """The Hub as it stood at one point of the followed club's season: just before one of its matches (its league
+    matchday, keeping the matchday's number even when the match was moved), or after its last match. Every figure
+    counts only matches that were over by then (see played_before)."""
+
+    title: str                     # "Matchday 12", "Match 3" for a club with no league, or END_OF_SEASON
+    date: dt.date                  # the day of the snapshot: the match's date, or the last match's
+    cutoff: Cutoff | None          # None for the end of the season, when every match is counted
+    fixture: ScheduleItem | None   # the match the step stands before; None at the end of the season
+    table: HubTable | None         # None for a club with no league match this season
+    form: FormStrip                # every competition
+
+    @property
+    def label(self) -> str:
+        if self.cutoff is None:
+            return f"{self.title} · every match played, the last on {_short_date(self.date)}"
+        return f"{self.title} · {self.cutoff.label()}"
+
+
+@dataclass(frozen=True, slots=True)
+class HubSeason:
+    """Every step of the followed club's season, worked out once (off the window's thread) so that moving the
+    stepper only picks one. `today` is the step for the save's own date; None when that date is unknown."""
+
+    followed: FollowedClub
+    season: int | None
+    league_id: int | None          # the league the table is from; None for a club with no league match
+    steps: tuple[HubStep, ...]
+    today: int | None
+    undated: int                   # the club's matches with no date, which cannot be placed on the stepper
+
+
+def _is_league(f: Fixture) -> bool:
+    return f.round is None and f.round_index is not None
+
+
+def _hub_table(league: Sequence[Fixture], labels: Mapping[int, str], counted: Sequence[Fixture], team_id: int,
+               tie_breaks: Sequence[int]) -> HubTable:
+    ids = {id(g) for g in counted}
+    rows = calculate_standings([g if id(g) in ids else replace(g, played=False) for g in league], labels,
+                               tie_breaks=tie_breaks)
+    row = next(r for r in rows if r.team_id == team_id)
+    lo = max(0, min(row.position - 1 - HUB_EXCERPT, len(rows) - (2 * HUB_EXCERPT + 1)))
+    excerpt = tuple(ExcerptRow(r.position, r.team, r.played, r.goals_for - r.goals_against, r.points,
+                               r.team_id == team_id) for r in rows[lo:lo + 2 * HUB_EXCERPT + 1])
+    return HubTable(row.position, len(rows), row.points, row.played,
+                    sum(1 for g in counted if not has_score(g)), excerpt)
+
+
+def hub_season(dataset: Dataset, followed: FollowedClub, season: int | None = None) -> HubSeason:
+    """The followed club's season as the Hub's stepper walks it. A club in a league steps through its league
+    matchdays in the order they were played; a club with no league match steps through all its matches. Undated
+    matches cannot be placed and are only counted. When every step is played, a last step shows the season's end."""
+    ids = followed_team_ids(dataset, followed)
+    mine = club_fixtures(dataset, ids)
+    if season is None:
+        season = club_season(mine)
+    in_season = [f for f in mine if season_key(f) == season]
+    leagues = Counter(f.competition_id for f in in_season if _is_league(f))
+    league_id = min(leagues, key=lambda c: (-leagues[c], c)) if leagues else None
+    pool = [f for f in in_season if league_id is None or (f.competition_id == league_id and _is_league(f))]
+    dated = sorted((f for f in pool if f.date is not None), key=_when)
+    league = [f for f in dataset.fixtures_for(league_id) if season_key(f) == season] if league_id is not None else []
+    labels = team_labels(league or in_season)
+    tie_breaks = dataset.tie_breaks.get(league_id, ()) if league_id is not None else ()
+    team_id = next((t for t in teams_in(league) if t in ids), None)
+    items = {id(i.fixture): i for i in club_schedule(dataset, followed, season).items}
+    club_labels = team_labels(in_season)
+
+    def table(counted: Sequence[Fixture]) -> HubTable | None:
+        return _hub_table(league, labels, counted, team_id, tie_breaks) if team_id is not None else None
+
+    steps = []
+    for n, f in enumerate(dated, start=1):
+        title = f"Matchday {f.round_index + 1}" if league_id is not None else f"Match {n}"
+        steps.append(HubStep(title, f.date, cutoff_for(f), items.get(id(f)),
+                             table(played_before(league, f)),
+                             form_before(in_season, ids, f, club_labels, scope=FORM_ALL).strip))
+    if dated and all(f.played for f in dated):
+        last = max(f.date for f in dated)
+        steps.append(HubStep(END_OF_SEASON, last, None, None,
+                             table([g for g in league if g.played and g.date is not None]),
+                             form_strip(club_steps([g for g in in_season if g.date is not None], ids, club_labels))))
+    today = dataset.info.game_date
+    now = None
+    if today is not None and steps:
+        now = next((i for i, s in enumerate(steps) if s.fixture is not None and
+                    (s.date > today or (s.date == today and not s.fixture.played))), len(steps) - 1)
+    return HubSeason(followed, season, league_id, tuple(steps), now, sum(1 for f in pool if f.date is None))
 
 
 # --------------------------------------------------------------------------- helpers
