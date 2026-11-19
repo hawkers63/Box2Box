@@ -34,6 +34,18 @@ class ThemeTests(unittest.TestCase):
                          ["Midnight Emerald", "Cyber Pitch", "Deep Slate & Gold", "High-Contrast"])
         self.assertIs(palette.theme_by_name("High-Contrast"), palette.HIGH_CONTRAST)
 
+    def test_result_pill_text_reads_on_fill_in_every_theme(self):
+        """W, D, L, ? pill text must meet WCAG AA (4.5:1) against their fill in every theme."""
+        PILL_KEYS = ("W", "D", "L", "?")
+        for theme in palette.THEMES:
+            for key in PILL_KEYS:
+                fill, text = theme.colours[key]
+                if fill and text:
+                    self.assertGreaterEqual(
+                        palette.contrast_ratio(fill, text), 4.5,
+                        f"{theme.name} key={key!r} fill={fill} text={text}"
+                    )
+
     def test_high_contrast_pairs_all_read_at_4_5(self):
         hc = palette.HIGH_CONTRAST
         pairs = [p for p in hc.colours.values() if p[1]] + list(hc.zones.values()) + list(hc.categories.values())

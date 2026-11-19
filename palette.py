@@ -14,8 +14,8 @@ from dataclasses import dataclass, replace
 
 import fm_data as fd
 
-WIN_BG = "#059669"       # emerald
-DRAW_BG = "#d97706"      # warm amber
+WIN_BG = "#04875e"       # emerald (darkened for 4.5:1 with white)
+DRAW_BG = "#ae5f05"      # warm amber (darkened for 4.5:1 with white)
 LOSS_BG = "#dc2626"      # crimson
 MIXED_BG = "#2563eb"     # electric blue
 NA_COLOURS = ("#4c1d95", "#e9d5ff")   # purple: played, but the save holds no score
