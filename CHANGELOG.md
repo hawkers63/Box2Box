@@ -1,8 +1,8 @@
 # Changelog
 
-**Release:** 2.4.1  
+**Release:** 2.5  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 2.4.1), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.5), launched with `Box2Box.bat`
 
 All notable changes to this project will be documented in this file.
 
@@ -10,6 +10,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [2.5] - 2026-11-19
+
+Keeps every edition of a season's Yearbook, adds a contents to the PDF, and lets you read the book in the window before you save it.
+
+### Added
+
+- **Editions.** Saving a Yearbook no longer replaces the last one. Each edition is a file in `Documents\Box2Box\Yearbooks\<season>\`, named from the last in-game date the archive holds for that volume (`Yearbook 2026-27 (in-game 12 Nov 2026).pdf`), the same date the title page prints. A later date writes a new file and leaves the older edition alone ("Saved a new edition, 19 Nov 2026. The 12 Nov 2026 edition is unchanged."). Saving the same coverage again builds nothing and says "This edition is already saved."; **Build it again** rewrites that one file when you want a fresh draw. A failed build leaves every edition as it was.
+- **A menu for each season** under *Export ▾ → Yearbook (PDF)*: **Save the latest edition**, **Build it again** (when that edition exists), **Read before saving…**, then the saved editions newest first; choosing one opens its file without rebuilding it.
+- **Read before saving…** opens the book in a window: each page's lines and its table with the same columns as the PDF (± and PPG included) and the same footnotes, a list of the competitions to jump to, Previous and Next (or the arrow keys), and **Save this edition**. It reads the same page model as the PDF and builds off the main thread; nothing is written until you save.
+- **A contents inside the PDF:** bookmarks for the season, each competition (at its first page; a league's play-off rounds belong to the league), each league's "How they stood" and the final tables. Matchweeks are not bookmarked.
+- **Command palette:** **Save Yearbook edition…** and **Open latest Yearbook**.
+
+### Changed
+
+- The palette's "Export Yearbook (PDF)…" is now "Save Yearbook edition…".
+- The Yearbook never includes the U18 Premier League or the U18 Professional Development League, even if you have named them.
 
 ## [2.4.1] - 2026-11-18
 

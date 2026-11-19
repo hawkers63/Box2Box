@@ -1,5 +1,5 @@
 @echo off
-rem Box2Box version 2.4.1
+rem Box2Box version 2.5
 rem Starts Box2Box with this project's own Python environment.
 rem Drag a .fm save onto this file to open it straight away.
 cd /d "%~dp0"
