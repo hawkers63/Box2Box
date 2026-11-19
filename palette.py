@@ -264,6 +264,7 @@ def _nearest(colour: str, *rules: tuple[str, float]) -> str:
 
 
 READABLE = 4.5      # text on its background, WCAG AA
+NON_TEXT = 3.0      # a shape's edge against its surface, WCAG non-text contrast
 DISTINCT = 1.4      # a tinted surface against what surrounds it
 
 
@@ -326,6 +327,37 @@ def club_tint(theme: Theme, colours: tuple[str, str] | None) -> ClubTint | None:
         focus=(focus, readable_text(focus)),
         link=_nearest(shown, (table, READABLE)),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class Roundel:
+    """A procedural two-colour roundel: an aid to telling clubs apart, drawn from their colours. Never a crest,
+    and never claimed as one. `known` is False for the neutral roundel of a club with no colours."""
+
+    rim: str            # the thin outline, standing apart from the surface (NON_TEXT)
+    ring: str           # the outer band: the club's second colour
+    disc: str           # the inner disc: the club's main colour
+    text: str           # the initials on the disc (READABLE)
+    initials: str
+    known: bool
+
+
+def roundel(theme: Theme, colours: tuple[str, str] | None, initials: str = "", *,
+            surface: str | None = None) -> Roundel:
+    """A club's roundel on `surface` (the theme's table colour unless given). The club's colours are used as they
+    are, in every theme: a roundel is not a tint, so High-Contrast keeps them and rims them in its own text colour.
+    Result, zone and warning colours are never touched."""
+    surface = surface or theme.table[0]
+    if colours is None:
+        disc, ring = blend(surface, theme.muted, 0.35), blend(surface, theme.muted, 0.18)
+        known = False
+    else:
+        disc, ring = colours
+        if contrast_ratio(ring, disc) < DISTINCT:
+            ring = _nearest(ring, (disc, DISTINCT))
+        known = True
+    rim = theme.table[1] if not theme.club_colours else _nearest(ring, (surface, NON_TEXT))
+    return Roundel(rim, ring, disc, readable_text(disc), initials, known)
 
 
 def with_club(theme: Theme, tint: ClubTint | None) -> Theme:

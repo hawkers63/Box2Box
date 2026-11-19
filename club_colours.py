@@ -201,6 +201,17 @@ def builtin_colours(name: str | None) -> tuple[str, str] | None:
     return _BY_KEY.get(normalise(name)) if name else None
 
 
+def initials(name: str | None) -> str:
+    """Up to two letters for a club's roundel: the first letters of its first two words, or the first two of a
+    one-word name. Club words (FC, AFC, CF), a "(team 2)" suffix and numbers are set aside; none left gives ""."""
+    if not name:
+        return ""
+    words = [w for w in normalise(re.sub(r"\(.*?\)", " ", name)).split() if not w.isdigit()]
+    if not words:
+        return ""
+    return (words[0][0] + words[1][0] if len(words) > 1 else words[0][:2]).upper()
+
+
 def _is_pair(value: object) -> bool:
     return (isinstance(value, (list, tuple)) and len(value) == 2
             and all(isinstance(colour, str) and _HEX.match(colour) for colour in value))

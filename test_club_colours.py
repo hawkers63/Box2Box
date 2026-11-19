@@ -53,3 +53,21 @@ class ClubColourTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InitialsTests(unittest.TestCase):
+    def test_two_words_give_their_first_letters(self):
+        self.assertEqual(club_colours.initials("Northbridge Rovers"), "NR")
+
+    def test_one_word_gives_its_first_two_letters(self):
+        self.assertEqual(club_colours.initials("Ashcombe"), "AS")
+
+    def test_club_words_team_numbers_and_accents_are_set_aside(self):
+        self.assertEqual(club_colours.initials("FC Westford Town"), "WT")
+        self.assertEqual(club_colours.initials("Westford Town (team 2)"), "WT")
+        self.assertEqual(club_colours.initials("Atlético Eastholm"), "AE")
+        self.assertEqual(club_colours.initials("Kingsbay City 1902"), "KC")
+
+    def test_no_name_gives_no_initials(self):
+        for name in (None, "", "   ", "FC", "(team 2)"):
+            self.assertEqual(club_colours.initials(name), "", name)

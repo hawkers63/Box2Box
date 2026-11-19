@@ -147,3 +147,55 @@ class TintTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RoundelTests(unittest.TestCase):
+    """Procedural roundels: identity aids drawn from a club's two colours, never crests."""
+
+    CLUB = ("#7a1f2b", "#f2c94c")          # made-up claret and gold
+
+    def test_a_club_with_colours_gets_its_main_colour_inside_and_its_second_round_it(self):
+        r = palette.roundel(palette.MIDNIGHT_EMERALD, self.CLUB, "NR")
+        self.assertEqual((r.disc, r.ring, r.initials, r.known), ("#7a1f2b", "#f2c94c", "NR", True))
+
+    def test_a_club_without_colours_gets_a_neutral_roundel_marked_as_unknown(self):
+        for theme in palette.THEMES:
+            r = palette.roundel(theme, None, "EA")
+            self.assertFalse(r.known, theme.name)
+            self.assertEqual(r.initials, "EA")
+            for colour in (r.disc, r.ring):
+                self.assertLess(palette._chroma(colour), 40, f"{theme.name}: a neutral roundel is grey, not a colour")
+
+    def test_the_same_club_always_gets_the_same_roundel(self):
+        for theme in palette.THEMES:
+            self.assertEqual(palette.roundel(theme, self.CLUB, "NR"), palette.roundel(theme, self.CLUB, "NR"))
+            self.assertEqual(palette.roundel(theme, None, "NR"), palette.roundel(theme, None, "NR"))
+
+    def test_initials_read_at_4_5_to_1_on_the_disc_in_every_theme(self):
+        for theme in palette.THEMES:
+            for colours in (self.CLUB, ("#ffffff", "#ffffff"), ("#000000", "#000000"), ("#ffd700", "#0000ff"),
+                            ("#777777", "#888888"), None):
+                r = palette.roundel(theme, colours, "WT")
+                self.assertGreaterEqual(palette.contrast_ratio(r.text, r.disc), palette.READABLE, (theme.name, colours))
+
+    def test_the_rim_stands_apart_from_the_surface_it_sits_on(self):
+        for theme in palette.THEMES:
+            for surface in (theme.table[0], theme.window):
+                for colours in (self.CLUB, ("#1b1b1b", "#1b1b1b"), ("#000000", "#000000"), None):
+                    r = palette.roundel(theme, colours, "WT", surface=surface)
+                    self.assertGreaterEqual(palette.contrast_ratio(r.rim, surface), palette.NON_TEXT,
+                                            (theme.name, surface, colours))
+
+    def test_a_ring_too_close_to_its_disc_is_moved_apart_so_both_colours_show(self):
+        r = palette.roundel(palette.MIDNIGHT_EMERALD, ("#ffffff", "#fefefe"), "WT")
+        self.assertGreaterEqual(palette.contrast_ratio(r.ring, r.disc), palette.DISTINCT)
+
+    def test_high_contrast_keeps_the_club_colours_but_rims_them_in_its_own_text_colour(self):
+        r = palette.roundel(palette.HIGH_CONTRAST, self.CLUB, "NR")
+        self.assertEqual((r.disc, r.ring, r.rim), ("#7a1f2b", "#f2c94c", palette.HIGH_CONTRAST.table[1]))
+
+    def test_a_roundel_never_changes_result_or_zone_colours(self):
+        before = {t.name: (dict(t.colours), dict(t.zones)) for t in palette.THEMES}
+        for theme in palette.THEMES:
+            palette.roundel(theme, self.CLUB, "NR")
+        self.assertEqual(before, {t.name: (dict(t.colours), dict(t.zones)) for t in palette.THEMES})
