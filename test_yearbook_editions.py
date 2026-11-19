@@ -134,6 +134,17 @@ class SaveTests(unittest.TestCase):
         self.assertEqual(first.path.read_bytes(), before)
         self.assertEqual([p.name for p in first.path.parent.iterdir()], [first.path.name])
 
+    def test_a_built_book_is_saved_as_it_stands_and_named_from_its_own_coverage(self):
+        built = ed.yearbook.build_yearbook(self.book, 2026, NAMES)
+        self.book.close()                                    # nothing more is read from the archive
+        with mock.patch.object(ed.yearbook_pdf, "render", side_effect=self.fake_render) as render:
+            plan = ed.save_built(built, self.root)
+        render.assert_called_once_with(built, plan.path)
+        self.assertEqual((plan.action, plan.path.name), ("new", "Yearbook 2026 (in-game 15 Aug 2026).pdf"))
+        with mock.patch.object(ed.yearbook_pdf, "render") as render:
+            self.assertEqual(ed.save_built(built, self.root).action, "already")
+        render.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

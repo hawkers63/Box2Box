@@ -91,7 +91,17 @@ def save_edition(book: arch.Archive, season: int, names: Mapping[int, str], root
     plan = plan_edition(root, label, book.coverage(season).last_date, rebuild)
     if plan.action == "already":
         return plan
-    built = yearbook.build_yearbook(book, season, names, marked_club)
+    return _write(yearbook.build_yearbook(book, season, names, marked_club), plan)
+
+
+def save_built(built: yearbook.Yearbook, root: Path, rebuild: bool = False) -> SavePlan:
+    """Save a Yearbook already built (the one in the reading window) exactly as it stands, named from the coverage
+    it was built from. Nothing is read from the archive."""
+    plan = plan_edition(root, built.season_label, built.coverage.last_date, rebuild)
+    return plan if plan.action == "already" else _write(built, plan)
+
+
+def _write(built: yearbook.Yearbook, plan: SavePlan) -> SavePlan:
     plan.path.parent.mkdir(parents=True, exist_ok=True)
-    yearbook_pdf.render(built, plan.path)
+    yearbook_pdf.render(built, plan.path)                 # written under a temporary name, then moved into place
     return plan

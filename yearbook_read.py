@@ -7,9 +7,17 @@ same columns, and the footnotes that travel with it. No UI code and no second la
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
+import archive as arch
 import yearbook as yb
+
+STRIP_SPAN = 7               # chapters drawn in the strip at once: the current one and its neighbours
+STRIP_CHARS = 22             # a chapter's name in the strip is cut to this many characters
+BOOKMARK_LIMIT = 50          # bookmarks kept in the settings file; the oldest go first
+PAGE_KEY_LIMIT = 200         # a longer page key in the settings file is not one this program wrote
+SPREAD, SINGLE = "spread", "single"
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,3 +114,99 @@ def read_pages(book: yb.Yearbook) -> tuple[list[ReadPage], list[tuple[str, int]]
                                               tuple(i for i, t in enumerate(record) if t.marked),
                                               f"{kind}/{keys.get(name, 0)}"))
     return pages, contents
+
+
+@dataclass(frozen=True, slots=True)
+class Volume:
+    """One season's book as the reader shows it, tied to the archive snapshot it was built from: saving it saves
+    exactly this book, whatever the archive has banked since."""
+
+    season: int
+    archive_id: str                            # the playthrough (Archive.identity)
+    coverage: arch.BookCoverage                # the archive's coverage of the season when the book was built
+    book: yb.Yearbook
+    pages: tuple[ReadPage, ...]
+    contents: tuple[tuple[str, int], ...]
+
+    @property
+    def season_label(self) -> str:
+        return self.book.season_label
+
+    @property
+    def edition(self) -> str:
+        return self.coverage.last_date.isoformat() if self.coverage.last_date else "unknown"
+
+    @property
+    def edition_label(self) -> str:
+        d = self.coverage.last_date
+        return f"{d.day} {d:%b %Y}" if d else "date unknown"
+
+
+def volume(book: yb.Yearbook, season: int, archive_id: str, coverage: arch.BookCoverage) -> Volume:
+    pages, contents = read_pages(book)
+    return Volume(season, archive_id, coverage, book, tuple(pages), tuple(contents))
+
+
+def spreads(count: int) -> list[tuple[int, ...]]:
+    """The reader's spreads: the title page alone, then the pages two by two, an odd last page alone. A reader
+    spread is two pages of this window side by side, never two printed pages of the PDF."""
+    return [(0,)] + [tuple(range(i, min(i + 2, count))) for i in range(1, count, 2)] if count else []
+
+
+def spread_at(index: int, count: int) -> tuple[int, ...]:
+    index = max(0, min(index, count - 1))
+    return (0,) if index == 0 else ((index, index + 1)[:min(2, count - index)] if index % 2 else (index - 1, index))
+
+
+def spread_label(spread: Sequence[int], count: int) -> str:
+    if len(spread) == 1:
+        return f"Page {spread[0] + 1} of {count}"
+    return f"Pages {spread[0] + 1}–{spread[-1] + 1} of {count} · reader spread"
+
+
+def strip_window(count: int, current: int, span: int = STRIP_SPAN) -> tuple[int, int]:
+    """(start, stop) of the chapters the strip draws: `span` of them around the current one, no more."""
+    start = max(0, min(current - span // 2, count - span))
+    return start, min(count, start + span)
+
+
+def strip_text(label: str) -> str:
+    return label if len(label) <= STRIP_CHARS else label[:STRIP_CHARS - 1].rstrip() + "…"
+
+
+def page_index(pages: Sequence[ReadPage], page_key: str | None) -> int | None:
+    if not page_key:
+        return None
+    return next((i for i, p in enumerate(pages) if p.page_key == page_key), None)
+
+
+def reader_mode(value: object) -> str:
+    return SPREAD if value == SPREAD else SINGLE
+
+
+def _slot(archive_id: str, season: int) -> str:
+    return f"{archive_id}|{season}"
+
+
+def _good(entry: object) -> bool:
+    return (isinstance(entry, dict) and isinstance(entry.get("page_key"), str)
+            and 0 < len(entry["page_key"]) <= PAGE_KEY_LIMIT and isinstance(entry.get("edition", ""), str))
+
+
+def read_bookmark(stored: object, archive_id: str, season: int) -> str | None:
+    """The page key bookmarked for a playthrough's season, or None when the settings hold none in a shape this
+    program writes. It is looked up by key, so a newer edition of the same volume reopens at the same page."""
+    if not isinstance(stored, dict):
+        return None
+    entry = stored.get(_slot(archive_id, season))
+    return entry["page_key"] if _good(entry) else None
+
+
+def with_bookmark(stored: object, archive_id: str, season: int, edition: str, page_key: str) -> dict:
+    """A new settings value with this bookmark added last; badly shaped entries are dropped and only the newest
+    BOOKMARK_LIMIT are kept. The value passed in is not changed."""
+    kept = {k: dict(v) for k, v in stored.items() if isinstance(k, str) and _good(v)} if isinstance(stored, dict) else {}
+    slot = _slot(archive_id, season)
+    kept.pop(slot, None)
+    kept[slot] = {"edition": edition, "page_key": page_key}
+    return dict(list(kept.items())[-BOOKMARK_LIMIT:])

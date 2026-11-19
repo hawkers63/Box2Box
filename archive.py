@@ -593,6 +593,12 @@ class Archive:
                 "SELECT DISTINCT season FROM fixtures WHERE competition_key = ? ORDER BY season", (r[0],))))
             for r in rows]
 
+    def identity(self) -> str:
+        """This archive's playthrough, as the time its first save was banked: a later save of the same playthrough
+        keeps it, and a new archive (another playthrough) gets its own. Empty while nothing is banked."""
+        row = self._db.execute("SELECT imported_at FROM imports ORDER BY id LIMIT 1").fetchone()
+        return row[0] if row else ""
+
     def imports(self) -> list[ImportRecord]:
         """Every banked save, oldest first."""
         rows = self._db.execute(

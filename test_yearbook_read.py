@@ -151,6 +151,104 @@ class PageKeyTests(unittest.TestCase):
         self.assertEqual(len(keys), len(set(keys)))
 
 
+COVER = archive.BookCoverage(1, D(2026, 8, 9), D(2026, 8, 9), (), True)
+
+
+class VolumeTests(unittest.TestCase):
+    def test_a_volume_holds_the_book_its_pages_and_the_coverage_it_was_built_from(self):
+        built = book(week(1), CUP)
+        volume = yr.volume(built, 2026, "archive-1", COVER)
+        self.assertEqual((volume.season, volume.archive_id, volume.coverage, volume.book), (2026, "archive-1", COVER, built))
+        self.assertEqual([list(volume.pages), list(volume.contents)], list(yr.read_pages(built)))
+        self.assertEqual(volume.season_label, "2026/27")
+
+    def test_the_edition_is_named_from_the_coverages_last_date(self):
+        self.assertEqual((yr.volume(book(), 2026, "a", COVER).edition, yr.volume(book(), 2026, "a", COVER).edition_label),
+                         ("2026-08-09", "9 Aug 2026"))
+        unknown = archive.BookCoverage(0, None, None, (), False)
+        self.assertEqual((yr.volume(book(), 2026, "a", unknown).edition, yr.volume(book(), 2026, "a", unknown).edition_label),
+                         ("unknown", "date unknown"))
+
+
+class SpreadTests(unittest.TestCase):
+    def test_the_title_page_stands_alone_and_the_rest_pair_up(self):
+        self.assertEqual(yr.spreads(0), [])
+        self.assertEqual(yr.spreads(1), [(0,)])
+        self.assertEqual(yr.spreads(2), [(0,), (1,)])
+        self.assertEqual(yr.spreads(5), [(0,), (1, 2), (3, 4)])
+
+    def test_an_odd_last_page_stands_alone(self):
+        self.assertEqual(yr.spreads(4), [(0,), (1, 2), (3,)])
+
+    def test_any_page_finds_its_spread(self):
+        self.assertEqual([yr.spread_at(i, 5) for i in range(5)], [(0,), (1, 2), (1, 2), (3, 4), (3, 4)])
+        self.assertEqual(yr.spread_at(9, 4), (3,))          # past the end: the last spread
+        self.assertEqual(yr.spread_at(-1, 4), (0,))
+
+    def test_the_label_says_reader_spread_never_a_printed_page_pair(self):
+        self.assertEqual(yr.spread_label((0,), 5), "Page 1 of 5")
+        self.assertEqual(yr.spread_label((1, 2), 5), "Pages 2–3 of 5 · reader spread")
+
+
+class StripTests(unittest.TestCase):
+    def test_the_strip_shows_a_bounded_window_around_the_current_chapter(self):
+        self.assertEqual(yr.strip_window(3, 0, 7), (0, 3))
+        self.assertEqual(yr.strip_window(20, 0, 7), (0, 7))
+        self.assertEqual(yr.strip_window(20, 10, 7), (7, 14))
+        self.assertEqual(yr.strip_window(20, 19, 7), (13, 20))
+
+    def test_a_long_chapter_name_is_shortened_with_an_ellipsis(self):
+        self.assertEqual(yr.strip_text("FA Cup"), "FA Cup")
+        long = "The Extraordinarily Long Regional Premier Division North"
+        self.assertEqual(len(yr.strip_text(long)), yr.STRIP_CHARS)
+        self.assertTrue(yr.strip_text(long).endswith("…"))
+
+
+class BookmarkTests(unittest.TestCase):
+    def test_a_bookmark_round_trips_through_the_settings_value(self):
+        stored = yr.with_bookmark(None, "archive-1", 2026, "2026-08-09", "league/12/3")
+        self.assertEqual(yr.read_bookmark(stored, "archive-1", 2026), "league/12/3")
+        self.assertEqual(stored, {"archive-1|2026": {"edition": "2026-08-09", "page_key": "league/12/3"}})
+
+    def test_another_playthrough_or_season_has_no_bookmark(self):
+        stored = yr.with_bookmark({}, "archive-1", 2026, "2026-08-09", "league/12/3")
+        self.assertIsNone(yr.read_bookmark(stored, "archive-2", 2026))
+        self.assertIsNone(yr.read_bookmark(stored, "archive-1", 2025))
+
+    def test_a_badly_shaped_value_reads_as_no_bookmark(self):
+        for value in (None, [], "x", 3, {"archive-1|2026": "league/12/3"}, {"archive-1|2026": {"page_key": 7}},
+                      {"archive-1|2026": {"page_key": ""}}, {"archive-1|2026": {"page_key": "x" * 500}},
+                      {"archive-1|2026": {"edition": [], "page_key": "title"}}):
+            self.assertIsNone(yr.read_bookmark(value, "archive-1", 2026), value)
+
+    def test_writing_drops_badly_shaped_entries_and_keeps_good_ones(self):
+        value = {"bad": 3, "archive-1|2025": {"edition": "2025-05-01", "page_key": "title"}, 4: {"page_key": "x"}}
+        stored = yr.with_bookmark(value, "archive-1", 2026, "2026-08-09", "cup/14/2026-03-18/Final/")
+        self.assertEqual(set(stored), {"archive-1|2025", "archive-1|2026"})
+        self.assertEqual(value["bad"], 3)                            # the value read from the settings is untouched
+
+    def test_writing_a_badly_shaped_value_starts_afresh(self):
+        self.assertEqual(set(yr.with_bookmark(["junk"], "a", 2026, "e", "title")), {"a|2026"})
+
+    def test_the_number_of_bookmarks_is_bounded_and_the_newest_are_kept(self):
+        stored = None
+        for season in range(1900, 1900 + yr.BOOKMARK_LIMIT + 10):
+            stored = yr.with_bookmark(stored, "a", season, "e", "title")
+        self.assertEqual(len(stored), yr.BOOKMARK_LIMIT)
+        self.assertIn(f"a|{1900 + yr.BOOKMARK_LIMIT + 9}", stored)
+        self.assertNotIn("a|1900", stored)
+
+    def test_a_page_key_finds_its_page_or_nothing(self):
+        pages = yr.read_pages(book(dataclasses.replace(week(1), competition_key=12)))[0]
+        self.assertEqual(yr.page_index(pages, "league/12/1"), 1)
+        self.assertIsNone(yr.page_index(pages, "league/12/9"))
+        self.assertIsNone(yr.page_index(pages, None))
+
+    def test_the_reader_mode_is_single_unless_spread_was_chosen(self):
+        self.assertEqual([yr.reader_mode(v) for v in ("spread", "single", None, 3, "SPREAD")],
+                         ["spread", "single", "single", "single", "single"])
+
+
 class ContentsTests(unittest.TestCase):
     def test_the_contents_jump_to_each_competition_once_and_to_the_closing_pages(self):
         pages, contents = yr.read_pages(book(week(1), CUP, week(2), PLACES, FINAL))

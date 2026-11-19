@@ -203,6 +203,16 @@ class BankTests(unittest.TestCase):
         self.assertEqual(len(self.rows()), 3)
         self.assertEqual([(r.file_name, r.game_date, r.added) for r in records], [("a.fm", D(2026, 9, 1), 3)])
 
+    def test_the_archives_identity_is_its_first_import_and_later_saves_keep_it(self):
+        with archive.Archive.open(self.path) as a:
+            self.assertEqual(a.identity(), "")
+            a.bank(bank_dataset([fx(D(2026, 8, 8), 1, 2, 1, 0, md=1)]))
+            first = a.identity()
+            a.bank(bank_dataset([fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 15), 3, 4, 2, 2, md=2)],
+                                file="b.fm", game=D(2026, 9, 20)))
+            self.assertEqual(a.identity(), first)
+        self.assertTrue(first)
+
     def test_banking_the_same_save_again_is_a_no_op_that_says_so(self):
         data = bank_dataset([fx(D(2026, 8, 8), 1, 2, 1, 0, md=1)])
         with archive.Archive.open(self.path) as a:
