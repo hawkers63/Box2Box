@@ -186,6 +186,7 @@ class Dataset:
     expected_goals: Mapping[tuple, ExpectedGoals] = field(default_factory=dict)   # keyed on fixture_key
     match_reports: Mapping[tuple, MatchStats] = field(default_factory=dict)        # keyed on fixture_key
     xg_report: XgReport | None = None    # None until the match statistics have been read
+    teams: Mapping[int, TeamIdentity] = field(default_factory=dict)    # every team the fixtures name
 
     def fixtures_for(self, competition_id: int) -> tuple[Fixture, ...]:
         return self.fixtures.get(competition_id, ())
@@ -307,6 +308,112 @@ class CompetitionSummaryRow:
     progress: str
     seasons: int
     example_clubs: str
+
+
+# --------------------------------------------------------------------------- club identity
+
+# Which of a club's teams a followed club covers. Slot 0 is the club's first team; every other slot (its
+# reserve and youth sides) is "reserve". A team the save cannot resolve belongs to neither.
+SCOPE_SENIOR = "senior"
+SCOPE_RESERVE = "reserve"
+
+
+@dataclass(frozen=True, slots=True)
+class TeamIdentity:
+    """One team as the fixtures name it. A team the save cannot resolve has no club, name or slot."""
+
+    team_id: int
+    club_uid: int | None
+    club_name: str | None
+    slot: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class FollowedClub:
+    """The club the user follows across every competition. Following is a choice made in this window: it does
+    not change the save and does not say the club is managed (see ManagerSnapshot.managed)."""
+
+    club_uid: int
+    scope: str = SCOPE_SENIOR
+    name: str = ""
+
+
+def team_identities(fixtures: Iterable[Fixture]) -> dict[int, TeamIdentity]:
+    """Every team in the fixtures with its club and slot. A team seen once unresolved and once resolved keeps
+    the resolved identity."""
+    found: dict[int, TeamIdentity] = {}
+    for f in fixtures:
+        for team_id, uid, name, slot in ((f.home_team_id, f.home_club_uid, f.home_club_name, f.home_team_slot),
+                                         (f.away_team_id, f.away_club_uid, f.away_club_name, f.away_team_slot)):
+            current = found.get(team_id)
+            if current is None or (current.club_uid is None and uid is not None):
+                found[team_id] = TeamIdentity(team_id, uid, name, slot)
+    return found
+
+
+def followed_team_ids(dataset: Dataset, followed: FollowedClub) -> frozenset[int]:
+    """The teams of the followed club in the scope chosen: the first team alone, or every other team."""
+    senior = followed.scope == SCOPE_SENIOR
+    return frozenset(
+        t.team_id for t in dataset.teams.values()
+        if t.club_uid == followed.club_uid and t.slot is not None and (t.slot == 0) == senior)
+
+
+def default_followed_club(dataset: Dataset) -> FollowedClub | None:
+    """The managed club's first team, when the save has a managed club that plays in it; None for an observer
+    save. Only a default: the user may follow any club, or none."""
+    uid = dataset.info.managed_club_uid
+    if uid is None:
+        return None
+    follow = FollowedClub(uid)
+    ids = followed_team_ids(dataset, follow)
+    if not ids:
+        return None
+    return replace(follow, name=dataset.teams[min(ids)].club_name or "")
+
+
+@dataclass(frozen=True, slots=True)
+class FixtureRef:
+    """A stable name for one match, so a row, a selection or a bookmark can find it again after the list is
+    sorted, filtered or rebuilt: competition, season, both teams and the date, plus the match's place among any
+    others with the same five (a replay on the same day) in date and time order."""
+
+    competition_id: int | None
+    season: int | None
+    home_team_id: int
+    away_team_id: int
+    date: dt.date | None
+    ordinal: int = 0
+
+
+def _ref_key(f: Fixture) -> tuple:
+    return (f.competition_id, season_key(f), f.home_team_id, f.away_team_id, f.date)
+
+
+def fixture_refs(fixtures: Iterable[Fixture]) -> list[FixtureRef]:
+    """A reference for each fixture, in the order given. The ordinal depends on the matches' dates and times,
+    not on the order of the list."""
+    items = list(fixtures)
+    groups: dict[tuple, list[int]] = defaultdict(list)
+    for i, f in enumerate(items):
+        groups[_ref_key(f)].append(i)
+    ordinals = [0] * len(items)
+    for indexes in groups.values():
+        if len(indexes) > 1:
+            for n, i in enumerate(sorted(indexes, key=lambda i: _when(items[i]))):
+                ordinals[i] = n
+    return [FixtureRef(*_ref_key(f), ordinals[i]) for i, f in enumerate(items)]
+
+
+def resolve_fixture(dataset: Dataset, ref: FixtureRef) -> Fixture | None:
+    """The fixture a reference names in this dataset, or None when it holds no such match."""
+    found = sorted((f for f in dataset.fixtures.get(ref.competition_id, ()) if _ref_key(f) == _ref_key_of(ref)),
+                   key=_when)
+    return found[ref.ordinal] if ref.ordinal < len(found) else None
+
+
+def _ref_key_of(ref: FixtureRef) -> tuple:
+    return (ref.competition_id, ref.season, ref.home_team_id, ref.away_team_id, ref.date)
 
 
 # --------------------------------------------------------------------------- loading
@@ -506,6 +613,7 @@ def build_dataset(
         zone_rules=link_zone_rules(rules, ordered),
         tie_breaks=link_tie_breaks(rules),
         club_nations=club_nations,
+        teams=team_identities(fixtures),
     )
     return dataset if match_stats is None else with_expected_goals(dataset, match_stats)
 
@@ -2579,6 +2687,163 @@ def matches_search(comp: CompetitionInfo, names: Mapping[int, str], text: str) -
     if not needle:
         return True
     return needle in comp.search_text or needle in competition_title(comp, names).casefold()
+
+
+# --------------------------------------------------------------------------- before a kick-off
+
+# A match counts as over this long after it kicked off. The figure is only used to leave a result out until it
+# was certainly in, so a table or a form strip never uses a match that may still have been on.
+MATCH_LENGTH = dt.timedelta(hours=2)
+FORM_LEAGUE, FORM_ALL = "league", "all"
+_FORM_SCOPE_LABELS = {FORM_LEAGUE: "league only", FORM_ALL: "all competitions"}
+
+
+@dataclass(frozen=True, slots=True)
+class Cutoff:
+    """The moment a piece of pre-match context is taken at: a match's kick-off. With no kick-off time stored the
+    context is a prior-day snapshot (every result to the end of the day before); with no date, nothing is counted."""
+
+    date: dt.date | None
+    time: dt.time | None
+
+    @property
+    def exact(self) -> bool:
+        return self.date is not None and self.time is not None
+
+    def label(self) -> str:
+        if self.date is None:
+            return "Date not set: no earlier results can be counted"
+        if self.time is not None:
+            return f"Before kick-off, {_short_date(self.date)} {self.time:%H:%M}"
+        eve = self.date - dt.timedelta(days=1)
+        return f"Prior-day snapshot: results to the end of {_short_date(eve)} (no kick-off time stored)"
+
+
+def cutoff_for(f: Fixture) -> Cutoff:
+    return Cutoff(f.date, f.kick_off_time)
+
+
+def played_before(fixtures: Iterable[Fixture], target: Fixture) -> tuple[Fixture, ...]:
+    """The played matches that were certainly over before `target` kicked off, so nothing the match itself or
+    anything after it decided is used. A match on an earlier day counts. A match on the same day counts only when
+    both kick-off times are stored and it kicked off MATCH_LENGTH or more earlier; with no time on the target,
+    only earlier days count (a prior-day snapshot). An undated match never counts, and nothing precedes an
+    undated target."""
+    if target.date is None:
+        return ()
+    start = dt.datetime.combine(target.date, target.kick_off_time) if target.kick_off_time is not None else None
+    found: list[Fixture] = []
+    for g in fixtures:
+        if g is target or not g.played or g.date is None:
+            continue
+        if g.date < target.date:
+            found.append(g)
+        elif (start is not None and g.date == target.date and g.kick_off_time is not None
+              and dt.datetime.combine(g.date, g.kick_off_time) + MATCH_LENGTH <= start):
+            found.append(g)
+    return tuple(found)
+
+
+def standings_before(
+    fixtures: Sequence[Fixture],
+    labels: Mapping[int, str],
+    target: Fixture,
+    *,
+    tie_breaks: Sequence[int] = (),
+    form_length: int = 6,
+) -> tuple[StandingRow, ...]:
+    """The table as it stood before `target` kicked off, worked out from the results (see played_before). Every
+    club still appears; a match not counted yet is a game in hand. Calculated, never the game's stored table."""
+    fixtures = list(fixtures)
+    counted = {id(g) for g in played_before(fixtures, target)}
+    by_then = [g if id(g) in counted else replace(g, played=False) for g in fixtures]
+    return calculate_standings(by_then, labels, _forms(by_then, length=form_length), tie_breaks=tie_breaks)
+
+
+def _ordinal(n: int) -> str:
+    return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
+
+
+@dataclass(frozen=True, slots=True)
+class RankBefore:
+    """A team's calculated place in a league before a match: not the game's stored table, so its tie-break and
+    deduction caveats apply."""
+
+    position: int
+    of: int
+    points: int
+    played: int
+    cutoff: Cutoff
+    unscored: int          # matches counted that were played with no recoverable score, and so left out of the table
+
+    def label(self) -> str:
+        text = f"{_ordinal(self.position)} of {self.of}, calculated from results. {self.cutoff.label()}"
+        if self.unscored:
+            text += f". {_plural(self.unscored, 'match', 'matches')} played with no score left out"
+        return text
+
+
+def rank_before(
+    fixtures: Sequence[Fixture],
+    labels: Mapping[int, str],
+    target: Fixture,
+    team_id: int,
+    *,
+    tie_breaks: Sequence[int] = (),
+) -> RankBefore | None:
+    """The team's place in the league `fixtures` hold just before `target` kicked off, or None when the team is
+    not in them (a cup-only side, or one the save cannot resolve)."""
+    fixtures = list(fixtures)
+    if team_id not in teams_in(fixtures):
+        return None
+    rows = standings_before(fixtures, labels, target, tie_breaks=tie_breaks)
+    row = next(r for r in rows if r.team_id == team_id)
+    unscored = sum(1 for g in played_before(fixtures, target) if not has_score(g))
+    return RankBefore(row.position, len(rows), row.points, row.played, cutoff_for(target), unscored)
+
+
+def club_steps(fixtures: Iterable[Fixture], team_ids: Iterable[int], labels: Mapping[int, str]) -> tuple[FormStep, ...]:
+    """Every played match of a club's teams, oldest first, seen from the club's side. A match between two of its own
+    teams has no single side and is left out."""
+    ids = set(team_ids)
+    steps = []
+    for f in sorted(fixtures, key=_when):
+        home, away = f.home_team_id in ids, f.away_team_id in ids
+        if f.played and home != away:
+            steps.append(_step(f, f.home_team_id if home else f.away_team_id, labels))
+    return tuple(steps)
+
+
+@dataclass(frozen=True, slots=True)
+class FormBefore:
+    """A club's last matches before a kick-off, with the scope it covers named: its league only, or every
+    competition."""
+
+    scope: str
+    strip: FormStrip
+    cutoff: Cutoff
+
+    @property
+    def scope_label(self) -> str:
+        return _FORM_SCOPE_LABELS[self.scope]
+
+    def label(self) -> str:
+        return f"Form ({self.scope_label}). {self.cutoff.label()}"
+
+
+def form_before(
+    fixtures: Iterable[Fixture],
+    team_ids: Iterable[int],
+    target: Fixture,
+    labels: Mapping[int, str],
+    *,
+    scope: str,
+    length: int = FORM_LENGTH,
+) -> FormBefore:
+    """The club's last `length` matches among `fixtures` that were over before `target` kicked off. The caller
+    chooses the fixtures and names the scope: one league's, or every competition's."""
+    before = played_before(fixtures, target)
+    return FormBefore(scope, form_strip(club_steps(before, team_ids, labels), length), cutoff_for(target))
 
 
 # --------------------------------------------------------------------------- helpers
