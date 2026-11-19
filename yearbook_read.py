@@ -78,11 +78,12 @@ def read_pages(book: yb.Yearbook) -> tuple[list[ReadPage], list[tuple[str, int]]
         elif isinstance(page, yb.FinalTablesPage):
             strips = dict(page.strips)
             splits = {entry[0]: entry for entry in page.splits}
+            xg_notes = dict(page.xg_notes)
             for name, lines in page.tables:
                 enter("Final tables")
                 head, rows, marked = _standings(lines)
                 pages.append(ReadPage("final", name, f"{name} · final table", tuple(strips.get(name, ())), head, rows,
-                                      (yb.table_note(lines),), marked))
+                                      (yb.final_note(lines, xg_notes.get(name, "")),), marked))
                 if name in splits:
                     _, _, home, away = splits[name]
                     for kind, record in (("home", home), ("away", away)):

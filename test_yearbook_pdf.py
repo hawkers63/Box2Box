@@ -365,3 +365,47 @@ class OutlineTests(unittest.TestCase):
             yearbook_pdf.render(book(week(1), self.FINAL), path)
             data = path.read_bytes()
         self.assertEqual(len(re.findall(rb"/Dest\s*\[", data)), 3)                    # season, league, final tables
+
+
+def with_xg(pos, team, over="+1.50"):
+    return yb.TableLine(pos, team, 38, 20, 8, 10, 60, 40, 20, 68, "WWDLWD", "", "", "1.79", False, "55.10", "41.20", over)
+
+
+class XgDrawingTests(unittest.TestCase):
+    def test_the_xg_columns_follow_ppg_and_the_table_still_fits_the_text_area(self):
+        lines = (with_xg(1, "Hull City"), with_xg(2, "Leeds United"))
+        table = yearbook_pdf._standings(lines, yearbook_pdf._styles())
+        self.assertEqual(list(table._cellvalues[0])[-5:], ["PPG", "xG", "xGA", "G-xG", "Last six"])
+        self.assertLessEqual(sum(table._colWidths), yearbook_pdf.FRAME_WIDTH)
+        self.assertEqual(len(table._colWidths), len(table._cellvalues[0]))
+
+    def test_without_a_comparison_the_table_has_only_xg_and_xga(self):
+        lines = (with_xg(1, "Hull City", over=""), with_xg(2, "Leeds United", over=""))
+        table = yearbook_pdf._standings(lines, yearbook_pdf._styles())
+        self.assertEqual(list(table._cellvalues[0])[-4:], ["PPG", "xG", "xGA", "Last six"])
+
+    def test_a_blank_figure_prints_as_nothing(self):
+        lines = (yb.TableLine(1, "Hull City", 38, 20, 8, 10, 60, 40, 20, 68, "WWDLWD", "", "", "1.79", False, "", "", ""),
+                 with_xg(2, "Leeds United"))
+        table = yearbook_pdf._standings(lines, yearbook_pdf._styles())
+        self.assertEqual(table._cellvalues[1][-4:-1], ["", "", ""])
+
+    def test_the_final_page_explains_the_columns_under_the_table(self):
+        lines = (with_xg(1, "Hull City"), with_xg(2, "Leeds United"))
+        note = "xG and xGA are expected goals for and against, from the match reports. G-xG is goals scored minus xG."
+        final = yb.FinalTablesPage((("Premier League", lines),), xg_notes=(("Premier League", note),))
+        texts = _texts(yearbook_pdf._flow(book(final)))
+        self.assertIn(yb.final_note(lines, note), texts)
+        self.assertTrue(any(t.startswith("Table calculated from the results.") and note in t for t in texts))
+
+
+class XgReadTests(unittest.TestCase):
+    def test_the_sheet_carries_the_same_columns_and_the_note_as_the_pdf(self):
+        import yearbook_read
+        lines = (with_xg(1, "Hull City"), with_xg(2, "Leeds United"))
+        note = "xG and xGA are expected goals for and against, from the match reports."
+        final = yb.FinalTablesPage((("Premier League", lines),), xg_notes=(("Premier League", note),))
+        pages, _ = yearbook_read.read_pages(book(final))
+        self.assertEqual(list(pages[1].columns), list(yearbook_pdf._standings(lines, yearbook_pdf._styles())._cellvalues[0]))
+        self.assertEqual(pages[1].notes, (yb.final_note(lines, note),))
+        self.assertEqual(pages[1].rows[0][-4:-1], ("55.10", "41.20", "+1.50"))

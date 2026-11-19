@@ -63,6 +63,9 @@ class TableLine:
     movement: str = ""             # places since the previous printed table: "▲2", "▼1", "•", "–" or "in"; "" for none
     ppg: str = ""                  # points per scored match, "1.85"; "*" when a match with no score was left out
     marked: bool = False           # the club the reader asked to have marked
+    xg_for: str = ""               # a final table only: expected goals for and against, "" where no report was kept
+    xg_against: str = ""
+    xg_over: str = ""              # goals scored minus xG, only when every match of every club has a report
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +123,7 @@ class FinalTablesPage:
     when: dt.date = dt.date.max
     splits: tuple[tuple[str, tuple[TableLine, ...], tuple[TableLine, ...], tuple[TableLine, ...]], ...] = ()
     strips: tuple[tuple[str, tuple[str, ...]], ...] = ()      # (competition, the "From the results" lines)
+    xg_notes: tuple[tuple[str, str], ...] = ()                # (competition, what the xG columns are and how far they reach)
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,14 +246,19 @@ def table_note(lines: Sequence[TableLine]) -> str:
     return note
 
 
+def final_note(lines: Sequence[TableLine], xg_note: str = "") -> str:
+    """The note under a final table: how it was calculated, and what its expected-goals columns are."""
+    return table_note(lines) + (f" {xg_note}" if xg_note else "")
+
+
 def cut_table_note(cut: str, lines: Sequence[TableLine]) -> str:
     """A table's note with, in front, how a cut table was cut ("Top 16 of 36 shown")."""
     return (f"{cut}. " if cut else "") + table_note(lines)
 
 
 def standings_head(lines: Sequence[TableLine]) -> tuple[str, ...]:
-    """The columns of a weekly or final table; ± and PPG only where a line carries them."""
-    return (("±",) if any(t.movement for t in lines) else ()) + ("#", "Team", "P", "W", "D", "L", "F", "A", "GD", "Pts") +         (("PPG",) if any(t.ppg for t in lines) else ()) + ("Last six",)
+    """The columns of a weekly or final table; movement, PPG and expected goals only where a line carries them."""
+    return (("±",) if any(t.movement for t in lines) else ()) +         ("#", "Team", "P", "W", "D", "L", "F", "A", "GD", "Pts") +         (("PPG",) if any(t.ppg for t in lines) else ()) +         (("xG", "xGA") if any(t.xg_for for t in lines) else ()) +         (("G-xG",) if any(t.xg_over for t in lines) else ()) + ("Last six",)
 
 
 def standings_values(t: TableLine, lines: Sequence[TableLine]) -> tuple[str, ...]:
@@ -257,7 +266,9 @@ def standings_values(t: TableLine, lines: Sequence[TableLine]) -> tuple[str, ...
     return (((t.movement,) if any(x.movement for x in lines) else ()) +
             (str(t.pos), t.team, str(t.played), str(t.won), str(t.drawn), str(t.lost), str(t.goals_for),
              str(t.goals_against), f"{t.goal_difference:+d}" if t.goal_difference else "0", str(t.points)) +
-            ((t.ppg,) if any(x.ppg for x in lines) else ()) + (t.form,))
+            ((t.ppg,) if any(x.ppg for x in lines) else ()) +
+            ((t.xg_for, t.xg_against) if any(x.xg_for for x in lines) else ()) +
+            ((t.xg_over,) if any(x.xg_over for x in lines) else ()) + (t.form,))
 
 
 RECORD_HEAD = ("#", "Team", "P", "W", "D", "L", "F", "A", "Pts")
@@ -293,6 +304,43 @@ def _table(rows, rules: fd.ZoneRules | None = None, previous: Mapping[int, tuple
                            _ppg(r, unscored.get(r.team_id, 0)) if unscored is not None else "",
                            marked is not None and r.team_id == marked)
                  for r in rows)
+
+
+def with_expected_goals(lines: Sequence[TableLine], rows: Sequence, league: Sequence,
+                        xg: Mapping[tuple, tuple[float, float]]) -> tuple[tuple[TableLine, ...], str]:
+    """A final table's lines with expected goals for and against, and the note that explains them. Only matches that
+    were played with a score and have a report count, so the totals sit beside the same goals as the table. A league
+    with no report at all is returned unchanged with no note: no column of blanks, no 0.00. A club with some reports
+    shows the total of those it has, and the note says how many matches that is of how many. Goals minus xG is added
+    only when every match of every club has a report."""
+    scored = [f for f in league if f.played and fd.has_score(f)]
+    reported = [f for f in scored if fd.fixture_key(f) in xg]
+    if not reported:
+        return tuple(lines), ""
+    totals: dict[int, list[float]] = defaultdict(lambda: [0.0, 0.0, 0, 0])      # xG for, xG against, covered, played
+    for f in scored:
+        figures = xg.get(fd.fixture_key(f))
+        for team, mine, theirs in ((f.home_team_id, 0, 1), (f.away_team_id, 1, 0)):
+            totals[team][3] += 1
+            if figures is not None:
+                totals[team][0] += figures[mine]
+                totals[team][1] += figures[theirs]
+                totals[team][2] += 1
+    complete = all(t[2] == t[3] for t in totals.values())
+    out = []
+    for line, row in zip(lines, rows):
+        for_, against, covered, _ = totals[row.team_id]
+        if not covered:
+            out.append(line)
+            continue
+        out.append(dataclasses.replace(line, xg_for=f"{for_:.2f}", xg_against=f"{against:.2f}",
+                                       xg_over=f"{line.goals_for - for_:+.2f}" if complete else ""))
+    note = "xG and xGA are expected goals for and against, from the match reports."
+    if complete:
+        note += " G-xG is goals scored minus xG."
+    else:
+        note += f" Expected goals for {len(reported)} of {len(scored)} played matches."
+    return tuple(out), note
 
 
 def ordinal(n: int) -> str:
@@ -655,11 +703,13 @@ def _page_key(page, order: Mapping[str, int]) -> tuple:
 
 def build_yearbook(book: arch.Archive, season: int, names: Mapping[int, str], marked_club: int | None = None) -> Yearbook:
     """The Yearbook for one season, from everything the archive holds. `marked_club` is a club uid to mark."""
-    return yearbook_from(book.dataset(), book.competitions(), book.coverage(season), season, names, marked_club)
+    return yearbook_from(book.dataset(), book.competitions(), book.coverage(season), season, names, marked_club,
+                         book.expected_goals())
 
 
 def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompetition], coverage: arch.BookCoverage,
-                  season: int, names: Mapping[int, str], marked_club: int | None = None) -> Yearbook:
+                  season: int, names: Mapping[int, str], marked_club: int | None = None,
+                  expected_goals: Mapping[tuple, tuple[float, float]] | None = None) -> Yearbook:
     """The page model for one season. Only competitions the user has named are in the book, and (when the
     home nation is known) only those of that nation plus the continental ones. A title page opens it, the pages
     run by date, and the final tables close it once a league is fully played."""
@@ -670,6 +720,7 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
     finals: list[tuple[str, tuple[TableLine, ...]]] = []
     splits: list[tuple] = []
     strips: list[tuple[str, tuple[str, ...]]] = []
+    xg_notes: list[tuple[str, str]] = []
     grids: list[PlacesPage] = []
     unplayed = False
     for comp in sorted(competitions, key=lambda c: c.key):
@@ -702,6 +753,9 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
             last = max(f.date for f in league if f.date)
             rows = fd.standings_as_of(league, labels, through=last, tie_breaks=comp.tie_breaks)
             overall = _table(rows, rules, unscored=_unscored(league, last), marked=marked_club)
+            overall, xg_note = with_expected_goals(overall, rows, league, expected_goals or {})
+            if xg_note:
+                xg_notes.append((name, xg_note))
             finals.append((name, overall))
             splits.append((name, overall,
                            _split_lines(overall, fd.calculate_standings(league, labels, home_only=True), rows),
@@ -711,5 +765,6 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
     label = fd.season_label(season, [f for fixtures in dataset.fixtures.values() for f in fixtures])
     coverage = dataclasses.replace(coverage, in_progress=unplayed)         # judged on the competitions in the book
     head = [TitlePage(label, _title_lines(coverage, included, home))]
-    tail = grids + ([FinalTablesPage(tuple(finals), splits=tuple(splits), strips=tuple(strips))] if finals else [])
+    tail = grids + ([FinalTablesPage(tuple(finals), splits=tuple(splits), strips=tuple(strips),
+                                                    xg_notes=tuple(xg_notes))] if finals else [])
     return Yearbook(label, coverage, tuple(head + pages + tail))

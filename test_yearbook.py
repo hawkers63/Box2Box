@@ -17,17 +17,17 @@ import archive
 import fm_data as fd
 import yearbook
 from fmsave import CodedValue, CompetitionRound
-from test_fm_data import D, fx, info
+from test_fm_data import D, fx, info, match_stats as report_rows
 
 
-def banked(fixtures, *, nations=None, competitions=None, game=D(2026, 12, 31), path=None, rules=()):
+def banked(fixtures, *, nations=None, competitions=None, game=D(2026, 12, 31), path=None, rules=(), match_stats=None):
     """Bank one save of `fixtures` into a temporary archive and return (archive, folder)."""
     folder = tempfile.TemporaryDirectory()
     base = dataclasses.replace(info(), file_name="a.fm", path="a.fm", game_date=game)
     nations = nations or {i: 5 for i in range(1, 6)}
     clubs = [NS(uid=i, reputation=1, teams=(), nation_id=n) for i, n in nations.items()]
     comps = competitions or [NS(id=101, database_id=12)]
-    data = fd.build_dataset(base, fixtures, clubs=clubs, competitions=comps, rules=list(rules))
+    data = fd.build_dataset(base, fixtures, clubs=clubs, competitions=comps, rules=list(rules), match_stats=match_stats)
     book = archive.Archive.open(Path(folder.name) / "archive.sqlite")
     book.bank(data)
     return book, folder
@@ -674,3 +674,67 @@ class ExcludedCompetitionTests(BookBuilder, unittest.TestCase):
     def test_an_excluded_competition_named_premier_league_does_not_decide_the_home_nation(self):
         built = self.build_with({12: "Premier League", 95041306: "Premier League"})
         self.assertEqual({p.competition for p in built.pages if hasattr(p, "competition")}, {"Premier League"})
+
+
+class XgColumnsTests(BookBuilder, unittest.TestCase):
+    """Expected goals on a finished league's final table, from what the archive kept."""
+
+    def reports(self, which):
+        """Match reports for the FINISHED fixtures (by index): every home side 1.5 xG, every away side 0.5."""
+        rows = []
+        for i in which:
+            rows += report_rows(self.FINISHED[i], 1.5, 0.5)
+        return rows
+
+    def final(self, which):
+        book, folder = banked(self.FINISHED, match_stats=self.reports(which))
+        self.addCleanup(folder.cleanup)
+        self.addCleanup(book.close)
+        built = yearbook.build_yearbook(book, 2026, self.NAMES)
+        page = built.pages[-1]
+        self.assertIsInstance(page, yearbook.FinalTablesPage)
+        return built, {t.team: t for t in page.tables[0][1]}, dict(page.xg_notes).get("Premier League", "")
+
+    def test_with_a_report_for_every_match_the_final_table_gains_xg_xga_and_goals_minus_xg(self):
+        built, lines, note = self.final(range(6))
+        hull = lines["Hull City"]
+        self.assertEqual((hull.xg_for, hull.xg_against, hull.xg_over), ("4.50", "1.50", "+1.50"))
+        self.assertEqual(yearbook.standings_head(tuple(lines.values()))[-5:], ("PPG", "xG", "xGA", "G-xG", "Last six"))
+        self.assertIn("xG and xGA are expected goals for and against", note)
+        self.assertIn("G-xG is goals scored minus xG", note)
+        self.assertNotIn("of", note.split("xGA")[-1].split(".")[0])          # no "N of M" when everything is covered
+
+    def test_a_league_whose_reports_never_arrived_has_no_xg_columns_at_all(self):
+        built, lines, note = self.final([])
+        self.assertEqual({(t.xg_for, t.xg_against, t.xg_over) for t in lines.values()}, {("", "", "")})
+        self.assertNotIn("xG", yearbook.standings_head(tuple(lines.values())))
+        self.assertEqual(note, "")
+
+    def test_with_some_reports_missing_the_totals_are_partial_and_the_note_says_how_many_and_no_comparison_is_made(self):
+        built, lines, note = self.final([0, 1, 2])
+        self.assertEqual(yearbook.standings_head(tuple(lines.values()))[-4:], ("PPG", "xG", "xGA", "Last six"))
+        self.assertTrue(all(t.xg_over == "" for t in lines.values()))
+        self.assertIn("Expected goals for 3 of 6 played matches.", note)
+        self.assertNotIn("G-xG", note)
+
+    def test_a_club_with_no_report_at_all_is_blank_never_0_00(self):
+        built, lines, _ = self.final([0])                                    # only Hull City v Leeds United has one
+        self.assertEqual((lines["Derby County"].xg_for, lines["Derby County"].xg_against), ("", ""))
+        self.assertEqual(lines["Hull City"].xg_for, "1.50")
+
+    def test_a_match_with_a_report_but_no_score_is_not_counted_in_the_totals(self):
+        fixtures = [dataclasses.replace(f, home_goals=None, away_goals=None) if i == 0 else f for i, f in enumerate(self.FINISHED)]
+        rows = []
+        for f in fixtures:
+            rows += report_rows(f, 1.5, 0.5)
+        book, folder = banked(fixtures, match_stats=rows)
+        self.addCleanup(folder.cleanup)
+        self.addCleanup(book.close)
+        page = yearbook.build_yearbook(book, 2026, self.NAMES).pages[-1]
+        hull = {t.team: t for t in page.tables[0][1]}["Hull City"]
+        self.assertEqual((hull.played, hull.xg_for), (2, "3.00"))
+
+    def test_the_weekly_tables_never_carry_expected_goals(self):
+        built, _, _ = self.final(range(6))
+        weekly = [t for p in built.pages if isinstance(p, yearbook.LeaguePage) for t in p.table]
+        self.assertEqual({(t.xg_for, t.xg_against, t.xg_over) for t in weekly}, {("", "", "")})

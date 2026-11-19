@@ -126,16 +126,21 @@ def _standings(lines, styles) -> Table:
     """A table with its movement and PPG columns only where the lines carry them. A marked club is bold with a
     rule under its row."""
     moves, ppg = any(t.movement for t in lines), any(t.ppg for t in lines)
+    xg, over = any(t.xg_for for t in lines), any(t.xg_over for t in lines)
     rows = [list(yb.standings_head(lines))]
     for t in lines:
         name = f"<b>{escape(t.team)}</b>" if t.marked else escape(t.team)
         rows.append(([Paragraph(_move(t.movement), styles["cell"])] if moves else []) +
                     [str(t.pos), Paragraph(name, styles["cell"]), t.played, t.won, t.drawn, t.lost, t.goals_for,
                      t.goals_against, f"{t.goal_difference:+d}" if t.goal_difference else "0", t.points] +
-                    ([t.ppg] if ppg else []) + [Paragraph(_form(t.form), styles["cell"])])
+                    ([t.ppg] if ppg else []) + ([t.xg_for, t.xg_against] if xg else []) +
+                    ([t.xg_over] if over else []) + [Paragraph(_form(t.form), styles["cell"])])
     widths = ([9 * mm] if moves else []) + [7 * mm, 50 * mm] + [8.5 * mm] * 7 + [10 * mm] + \
              ([11 * mm] if ppg else []) + [24 * mm]
-    if not moves and not ppg:                                   # the plain table keeps its wider name and form
+    if xg:                                                      # expected goals need the room: a narrower name and form
+        widths = ([9 * mm] if moves else []) + [7 * mm, 43 * mm] + [8 * mm] * 7 + [9 * mm] + \
+                 ([10 * mm] if ppg else []) + [10 * mm, 10 * mm] + ([10.5 * mm] if over else []) + [18 * mm]
+    elif not moves and not ppg:                                 # the plain table keeps its wider name and form
         widths = [8 * mm, 52 * mm] + [9 * mm] * 7 + [11 * mm, 27 * mm]
     first = 1 if moves else 0                                   # the column of "#"
     pts = first + 9
@@ -150,7 +155,8 @@ def _standings(lines, styles) -> Table:
         ("LINEBELOW", (0, 0), (-1, 0), 0.6, colors.HexColor(INK)),
         ("LINEBELOW", (0, 1), (-1, -1), 0.25, colors.HexColor("#dddddd")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("TOPPADDING", (0, 0), (-1, -1), 1.2), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.2),
-    ] + marked))
+    ] + marked + ([("LEFTPADDING", (first + 2, 0), (-1, -1), 2), ("RIGHTPADDING", (first + 2, 0), (-1, -1), 2)]
+                  if xg else [])))
     return table
 
 
@@ -344,12 +350,14 @@ def _flow(book: yb.Yearbook) -> list:
             new_page()
             splits = {entry[0]: entry for entry in page.splits}
             strips = dict(page.strips)
+            xg_notes = dict(page.xg_notes)
             first_table = True
             for name, lines in page.tables:
                 strip = ([Paragraph(f"{escape(name)} · from the results", styles["heading"])] +
                          [Paragraph(escape(text), styles["cell"]) for text in strips[name]]) if strips.get(name) else []
                 final = KeepTogether([Paragraph(f"{escape(name)} · final table", styles["heading"]),
-                                      _standings(lines, styles), Paragraph(table_note(lines), styles["small"]),
+                                      _standings(lines, styles),
+                                      Paragraph(escape(yb.final_note(lines, xg_notes.get(name, ""))), styles["small"]),
                                       *strip, Spacer(1, 8 * mm)])
                 flow.append(outlined(final, 1, "Final tables") if first_table else final)
                 first_table = False
