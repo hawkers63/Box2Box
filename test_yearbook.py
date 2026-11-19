@@ -595,17 +595,55 @@ class BiggestMovesTests(unittest.TestCase):
     def test_a_rise_is_the_biggest_climb_from_an_earlier_week_to_a_later_one(self):
         page = self.page(("A", (5, 6, 3, 2)), ("B", (1, 2, 2, 3)), ("C", (2, 1, 1, 1)))
         rise, fall, left_out = yearbook.biggest_moves(page)
-        self.assertEqual(rise, yearbook.Move("A", 6, 2, 2, 4))
-        self.assertEqual(fall, yearbook.Move("B", 1, 1, 3, 4))
+        self.assertEqual(rise, (yearbook.Move("A", 6, 2, 2, 4),))
+        self.assertEqual(fall, (yearbook.Move("B", 1, 1, 3, 4),))
         self.assertFalse(left_out)
+
+    def test_clubs_that_tie_for_the_biggest_rise_are_all_returned(self):
+        page = self.page(("A", (6, 2, 2, 2)), ("B", (8, 4, 4, 4)), ("C", (3, 3, 3, 3)))
+        rise, _, _ = yearbook.biggest_moves(page)
+        self.assertEqual([m.team for m in rise], ["A", "B"])
+
+    def test_clubs_that_tie_for_the_biggest_fall_are_all_returned(self):
+        page = self.page(("A", (1, 3, 3, 3)), ("B", (2, 4, 4, 4)), ("C", (1, 1, 1, 2)))
+        _, fall, _ = yearbook.biggest_moves(page)
+        self.assertEqual([m.team for m in fall], ["A", "B"])
+
+    def test_a_longer_climb_of_the_same_size_does_not_tie_with_a_shorter_one(self):
+        page = self.page(("A", (4, 2, 2, 2)), ("B", (4, 4, 3, 2)))
+        rise, _, _ = yearbook.biggest_moves(page)
+        self.assertEqual([m.team for m in rise], ["A"])
+
+    def test_a_club_is_named_once_however_many_windows_tie(self):
+        page = self.page(("A", (5, 3, 5, 3)))
+        rise, _, _ = yearbook.biggest_moves(page)
+        self.assertEqual([m.team for m in rise], ["A"])
+
+    def test_one_club_reads_as_it_always_did(self):
+        move = yearbook.Move("A", 6, 2, 2, 4)
+        self.assertEqual(yearbook.describe_moves("Biggest rise", (move,)),
+                         "Biggest rise: A, from 6th after matchweek 2 to 2nd after matchweek 4")
+
+    def test_the_results_strip_names_every_club_tied_for_the_biggest_rise(self):
+        page = self.page(("A", (6, 2, 2, 2)), ("B", (8, 4, 4, 4)), ("C", (3, 3, 3, 3)))
+        lines = yearbook.results_strip([], [], [], {}, page)
+        self.assertEqual(lines[0], "Biggest rise, shared by 2 clubs: A, from 6th after matchweek 1 to 2nd after "
+                                   "matchweek 2; B, from 8th after matchweek 1 to 4th after matchweek 2")
+
+    def test_every_tied_club_is_named_in_the_line(self):
+        moves = (yearbook.Move("A", 6, 1, 2, 2), yearbook.Move("B", 9, 3, 5, 4))
+        self.assertEqual(
+            yearbook.describe_moves("Biggest fall", moves),
+            "Biggest fall, shared by 2 clubs: A, from 6th after matchweek 1 to 2nd after matchweek 2; "
+            "B, from 9th after matchweek 3 to 5th after matchweek 4")
 
     def test_a_club_that_had_not_played_every_week_is_left_out_and_counted(self):
         page = self.page(("A", (None, 9, 3, 2)), ("B", (4, 4, 4, 4)))
         rise, fall, left_out = yearbook.biggest_moves(page)
-        self.assertEqual((rise, fall, left_out), (None, None, 1))
+        self.assertEqual((rise, fall, left_out), ((), (), 1))
 
     def test_a_league_that_never_moved_has_no_rise_or_fall(self):
-        self.assertEqual(yearbook.biggest_moves(self.page(("A", (1, 1, 1, 1)), ("B", (2, 2, 2, 2))))[:2], (None, None))
+        self.assertEqual(yearbook.biggest_moves(self.page(("A", (1, 1, 1, 1)), ("B", (2, 2, 2, 2))))[:2], ((), ()))
 
 
 class ResultsStripTests(BookBuilder, unittest.TestCase):

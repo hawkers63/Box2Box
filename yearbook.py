@@ -359,11 +359,12 @@ def places_page(name: str, pages: Sequence[LeaguePage]) -> PlacesPage | None:
     return PlacesPage(name, tuple(p.matchweek for p in weeks), rows)
 
 
-def biggest_moves(page: PlacesPage) -> tuple[Move | None, Move | None, int]:
-    """(biggest rise, biggest fall, clubs left out) over the weeks. A rise is a climb from a lower place in one
-    matchweek to a higher one in a later matchweek, a fall the reverse; the largest wins, then the shorter span,
-    then the name. A club with a blank week is left out, and counted."""
-    rise = fall = None
+def biggest_moves(page: PlacesPage) -> tuple[tuple[Move, ...], tuple[Move, ...], int]:
+    """(biggest rises, biggest falls, clubs left out) over the weeks. A rise is a climb from a lower place in one
+    matchweek to a higher one in a later matchweek, a fall the reverse; the largest wins, then the shorter span.
+    Every club level on both is returned, once each and by name, with its own earliest such move. A club with a
+    blank week is left out, and counted."""
+    best: dict[str, tuple[tuple[int, int], dict[str, Move]]] = {}
     left_out = 0
     for row in page.rows:
         if any(p is None for p in row.places):
@@ -375,15 +376,27 @@ def biggest_moves(page: PlacesPage) -> tuple[Move | None, Move | None, int]:
                 for kind, gain in (("rise", a - b), ("fall", b - a)):
                     if gain <= 0:
                         continue
-                    move = Move(row.team, a, page.matchweeks[i], b, page.matchweeks[j])
-                    best = rise if kind == "rise" else fall
-                    key = (-gain, j - i, row.team)
-                    if best is None or key < best[0]:
-                        if kind == "rise":
-                            rise = (key, move)
-                        else:
-                            fall = (key, move)
-    return (rise[1] if rise else None, fall[1] if fall else None, left_out)
+                    key = (-gain, j - i)
+                    current = best.get(kind)
+                    if current is None or key < current[0]:
+                        current = best[kind] = (key, {})
+                    if key == current[0] and row.team not in current[1]:
+                        current[1][row.team] = Move(row.team, a, page.matchweeks[i], b, page.matchweeks[j])
+    ordered = {kind: tuple(sorted(found[1].values(), key=lambda m: m.team)) if (found := best.get(kind)) else ()
+               for kind in ("rise", "fall")}
+    return ordered["rise"], ordered["fall"], left_out
+
+
+def describe_moves(title: str, moves: Sequence[Move]) -> str:
+    """One strip line for a biggest rise or fall, naming every club that shares it."""
+
+    def one(move: Move) -> str:
+        return (f"{move.team}, from {ordinal(move.from_place)} after matchweek {move.from_week} "
+                f"to {ordinal(move.to_place)} after matchweek {move.to_week}")
+
+    if len(moves) == 1:
+        return f"{title}: {one(moves[0])}"
+    return f"{title}, shared by {len(moves)} clubs: " + "; ".join(one(m) for m in moves)
 
 
 def _names(teams: Sequence[str]) -> str:
@@ -412,10 +425,9 @@ def results_strip(overall: Sequence[TableLine], league: Sequence, rows: Sequence
     left_out = 0
     if places is not None:
         rise, fall, left_out = biggest_moves(places)
-        for title, move in (("Biggest rise", rise), ("Biggest fall", fall)):
-            if move:
-                lines.append(f"{title}: {move.team}, from {ordinal(move.from_place)} after matchweek {move.from_week} "
-                             f"to {ordinal(move.to_place)} after matchweek {move.to_week}")
+        for title, moves in (("Biggest rise", rise), ("Biggest fall", fall)):
+            if moves:
+                lines.append(describe_moves(title, moves))
     runs = {r.team: fd.streaks(fd.team_steps(league, r.team_id, labels)) for r in rows}
     leaders("Longest winning run", {t: s.longest[fd.STREAK_WINNING].length for t, s in runs.items()}, max)
     leaders("Longest unbeaten run", {t: s.longest[fd.STREAK_UNBEATEN].length for t, s in runs.items()}, max)
