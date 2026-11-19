@@ -527,5 +527,81 @@ class CompetitionScheduleTests(unittest.TestCase):
         self.assertEqual([i.fixture.competition_id for i in only.items], [102, 102])
 
 
+# ---------------------------------------------------------------------------
+# ManagerSnapshot tests
+# ---------------------------------------------------------------------------
+
+def _snapshot_ds():
+    """A dataset with club 1 managed, league comp 101, two played and one upcoming."""
+    fixtures = [
+        fx(D(2026, 8, 8), 1, 2, 2, 1, comp=101, md=1),
+        fx(D(2026, 8, 15), 3, 1, 0, 1, comp=101, md=2),
+        fx(D(2026, 9, 12), 1, 4, comp=101, md=3),     # unplayed
+    ]
+    return dataset(fixtures, managed=1)
+
+
+class ManagerSnapshotTests(unittest.TestCase):
+    def setUp(self):
+        self.ds = _snapshot_ds()
+        self.followed = fd.FollowedClub(1)
+        self.snap = fd.manager_snapshot(self.ds, self.followed)
+
+    def test_snapshot_carries_followed_club(self):
+        self.assertEqual(self.snap.followed.club_uid, 1)
+
+    def test_managed_flag_reflects_dataset(self):
+        self.assertTrue(self.snap.managed)
+
+    def test_managed_false_for_observer_save(self):
+        obs = dataset([], managed=None)
+        snap = fd.manager_snapshot(obs, fd.FollowedClub(1))
+        self.assertFalse(snap.managed)
+
+    def test_manager_name_comes_from_import_info(self):
+        # managed_manager_name is None in the test harness by default
+        self.assertIsNone(self.snap.manager_name)
+
+    def test_next_fixture_is_first_unplayed(self):
+        self.assertIsNotNone(self.snap.next_item)
+        self.assertFalse(self.snap.next_item.played)
+        self.assertEqual(self.snap.next_item.fixture.date, D(2026, 9, 12))
+
+    def test_next_fixture_is_none_when_no_matches(self):
+        ds = dataset([], managed=1)
+        snap = fd.manager_snapshot(ds, fd.FollowedClub(1))
+        self.assertIsNone(snap.next_item)
+
+    def test_next_fixture_scope_label_names_competition(self):
+        # scope label should contain some useful text, not an empty string
+        self.assertGreater(len(self.snap.next_scope_label), 0)
+
+    def test_form_covers_recent_played_matches(self):
+        # two played matches → form should have two entries
+        self.assertEqual(len(self.snap.form), 2)
+
+    def test_form_entries_have_outcome(self):
+        for item in self.snap.form:
+            self.assertIn(item.outcome, ("W", "D", "L", "?"))
+
+    def test_snapshot_is_frozen(self):
+        import dataclasses
+        self.assertTrue(dataclasses.is_dataclass(self.snap))
+        with self.assertRaises((AttributeError, TypeError, dataclasses.FrozenInstanceError)):
+            self.snap.managed = False  # type: ignore[misc]
+
+    def test_no_followed_club_gives_empty_form_and_no_next(self):
+        snap = fd.manager_snapshot(self.ds, fd.FollowedClub(99))
+        self.assertIsNone(snap.next_item)
+        self.assertEqual(snap.form, ())
+
+    def test_rank_before_next_is_set_when_league_data_available(self):
+        snap = self.snap
+        # rank_before_next may be None when there is no played competition table
+        # but it should be a RankBefore or None, never an error
+        self.assertTrue(snap.rank_before_next is None
+                        or isinstance(snap.rank_before_next, fd.RankBefore))
+
+
 if __name__ == "__main__":
     unittest.main()

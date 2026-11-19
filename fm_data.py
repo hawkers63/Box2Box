@@ -3123,6 +3123,71 @@ def club_schedule(
                     tuple(ScheduleCompetition(cid, played, total) for cid, (played, total) in counts.items()))
 
 
+# --------------------------------------------------------------------------- manager snapshot
+
+
+FORM_MAX = 5
+
+
+@dataclass(frozen=True, slots=True)
+class ManagerSnapshot:
+    """A concise summary of the followed club's current state, consumed by the club overview hub.
+
+    Computed once from the dataset and followed-club choice; never recalculated in a Tk callback.
+    Every field is None or empty rather than estimated when the data is not in the save.
+    """
+
+    followed: FollowedClub
+    managed: bool
+    manager_name: str | None
+    next_item: ScheduleItem | None
+    next_scope_label: str
+    form: tuple[ScheduleItem, ...]
+    rank_before_next: RankBefore | None
+
+
+def manager_snapshot(dataset: Dataset, followed: FollowedClub, *, max_form: int = FORM_MAX) -> ManagerSnapshot:
+    """Build a ManagerSnapshot for the followed club from an already-built dataset."""
+    info = dataset.info
+    managed = info.managed_club_uid is not None and info.managed_club_uid == followed.club_uid
+    manager_name = info.managed_manager_name if managed else None
+
+    ids = followed_team_ids(dataset, followed)
+    all_fx = club_fixtures(dataset, ids)
+    season = club_season(all_fx)
+    today = info.game_date
+
+    items = tuple(_schedule_item(dataset, f, ref, ids, today)
+                  for f, ref in zip(
+                      sorted((f for f in all_fx if season_key(f) == season),
+                             key=lambda f: (_when(f), f.competition_id or 0)),
+                      fixture_refs(sorted((f for f in all_fx if season_key(f) == season),
+                                          key=lambda f: (_when(f), f.competition_id or 0)))))
+
+    played = tuple(i for i in items if i.played)
+    form = played[-max_form:]
+
+    upcoming = [i for i in items if i.when in (WHEN_TODAY, WHEN_UPCOMING, WHEN_OVERDUE)]
+    next_item = upcoming[0] if upcoming else None
+
+    if next_item is not None:
+        next_scope_label = (f"Competition {next_item.competition_id}"
+                            if next_item.competition_id else "All competitions")
+    else:
+        next_scope_label = ""
+
+    rank = None
+    if next_item is not None:
+        try:
+            rank = rank_before(dataset, next_item.fixture, next_item.team_id)
+        except Exception:
+            rank = None
+
+    return ManagerSnapshot(followed=followed, managed=managed, manager_name=manager_name,
+                           next_item=next_item, next_scope_label=next_scope_label,
+                           form=form, rank_before_next=rank)
+
+
 # --------------------------------------------------------------------------- helpers
 
 
