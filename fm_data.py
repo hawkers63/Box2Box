@@ -112,6 +112,7 @@ class ImportInfo:
     warnings: tuple[str, ...]
     managed_club_uid: int | None
     managed_club_name: str | None
+    managed_manager_name: str | None = None      # the save's name for the human manager, when it gives one
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +188,8 @@ class Dataset:
     match_reports: Mapping[tuple, MatchStats] = field(default_factory=dict)        # keyed on fixture_key
     xg_report: XgReport | None = None    # None until the match statistics have been read
     teams: Mapping[int, TeamIdentity] = field(default_factory=dict)    # every team the fixtures name
+    grounds: Mapping[int, Ground] | None = None    # None until the stadium table has been read, or if it could not be
+    ground_failure: str = ""
 
     def fixtures_for(self, competition_id: int) -> tuple[Fixture, ...]:
         return self.fixtures.get(competition_id, ())
@@ -416,6 +419,85 @@ def _ref_key_of(ref: FixtureRef) -> tuple:
     return (ref.competition_id, ref.season, ref.home_team_id, ref.away_team_id, ref.date)
 
 
+# --------------------------------------------------------------------------- venues
+
+# How far a piece of match information can be trusted to be there: read and held, still being read, could not
+# be had (not stored, not joined or not readable), or not recorded for this match at all.
+STATE_KNOWN, STATE_PENDING, STATE_UNAVAILABLE, STATE_UNRECORDED = "known", "pending", "unavailable", "unrecorded"
+
+
+@dataclass(frozen=True, slots=True)
+class Ground:
+    """A ground from the save's stadium table. Only a couple of hundred grounds store a name; the capacity is the
+    ground's total (seated and standing), never the separate additional figure, and is None when the save holds
+    none or zero."""
+
+    uid: int
+    name: str | None
+    total_capacity: int | None
+
+
+def ground_from_stadium(row) -> Ground:
+    total = row.total_capacity
+    return Ground(row.uid, row.name or None, total if isinstance(total, int) and total > 0 else None)
+
+
+def with_grounds(dataset: Dataset, rows: Iterable | None, failure: str = "") -> Dataset:
+    """The Dataset with the save's grounds. `rows` is None when the stadium table could not be read, and `failure`
+    says why; nothing else in the Dataset changes."""
+    if rows is None:
+        return replace(dataset, grounds=None, ground_failure=failure or "not read")
+    grounds = {g.uid: g for g in map(ground_from_stadium, rows)}
+    return replace(dataset, grounds=grounds, ground_failure="")
+
+
+@dataclass(frozen=True, slots=True)
+class Venue:
+    """What the save says about where a match was played. `neutral` keeps True, False and None (unknown) apart.
+    The name is the fixture's own or the stadium table's, never worked out from a club; there is no attendance,
+    occupancy or weather, because the save holds none."""
+
+    neutral: bool | None
+    stadium_uid: int | None
+    name: str | None
+    total_capacity: int | None
+    capacity_state: str
+
+    def lines(self) -> tuple[str, ...]:
+        found = []
+        if self.neutral is True:
+            found.append("Neutral ground")
+        elif self.neutral is None:
+            found.append("Neutral ground: unknown")
+        if self.name:
+            found.append(self.name)
+        else:
+            found.append("Ground name not recorded" if self.stadium_uid is not None else "Ground not recorded")
+        if self.capacity_state == STATE_KNOWN:
+            found.append(f"Capacity {self.total_capacity:,}")
+        elif self.capacity_state == STATE_PENDING:
+            found.append("Capacity: still being read")
+        elif self.capacity_state == STATE_UNAVAILABLE:
+            found.append("Capacity unavailable")
+        return tuple(found)
+
+
+def venue_for(dataset: Dataset, f: Fixture) -> Venue:
+    """The venue of a match from the fixture and the ground table."""
+    uid = f.stadium_uid
+    if uid is None:
+        return Venue(f.is_neutral_venue, None, f.stadium_name or None, None, STATE_UNRECORDED)
+    ground = dataset.grounds.get(uid) if dataset.grounds is not None else None
+    if ground is not None and ground.total_capacity is not None:
+        state = STATE_KNOWN
+    elif dataset.grounds is None and not dataset.ground_failure and dataset.xg_report is None:
+        state = STATE_PENDING
+    else:
+        state = STATE_UNAVAILABLE
+    return Venue(f.is_neutral_venue, uid, f.stadium_name or (ground.name if ground else None) or None,
+                 ground.total_capacity if ground else None, state)
+
+
 # --------------------------------------------------------------------------- loading
 
 
@@ -439,7 +521,9 @@ def load_dataset(
     notes: list[str] = []
     dataset: Dataset | None = None
     stats: list | None = None
+    grounds: list | None = None
     failure = ""
+    ground_failure = ""
     caller_error: Exception | None = None      # raised by `ready`: the caller's failure, never the save's
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -473,6 +557,11 @@ def load_dataset(
                     stats = list(save.team_match_stats())
                 except Exception as exc:  # the match reports can fail on their own on an unverified build
                     failure = f"{type(exc).__name__}: {exc}"
+                progress("Reading grounds")
+                try:
+                    grounds = list(save.stadiums())
+                except Exception as exc:  # the stadium table can fail on its own too; the save is still usable
+                    ground_failure = f"{type(exc).__name__}: {exc}"
         except Exception as exc:
             if exc is caller_error:
                 raise
@@ -486,8 +575,11 @@ def load_dataset(
         if failure:
             stats = None
             notes.append(f"Match statistics (xG) could not be read ({failure})")
+        if ground_failure:
+            grounds = None
+            notes.append(f"Grounds could not be read ({ground_failure})")
         info = _import_info(path, save_info, managed, caught, notes, started)
-    return with_expected_goals(replace(dataset, info=info), stats, failure)
+    return with_grounds(with_expected_goals(replace(dataset, info=info), stats, failure), grounds, ground_failure)
 
 
 def _import_info(path: Path, save_info, managed: Sequence, caught: Sequence, notes: Sequence[str],
@@ -506,6 +598,7 @@ def _import_info(path: Path, save_info, managed: Sequence, caught: Sequence, not
         warnings=tuple(reader_warnings + list(notes)),
         managed_club_uid=managed[0].club_uid if managed else None,
         managed_club_name=managed[0].club_name if managed else None,
+        managed_manager_name=(getattr(managed[0], "manager_name", None) or None) if managed else None,
     )
 
 

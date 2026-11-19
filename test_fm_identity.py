@@ -8,9 +8,11 @@ Run:  .venv\\Scripts\\python -m unittest test_fm_identity -v
 import dataclasses
 import datetime as dt
 import unittest
+from types import SimpleNamespace as NS
+from unittest import mock
 
 import fm_data as fd
-from test_fm_data import CLUBS, D, club, fx, info, team, unresolved_away
+from test_fm_data import CLUBS, D, FakeSave, club, fx, info, team, unresolved_away
 
 
 def dataset(fixtures, *, managed=1, clubs=None, game_date=D(2026, 9, 1)):
@@ -253,6 +255,144 @@ class FormBeforeTests(unittest.TestCase):
         fixtures = [self.SEASON[0], unscored, self.SEASON[2]]
         form = fd.form_before(fixtures, [team(1)], fixtures[2], fd.team_labels(fixtures), scope=fd.FORM_ALL)
         self.assertEqual(form.strip.letters, "W?")
+
+
+class GroundSave(FakeSave):
+    """A FakeSave that also holds a stadium table (or fails to read it)."""
+
+    def __init__(self, fixtures, grounds=(), grounds_error=None, **kwargs):
+        super().__init__(fixtures, **kwargs)
+        self._grounds, self._grounds_error = grounds, grounds_error
+
+    def stadiums(self):
+        self.read.append("stadiums")
+        if self._grounds_error:
+            raise self._grounds_error
+        return iter(self._grounds)
+
+
+def stadium(uid, name=None, total=30000, capacity=999):
+    return NS(uid=uid, name=name, total_capacity=total, capacity=capacity)
+
+
+class GroundReadTests(unittest.TestCase):
+    def load(self, save, **kwargs):
+        with mock.patch.object(fd.fmsave, "open", return_value=save):
+            return fd.load_dataset("career.fm", **kwargs)
+
+    def test_the_total_capacity_is_kept_never_the_additional_capacity_figure(self):
+        final = self.load(GroundSave(SEASON, [stadium(7, "Riverside", total=31000, capacity=500)]))
+        self.assertEqual(final.grounds[7], fd.Ground(7, "Riverside", 31000))
+
+    def test_a_missing_or_zero_capacity_is_unknown_not_zero(self):
+        final = self.load(GroundSave(SEASON, [stadium(7, total=0), stadium(8, total=None)]))
+        self.assertEqual((final.grounds[7].total_capacity, final.grounds[8].total_capacity), (None, None))
+
+    def test_the_save_is_ready_before_the_grounds_are_read(self):
+        save = GroundSave(SEASON, [stadium(7)])
+        seen = []
+        self.load(save, ready=lambda ds: seen.append((ds.grounds, list(save.read))))
+        self.assertEqual(seen, [(None, ["fixtures"])])
+
+    def test_a_failure_to_read_the_grounds_keeps_everything_else_and_says_so(self):
+        final = self.load(GroundSave(SEASON, grounds_error=RuntimeError("no stadium table")))
+        self.assertIsNone(final.grounds)
+        self.assertIn("no stadium table", final.ground_failure)
+        self.assertEqual(final.fixture_total, len(SEASON))
+        self.assertTrue(any(w.startswith("Grounds could not be read") for w in final.info.warnings))
+
+    def test_a_save_reader_without_a_stadium_table_is_a_failure_to_read_it(self):
+        final = self.load(FakeSave(SEASON))
+        self.assertIsNone(final.grounds)
+        self.assertTrue(final.ground_failure)
+
+
+class ManagedSave(FakeSave):
+    def __init__(self, fixtures, manager_name):
+        super().__init__(fixtures)
+        self._manager_name = manager_name
+
+    def managed_clubs(self):
+        return [NS(club_uid=1, club_name="Hull City", manager_name=self._manager_name)]
+
+
+class ManagerNameTests(unittest.TestCase):
+    def load(self, save):
+        with mock.patch.object(fd.fmsave, "open", return_value=save):
+            return fd.load_dataset("career.fm")
+
+    def test_the_managed_clubs_manager_name_is_kept_when_the_save_gives_it(self):
+        self.assertEqual(self.load(ManagedSave(SEASON, "A. Manager")).info.managed_manager_name, "A. Manager")
+
+    def test_a_missing_manager_name_stays_none(self):
+        self.assertIsNone(self.load(ManagedSave(SEASON, None)).info.managed_manager_name)
+
+    def test_an_observer_save_has_no_manager_name(self):
+        self.assertIsNone(self.load(FakeSave(SEASON)).info.managed_manager_name)
+
+
+def with_grounds(fixtures, grounds=None, failure="", stats_done=True):
+    ds = dataset(fixtures)
+    if stats_done:
+        ds = fd.with_expected_goals(ds, [])
+    return fd.with_grounds(ds, grounds, failure) if grounds is not None or failure else ds
+
+
+class VenueTests(unittest.TestCase):
+    def fixture(self, **changes):
+        return dataclasses.replace(SEASON[0], **changes)
+
+    def test_a_ground_the_fixture_names_and_the_table_holds_gives_a_capacity(self):
+        ds = with_grounds([self.fixture(stadium_uid=7)], [stadium(7, "Riverside", 31000)])
+        venue = fd.venue_for(ds, ds.fixtures[101][0])
+        self.assertEqual((venue.stadium_uid, venue.name, venue.total_capacity, venue.capacity_state),
+                         (7, "Riverside", 31000, fd.STATE_KNOWN))
+
+    def test_a_fixture_with_no_ground_is_unrecorded_and_nothing_is_guessed_from_the_home_club(self):
+        ds = with_grounds([self.fixture()], [stadium(7, "Riverside", 31000)])
+        venue = fd.venue_for(ds, ds.fixtures[101][0])
+        self.assertEqual((venue.stadium_uid, venue.name, venue.total_capacity, venue.capacity_state),
+                         (None, None, None, fd.STATE_UNRECORDED))
+
+    def test_the_fixtures_own_name_wins_over_the_tables(self):
+        ds = with_grounds([self.fixture(stadium_uid=7, stadium_name="Old Ground")], [stadium(7, "Riverside")])
+        self.assertEqual(fd.venue_for(ds, ds.fixtures[101][0]).name, "Old Ground")
+
+    def test_a_ground_without_a_name_stays_unnamed(self):
+        ds = with_grounds([self.fixture(stadium_uid=7)], [stadium(7, None, 31000)])
+        venue = fd.venue_for(ds, ds.fixtures[101][0])
+        self.assertIsNone(venue.name)
+        self.assertIn("Ground name not recorded", venue.lines())
+
+    def test_a_ground_the_table_does_not_hold_has_an_unavailable_capacity(self):
+        ds = with_grounds([self.fixture(stadium_uid=99)], [stadium(7)])
+        self.assertEqual(fd.venue_for(ds, ds.fixtures[101][0]).capacity_state, fd.STATE_UNAVAILABLE)
+
+    def test_a_ground_with_an_unknown_capacity_is_unavailable_not_zero(self):
+        ds = with_grounds([self.fixture(stadium_uid=7)], [stadium(7, total=0)])
+        venue = fd.venue_for(ds, ds.fixtures[101][0])
+        self.assertEqual((venue.total_capacity, venue.capacity_state), (None, fd.STATE_UNAVAILABLE))
+
+    def test_while_the_grounds_are_still_being_read_the_capacity_is_pending(self):
+        ds = with_grounds([self.fixture(stadium_uid=7)], stats_done=False)
+        self.assertEqual(fd.venue_for(ds, ds.fixtures[101][0]).capacity_state, fd.STATE_PENDING)
+
+    def test_after_a_failed_read_the_capacity_is_unavailable(self):
+        ds = with_grounds([self.fixture(stadium_uid=7)], failure="boom")
+        self.assertEqual(fd.venue_for(ds, ds.fixtures[101][0]).capacity_state, fd.STATE_UNAVAILABLE)
+
+    def test_the_neutral_flag_keeps_true_false_and_unknown_apart(self):
+        ds = dataset([self.fixture(is_neutral_venue=v) for v in (True, False, None)])
+        neutral = [fd.venue_for(ds, f).neutral for f in ds.fixtures[101]]
+        self.assertEqual(neutral, [True, False, None])
+
+    def test_the_lines_say_what_is_known_and_never_mention_attendance(self):
+        ds = with_grounds([self.fixture(stadium_uid=7, is_neutral_venue=True)], [stadium(7, "Riverside", 31000)])
+        lines = fd.venue_for(ds, ds.fixtures[101][0]).lines()
+        self.assertEqual(lines, ("Neutral ground", "Riverside", "Capacity 31,000"))
+        unknown = fd.venue_for(dataset([self.fixture(is_neutral_venue=None)]), self.fixture(is_neutral_venue=None))
+        self.assertIn("Neutral ground: unknown", unknown.lines())
+        self.assertFalse(any("ttendance" in line for line in lines + unknown.lines()))
 
 
 if __name__ == "__main__":
