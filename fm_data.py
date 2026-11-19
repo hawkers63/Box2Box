@@ -2939,6 +2939,190 @@ def form_before(
     return FormBefore(scope, form_strip(club_steps(before, team_ids, labels), length), cutoff_for(target))
 
 
+# --------------------------------------------------------------------------- a club's schedule
+
+# Where a match falls against the save's own date (never the computer's). "Overdue" is an unplayed match dated
+# before the save's date: the save does not say whether it was postponed or simply not yet rearranged.
+WHEN_PLAYED, WHEN_TODAY, WHEN_UPCOMING = "played", "today", "upcoming"
+WHEN_OVERDUE, WHEN_UNDATED, WHEN_UNKNOWN = "overdue", "undated", "unknown"
+
+
+def match_timing(f: Fixture, today: dt.date | None) -> tuple[str, int | None]:
+    """(where the match falls, whole days from the save's date: positive to come, negative overdue)."""
+    if f.played:
+        return WHEN_PLAYED, None
+    if f.date is None:
+        return WHEN_UNDATED, None
+    if today is None:
+        return WHEN_UNKNOWN, None
+    days = (f.date - today).days
+    return (WHEN_TODAY if days == 0 else WHEN_UPCOMING if days > 0 else WHEN_OVERDUE), days
+
+
+def countdown_text(when: str, days: int | None) -> str:
+    """A match's place against the save's date, in words."""
+    if when == WHEN_TODAY:
+        return "Today"
+    if when == WHEN_UPCOMING and days is not None:
+        return "Tomorrow" if days == 1 else f"In {days} days"
+    if when == WHEN_OVERDUE and days is not None:
+        return (f"Overdue by {_plural(-days, 'day')}: not played in the save "
+                "(postponed or not yet rearranged)")
+    if when == WHEN_UNDATED:
+        return "Date not set"
+    if when == WHEN_UNKNOWN:
+        return "The save's date is unknown"
+    return ""
+
+
+@dataclass(frozen=True, slots=True)
+class ScheduleItem:
+    """One match of a followed club, seen from the club's side. `venue` is H or A for the nominal home or away
+    side, and N when the ground is known to be neutral; `neutral` keeps unknown (None) apart from False."""
+
+    ref: FixtureRef
+    fixture: Fixture
+    competition_id: int | None
+    team_id: int
+    opponent_id: int
+    opponent: str
+    home: bool
+    venue: str
+    neutral: bool | None
+    outcome: str | None        # W, D, L, or ? for a played match with no recoverable score; None until played
+    score: str                 # from the club's side ("2-1"), "n/a" for a played match with no score, "" until played
+    when: str
+    days: int | None
+    xg: ExpectedGoals | None
+    xg_state: str              # known, pending or unavailable for a played match; "" for one not yet played
+
+    @property
+    def played(self) -> bool:
+        return self.fixture.played
+
+
+@dataclass(frozen=True, slots=True)
+class ScheduleCompetition:
+    competition_id: int | None
+    played: int
+    total: int
+
+
+@dataclass(frozen=True, slots=True)
+class Schedule:
+    """A followed club's matches in one season, across competitions, in date order with undated matches last."""
+
+    club: FollowedClub
+    season: int | None
+    season_label: str
+    today: dt.date | None
+    items: tuple[ScheduleItem, ...]
+    competitions: tuple[ScheduleCompetition, ...]      # in the order each first appears
+
+    @property
+    def first_upcoming(self) -> int | None:
+        """Index of the first match today or still to come by the save's date, or None."""
+        return next((i for i, item in enumerate(self.items) if item.when in (WHEN_TODAY, WHEN_UPCOMING)), None)
+
+    def describe(self) -> str:
+        played = [i for i in self.items if i.played]
+        to_play = len(self.items) - len(played)
+        parts = [_plural(len(self.items), "match", "matches"), f"{len(played)} played"]
+        unscored = sum(1 for i in played if i.outcome == UNKNOWN_RESULT)
+        if unscored:
+            parts.append(f"{unscored} played with no recoverable score")
+        text = f"{to_play} to play"
+        notes = [f"{n} {name}" for name in (WHEN_OVERDUE, WHEN_UNDATED)
+                 if (n := sum(1 for i in self.items if i.when == name))]
+        if any(i.when == WHEN_UNKNOWN for i in self.items):
+            notes.append("the save's date is unknown")
+        parts.append(text + (f" ({', '.join(notes)})" if notes else ""))
+        return " · ".join(parts)
+
+
+def club_fixtures(dataset: Dataset, team_ids: Iterable[int]) -> tuple[Fixture, ...]:
+    """Every fixture, in every competition and season, that one of the teams plays in."""
+    ids = set(team_ids)
+    return tuple(f for items in dataset.fixtures.values() for f in items
+                 if f.home_team_id in ids or f.away_team_id in ids)
+
+
+def club_season(fixtures: Iterable[Fixture]) -> int | None:
+    """The latest season with a played match, else the first season still to come."""
+    keys = [(f.played, season_key(f)) for f in fixtures if season_key(f) is not None]
+    played = [k for was, k in keys if was]
+    return max(played) if played else min((k for _, k in keys), default=None)
+
+
+def xg_state_for(dataset: Dataset, f: Fixture) -> str:
+    if not f.played:
+        return ""
+    report = dataset.xg_report
+    if report is None:
+        return STATE_PENDING
+    if report.failed:
+        return STATE_UNAVAILABLE
+    return STATE_KNOWN if fixture_key(f) in dataset.expected_goals else STATE_UNAVAILABLE
+
+
+def _side_name(name: str | None, slot: int | None, team_id: int) -> str:
+    label = name or f"Team {team_id}"
+    return f"{label} (team {slot + 1})" if name and slot else label
+
+
+def _schedule_item(dataset: Dataset, f: Fixture, ref: FixtureRef, ids: frozenset[int],
+                   today: dt.date | None) -> ScheduleItem:
+    home = f.home_team_id in ids
+    own, other = (f.home_team_id, f.away_team_id) if home else (f.away_team_id, f.home_team_id)
+    opponent = (_side_name(f.away_club_name, f.away_team_slot, other) if home
+                else _side_name(f.home_club_name, f.home_team_slot, other))
+    if not f.played:
+        outcome, score = None, ""
+    elif not has_score(f):
+        outcome, score = UNKNOWN_RESULT, "n/a"
+    else:
+        scored, conceded = (f.home_goals, f.away_goals) if home else (f.away_goals, f.home_goals)
+        outcome = "W" if scored > conceded else "L" if scored < conceded else "D"
+        score = f"{scored}-{conceded}"
+    when, days = match_timing(f, today)
+    state = xg_state_for(dataset, f)
+    return ScheduleItem(
+        ref=ref, fixture=f, competition_id=f.competition_id, team_id=own, opponent_id=other, opponent=opponent,
+        home=home, venue="N" if f.is_neutral_venue else "H" if home else "A", neutral=f.is_neutral_venue,
+        outcome=outcome, score=score, when=when, days=days,
+        xg=dataset.expected_goals.get(fixture_key(f)) if state == STATE_KNOWN else None, xg_state=state)
+
+
+def club_schedule(
+    dataset: Dataset,
+    followed: FollowedClub,
+    season: int | None = None,
+    *,
+    competition_id: int | None = None,
+    fixtures: Sequence[Fixture] | None = None,
+) -> Schedule:
+    """The followed club's matches for a season (by default its latest played one) across every competition, or
+    in one competition. `fixtures` may hold club_fixtures' answer, so a window can compute it once per save and
+    club. Countdowns use the save's date."""
+    ids = followed_team_ids(dataset, followed)
+    mine = club_fixtures(dataset, ids) if fixtures is None else tuple(fixtures)
+    if season is None:
+        season = club_season(mine)
+    chosen = sorted((f for f in mine if season_key(f) == season),
+                    key=lambda f: (_when(f), f.competition_id or 0))
+    refs = fixture_refs(chosen)
+    today = dataset.info.game_date
+    items = tuple(_schedule_item(dataset, f, ref, ids, today) for f, ref in zip(chosen, refs)
+                  if competition_id is None or f.competition_id == competition_id)
+    counts: dict[int | None, list[int]] = {}
+    for item in items:
+        counts.setdefault(item.competition_id, [0, 0])
+        counts[item.competition_id][1] += 1
+        counts[item.competition_id][0] += item.played
+    return Schedule(followed, season, season_label(season, chosen) if chosen else "No season", today, items,
+                    tuple(ScheduleCompetition(cid, played, total) for cid, (played, total) in counts.items()))
+
+
 # --------------------------------------------------------------------------- helpers
 
 

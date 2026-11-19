@@ -395,5 +395,137 @@ class VenueTests(unittest.TestCase):
         self.assertFalse(any("ttendance" in line for line in lines + unknown.lines()))
 
 
+HULL = fd.FollowedClub(1)
+NO_REPORT = dict.fromkeys(("shots", "shots_on_target", "possession_percent", "passes_attempted", "passes_completed",
+                           "corners", "fouls_made", "yellow_cards", "red_cards"))
+
+
+def stat_row(team_id, is_home, xg):
+    """One side's match report for Hull's 8 August home match, holding only expected goals."""
+    return NS(competition_id=101, home_team_id=team(1), away_team_id=team(2), date=D(2026, 8, 8), team_id=team_id,
+              is_home=is_home, expected_goals=xg, non_penalty_expected_goals=xg, **NO_REPORT)
+
+
+def hull_ds(extra=(), **kwargs):
+    fixtures = [
+        fx(D(2026, 8, 8), 1, 2, 2, 1, md=1),                          # home win
+        fx(D(2026, 8, 15), 3, 1, 3, 1, md=2),                         # away defeat
+        fx(D(2026, 8, 20), 1, 4, 1, 1, comp=102, md=1),               # a cup draw
+        fx(D(2026, 8, 22), 2, 3, 0, 0, md=3),                         # not Hull's
+        fx(D(2026, 8, 29), 1, 3, md=4),                               # unplayed, before the save's date
+        fx(D(2026, 9, 1), 4, 1, md=5),                                # unplayed, on the save's date
+        fx(D(2026, 9, 12), 1, 2, md=6),                               # unplayed, to come
+        fx(None, 1, 4, comp=102, md=2),                               # unplayed, no date
+    ]
+    return dataset(fixtures + list(extra), **kwargs)
+
+
+class ScheduleTests(unittest.TestCase):
+    def setUp(self):
+        self.ds = hull_ds()
+        self.schedule = fd.club_schedule(self.ds, HULL)
+
+    def test_it_holds_the_clubs_matches_in_every_competition_in_date_order_with_undated_last(self):
+        self.assertEqual([(i.fixture.competition_id, i.fixture.date) for i in self.schedule.items],
+                         [(101, D(2026, 8, 8)), (101, D(2026, 8, 15)), (102, D(2026, 8, 20)), (101, D(2026, 8, 29)),
+                          (101, D(2026, 9, 1)), (101, D(2026, 9, 12)), (102, None)])
+
+    def test_it_leaves_out_other_clubs_matches(self):
+        self.assertEqual(len(self.schedule.items), 7)
+
+    def test_each_item_carries_a_reference_that_finds_its_fixture(self):
+        for item in self.schedule.items:
+            self.assertIs(fd.resolve_fixture(self.ds, item.ref), item.fixture)
+
+    def test_the_result_is_read_from_the_clubs_side(self):
+        home_win, away_loss, cup_draw = self.schedule.items[:3]
+        self.assertEqual((home_win.outcome, home_win.score, home_win.venue), ("W", "2-1", "H"))
+        self.assertEqual((away_loss.outcome, away_loss.score, away_loss.venue), ("L", "1-3", "A"))
+        self.assertEqual((cup_draw.outcome, cup_draw.score), ("D", "1-1"))
+        self.assertEqual(away_loss.opponent, "Sheffield United")
+
+    def test_an_unplayed_match_has_no_result(self):
+        upcoming = self.schedule.items[5]
+        self.assertEqual((upcoming.outcome, upcoming.score), (None, ""))
+
+    def test_a_played_match_with_no_recoverable_score_is_a_question_mark_and_na(self):
+        ds = hull_ds([dataclasses.replace(fx(D(2026, 8, 25), 1, 4, md=7), played=True)])
+        item = next(i for i in fd.club_schedule(ds, HULL).items if i.fixture.date == D(2026, 8, 25))
+        self.assertEqual((item.outcome, item.score), ("?", "n/a"))
+
+    def test_a_neutral_ground_is_n_and_an_unknown_one_stays_unknown(self):
+        ds = hull_ds([dataclasses.replace(fx(D(2026, 8, 24), 1, 4, 0, 0, md=7), is_neutral_venue=True),
+                      dataclasses.replace(fx(D(2026, 8, 25), 1, 4, 0, 0, md=8), is_neutral_venue=None)])
+        items = {i.fixture.date: i for i in fd.club_schedule(ds, HULL).items}
+        self.assertEqual((items[D(2026, 8, 24)].venue, items[D(2026, 8, 24)].neutral), ("N", True))
+        self.assertEqual((items[D(2026, 8, 25)].venue, items[D(2026, 8, 25)].neutral), ("H", None))
+
+    def test_each_match_is_placed_against_the_saves_own_date(self):
+        states = [(i.when, i.days) for i in self.schedule.items]
+        self.assertEqual(states, [(fd.WHEN_PLAYED, None)] * 3 + [(fd.WHEN_OVERDUE, -3), (fd.WHEN_TODAY, 0),
+                                                                  (fd.WHEN_UPCOMING, 11), (fd.WHEN_UNDATED, None)])
+
+    def test_the_countdown_wording_names_each_state(self):
+        text = [fd.countdown_text(i.when, i.days) for i in self.schedule.items[3:]]
+        self.assertEqual(text, ["Overdue by 3 days: not played in the save (postponed or not yet rearranged)",
+                                "Today", "In 11 days", "Date not set"])
+        self.assertEqual(fd.countdown_text(fd.WHEN_UPCOMING, 1), "Tomorrow")
+        self.assertEqual(fd.countdown_text(fd.WHEN_OVERDUE, -1), "Overdue by 1 day: not played in the save "
+                                                                 "(postponed or not yet rearranged)")
+
+    def test_a_save_with_no_date_cannot_place_an_unplayed_match(self):
+        schedule = fd.club_schedule(hull_ds(game_date=None), HULL)
+        self.assertEqual({i.when for i in schedule.items[3:]}, {fd.WHEN_UNKNOWN, fd.WHEN_UNDATED})
+        self.assertEqual({i.days for i in schedule.items}, {None})
+        self.assertEqual(fd.countdown_text(fd.WHEN_UNKNOWN, None), "The save's date is unknown")
+
+    def test_the_first_upcoming_match_is_todays_or_the_next_one_to_come(self):
+        self.assertEqual(self.schedule.first_upcoming, 4)
+
+    def test_with_nothing_to_come_there_is_no_first_upcoming(self):
+        finished = fd.club_schedule(dataset([fx(D(2026, 8, 8), 1, 2, 2, 1, md=1)]), HULL)
+        self.assertIsNone(finished.first_upcoming)
+
+    def test_the_default_season_is_the_latest_one_played_and_another_can_be_asked_for(self):
+        ds = hull_ds([fx(D(2027, 8, 7), 1, 2, season=2027, md=1)])
+        self.assertEqual(fd.club_schedule(ds, HULL).season, 2026)
+        later = fd.club_schedule(ds, HULL, 2027)
+        self.assertEqual((later.season, len(later.items)), (2027, 1))
+
+    def test_it_lists_the_competitions_with_how_many_of_their_matches_are_played(self):
+        self.assertEqual([(c.competition_id, c.played, c.total) for c in self.schedule.competitions],
+                         [(101, 2, 5), (102, 1, 2)])
+
+    def test_the_reserve_scope_holds_only_the_reserve_teams_matches(self):
+        ds = hull_ds([fx(D(2026, 8, 20), 1, 2, 0, 0, comp=103, home_slot=1, md=1)])
+        schedule = fd.club_schedule(ds, fd.FollowedClub(1, fd.SCOPE_RESERVE))
+        self.assertEqual([i.fixture.competition_id for i in schedule.items], [103])
+
+    def test_a_club_with_no_matches_has_an_empty_schedule(self):
+        empty = fd.club_schedule(self.ds, fd.FollowedClub(77))
+        self.assertEqual((empty.items, empty.season, empty.first_upcoming), ((), None, None))
+
+    def test_the_coverage_sentence_counts_each_kind_of_match(self):
+        self.assertEqual(self.schedule.describe(),
+                         "7 matches · 3 played · 4 to play (1 overdue, 1 undated)")
+
+    def test_expected_goals_are_pending_known_or_unavailable(self):
+        pending = fd.club_schedule(self.ds, HULL).items[0]
+        self.assertEqual((pending.xg, pending.xg_state), (None, fd.STATE_PENDING))
+        stats = [stat_row(team(1), True, 1.5), stat_row(team(2), False, 0.5)]
+        done = fd.with_expected_goals(self.ds, stats)
+        items = fd.club_schedule(done, HULL).items
+        self.assertEqual((items[0].xg.home, items[0].xg_state), (1.5, fd.STATE_KNOWN))
+        self.assertEqual(items[1].xg_state, fd.STATE_UNAVAILABLE)       # played, no report
+        self.assertEqual(items[5].xg_state, "")                         # not played: nothing to report
+
+
+class CompetitionScheduleTests(unittest.TestCase):
+    def test_a_competition_can_be_asked_for_alone(self):
+        ds = hull_ds()
+        only = fd.club_schedule(ds, HULL, competition_id=102)
+        self.assertEqual([i.fixture.competition_id for i in only.items], [102, 102])
+
+
 if __name__ == "__main__":
     unittest.main()
