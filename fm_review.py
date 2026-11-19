@@ -93,7 +93,8 @@ SETTINGS_PATH = APP_DIR / "box2box_settings.json"
 LEGACY_SETTINGS_PATH = APP_DIR / "fm_review_settings.json"
 ERROR_LOG = APP_DIR / "box2box_errors.log"
 ARCHIVE_PATH = APP_DIR / "box2box_archive.sqlite"
-BOOKMARKS = "yearbook_bookmarks"          # the settings key for the reading window's bookmarks        # every opened save is banked here (archive.py)
+BOOKMARKS = "yearbook_bookmarks"          # the settings key for the reading window's bookmarks
+READER_MODE = "yearbook_reader_mode"      # single pages or reader spreads        # every opened save is banked here (archive.py)
 LICENCE_PATH = BUNDLE_DIR / "LICENSE"
 ICON_PATH = BUNDLE_DIR / "icon" / "football-64-sky-blue.ico"
 APP_ID = "hawkers63.Box2Box"         # the taskbar's name for Box2Box, so it shows its own icon
@@ -1949,8 +1950,12 @@ class FMReviewApp(_Root):
             reader.bring_forward()
             return
         self.yearbook_reader = YearbookReader(self, volume, lambda v: self.save_reader_volume(v), self._bookmark_page,
-                                              start)
+                                              start, self.settings.get(READER_MODE), self._remember_reader_mode)
         apply_window_icon(self.yearbook_reader)
+
+    def _remember_reader_mode(self, mode: str) -> None:
+        self.settings[READER_MODE] = mode
+        self._write_settings()
 
     def _bookmark_page(self, volume: yearbook_read.Volume, page_key: str) -> None:
         self.settings[BOOKMARKS] = yearbook_read.with_bookmark(self.settings.get(BOOKMARKS), volume.archive_id,

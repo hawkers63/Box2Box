@@ -29,6 +29,7 @@ import inspector
 import yearbook
 import yearbook_editions
 import yearbook_read
+import yearbook_reader_ui
 import palette
 import test_fm_data
 from test_fm_data import LEAGUE, D, club, fx, info, match_stats, row, team, unresolved_away
@@ -2283,6 +2284,112 @@ class WindowTests(unittest.TestCase):
             reader, _ = self.open_reader()
             self.assertEqual(reader.index, 0, value)
             reader.destroy()
+
+    # ----------------------------------------------------------------- v2.8: reader spreads, strip and styling
+
+    def wide_volume(self, cups=0, name="FA Cup"):
+        """The sample book with a fourth page (an odd last page in a spread), or `cups` extra competitions."""
+        built = self.sample_book()
+        extra = [yearbook.LeaguePage("Premier League", 2, "Matchweek 2 · Sat 15 Aug", (), built.pages[2].table,
+                                     D(2026, 8, 15))]
+        extra += [yearbook.CupBlock(f"{name} {n}", "Final", "", "Sat 1 May", (yearbook.BookMatch("", "A", "B", "1-0"),),
+                                    D(2027, 5, 1), competition_key=n) for n in range(cups)]
+        built = yearbook.Yearbook(built.season_label, built.coverage, (*built.pages, *extra))
+        return yearbook_read.volume(built, 2026, "test-archive", built.coverage)
+
+    def open_wide(self, volume=None, width=1500):
+        reader, pages = self.open_reader(volume or self.wide_volume())
+        reader.geometry(f"{width}x800")
+        self.wait_until(lambda: abs(reader.winfo_width() - width) < 40)
+        return reader, pages
+
+    def test_a_reader_spread_shows_two_pages_side_by_side_with_the_title_and_an_odd_last_page_alone(self):
+        reader, pages = self.open_wide()
+        reader.set_mode("spread")
+        self.app.update()
+        self.assertEqual(reader.shown, (0,))
+        self.assertFalse(reader.panes[1].winfo_ismapped())
+        reader.next()
+        self.app.update()
+        self.assertEqual(reader.shown, (1, 2))
+        self.assertEqual([p.heading_label.cget("text") for p in reader.panes], [pages[1].heading, pages[2].heading])
+        self.assertTrue(reader.panes[1].winfo_ismapped())
+        self.assertEqual(reader.page_label.cget("text"), "Pages 2–3 of 4 · reader spread")
+        reader.next()
+        self.app.update()
+        self.assertEqual(reader.shown, (3,))
+        self.assertFalse(reader.panes[1].winfo_ismapped())
+        self.assertEqual(reader.next_button.cget("state"), "disabled")
+        reader.previous()
+        self.assertEqual(reader.shown, (1, 2))
+
+    def test_a_window_too_narrow_for_a_spread_shows_single_pages_and_says_so(self):
+        reader, _ = self.open_wide(width=1000)
+        reader.set_mode("spread")
+        reader.show(1)
+        self.app.update()
+        self.assertEqual(reader.shown, (1,))
+        self.assertIn("widen the window for a reader spread", reader.page_label.cget("text"))
+
+    def test_narrowing_the_window_falls_back_to_single_pages_and_widening_it_restores_the_spread(self):
+        reader, _ = self.open_wide()
+        reader.set_mode("spread")
+        reader.show(1)
+        self.app.update()
+        self.assertEqual(reader.shown, (1, 2))
+        reader.geometry("1000x800")
+        self.assertTrue(self.wait_until(lambda: reader.shown == (1,), 3))
+        reader.geometry("1500x800")
+        self.assertTrue(self.wait_until(lambda: reader.shown == (1, 2), 3))
+
+    def test_the_reader_mode_is_remembered_for_the_next_reader(self):
+        reader, _ = self.open_wide()
+        reader.set_mode("spread")
+        self.assertEqual(self.app.settings["yearbook_reader_mode"], "spread")
+        reader.destroy()
+        reader, _ = self.open_reader()
+        self.assertEqual(reader.mode, "spread")
+        self.app.settings["yearbook_reader_mode"] = ["junk"]
+        reader.destroy()
+        reader, _ = self.open_reader()
+        self.assertEqual(reader.mode, "single")
+
+    def test_home_and_end_go_to_the_first_and_last_page(self):
+        reader, pages = self.open_wide()
+        reader.focus_force()
+        reader.event_generate("<End>")
+        self.app.update()
+        self.assertEqual(reader.index, len(pages) - 1)
+        reader.event_generate("<Home>")
+        self.app.update()
+        self.assertEqual(reader.index, 0)
+
+    def strip_texts(self, reader):
+        return [tile.cget("text") for tile in reader.strip_tiles if tile.winfo_manager()]
+
+    def test_the_chapter_strip_draws_only_a_bounded_window_of_chapters_and_jumps_to_one(self):
+        volume = self.wide_volume(cups=20, name="The Extraordinarily Long Regional Cup")
+        reader, pages = self.open_wide(volume)
+        texts = self.strip_texts(reader)
+        self.assertLessEqual(len(texts), yearbook_read.STRIP_SPAN + 2)
+        self.assertEqual(len(reader.strip_tiles), yearbook_read.STRIP_SPAN + 2)       # never more tiles than that
+        self.assertTrue(texts[-1].endswith("more ›"))
+        self.assertTrue(all(len(t) <= yearbook_read.STRIP_CHARS for t in texts if "more" not in t))
+        chapter = next(t for t in reader.strip_tiles if t.cget("text").startswith("FA Cup"))
+        chapter.event_generate("<Button-1>")
+        self.app.update()
+        self.assertEqual(reader.index, dict(volume.contents)["FA Cup"])
+        reader.show(len(pages) - 1)
+        self.assertTrue(self.strip_texts(reader)[0].startswith("‹ "))
+
+    def test_headings_are_set_in_a_serif_and_tables_keep_their_plain_font_and_colours(self):
+        reader, _ = self.open_wide()
+        heading = reader.panes[0].heading_label.cget("font")
+        self.assertIn(heading.cget("family"), yearbook_reader_ui.SERIF_FAMILIES)
+        reader.show(2)
+        self.app.update()
+        self.assertEqual(reader.sheet.ops.table_font[0], "Segoe UI")
+        self.assertEqual(reader.sheet.ops.table_fg, self.app.theme.table[1])
 
     def moved_on(self):
         """The archive after a later save of the same playthrough: the 2026 volume now runs to 21 Sep."""
