@@ -141,6 +141,12 @@ class Volume:
         d = self.coverage.last_date
         return f"{d.day} {d:%b %Y}" if d else "date unknown"
 
+    def matches(self, coverage: arch.BookCoverage) -> bool:
+        """Whether the archive's coverage now is the one this book was built from: the same saves over the same
+        span. Whether the season is still in progress is the book's own judgement, so it is not compared."""
+        a, b = self.coverage, coverage
+        return (a.saves, a.first_date, a.last_date, a.gaps) == (b.saves, b.first_date, b.last_date, b.gaps)
+
 
 def volume(book: yb.Yearbook, season: int, archive_id: str, coverage: arch.BookCoverage) -> Volume:
     pages, contents = read_pages(book)

@@ -170,6 +170,12 @@ class VolumeTests(unittest.TestCase):
                          ("unknown", "date unknown"))
 
 
+    def test_a_volume_matches_the_same_coverage_whatever_the_book_says_about_progress(self):
+        volume = yr.volume(book(), 2026, "a", COVER)
+        self.assertTrue(volume.matches(archive.BookCoverage(1, D(2026, 8, 9), D(2026, 8, 9), (), False)))
+        self.assertFalse(volume.matches(archive.BookCoverage(2, D(2026, 8, 9), D(2026, 9, 21), (), True)))
+
+
 class SpreadTests(unittest.TestCase):
     def test_the_title_page_stands_alone_and_the_rest_pair_up(self):
         self.assertEqual(yr.spreads(0), [])

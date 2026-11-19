@@ -92,7 +92,8 @@ NAMES_PATH = APP_DIR / "competition_names.csv"
 SETTINGS_PATH = APP_DIR / "box2box_settings.json"
 LEGACY_SETTINGS_PATH = APP_DIR / "fm_review_settings.json"
 ERROR_LOG = APP_DIR / "box2box_errors.log"
-ARCHIVE_PATH = APP_DIR / "box2box_archive.sqlite"        # every opened save is banked here (archive.py)
+ARCHIVE_PATH = APP_DIR / "box2box_archive.sqlite"
+BOOKMARKS = "yearbook_bookmarks"          # the settings key for the reading window's bookmarks        # every opened save is banked here (archive.py)
 LICENCE_PATH = BUNDLE_DIR / "LICENSE"
 ICON_PATH = BUNDLE_DIR / "icon" / "football-64-sky-blue.ico"
 APP_ID = "hawkers63.Box2Box"         # the taskbar's name for Box2Box, so it shows its own icon
@@ -1182,7 +1183,18 @@ class FMReviewApp(_Root):
             self._exporting = False
             self.export_button.configure(state="normal" if self.dataset else "disabled", text=EXPORT_LABEL)
             self.detail_label.configure(text="")
-            self.show_yearbook_reader(*payload)
+            self.show_yearbook_reader(payload)
+            return
+        if kind == "yearbook_moved_on":
+            self._exporting = False
+            self.export_button.configure(state="normal" if self.dataset else "disabled", text=EXPORT_LABEL)
+            self.detail_label.configure(text="")
+            self._choose_edition(*payload)
+            return
+        if kind == "yearbook_refreshed":
+            volume, plan = payload
+            self.show_yearbook_reader(volume)
+            self._finish_export("exported", ("yearbook", plan))
             return
         if kind == "banked":
             self.detail_label.configure(text=payload.describe())
@@ -1901,25 +1913,115 @@ class FMReviewApp(_Root):
         threading.Thread(target=self._read_worker, args=(season, dict(self.names), self._marked_club_uid()),
                          daemon=True).start()
 
-    def _read_worker(self, season: int, names: dict[int, str], marked: int | None) -> None:
+    @staticmethod
+    def _build_volume(book: archive.Archive, season: int, names: dict[int, str],
+                      marked: int | None) -> yearbook_read.Volume:
+        built = yearbook.build_yearbook(book, season, names, marked)
+        return yearbook_read.volume(built, season, book.identity(), built.coverage)
+
+    def _yearbook_job(self, job: Callable[[], None]) -> None:
+        """Run a Yearbook job on this worker thread, reporting failures as the exports do."""
         try:
-            with archive.Archive.open(ARCHIVE_PATH) as book:
-                built = yearbook.build_yearbook(book, season, names, marked)
-            pages, contents = yearbook_read.read_pages(built)
-            self.events.put(("yearbook_ready", (pages, contents, built.season_label, lambda: self.export_yearbook(season))))
+            job()
         except archive.ArchiveError as exc:
             self.events.put(("export_failed", str(exc)))
         except Exception as exc:
             self._log_error(traceback.format_exc())
             self.events.put(("export_failed", f"Unexpected error while building the Yearbook:\n{type(exc).__name__}: {exc}"))
 
-    def show_yearbook_reader(self, pages, contents, season_label: str, on_save: Callable[[], object]) -> None:
-        """Open the reading window, or bring the open one forward."""
-        if self.yearbook_reader is not None and self.yearbook_reader.winfo_exists():
-            self.yearbook_reader.bring_forward()
+    def _read_worker(self, season: int, names: dict[int, str], marked: int | None) -> None:
+        def job() -> None:
+            with archive.Archive.open(ARCHIVE_PATH) as book:
+                volume = self._build_volume(book, season, names, marked)
+            self.events.put(("yearbook_ready", volume))
+        self._yearbook_job(job)
+
+    def show_yearbook_reader(self, volume: yearbook_read.Volume) -> None:
+        """Show a volume in the reading window at its bookmarked page: in the open window when there is one (the
+        volume shown before is bookmarked first), else in a new one."""
+        reader = self.yearbook_reader if self.yearbook_reader is not None and self.yearbook_reader.winfo_exists() else None
+        if reader is not None:
+            reader.leave()
+        bookmark = yearbook_read.read_bookmark(self.settings.get(BOOKMARKS), volume.archive_id, volume.season)
+        start = yearbook_read.page_index(volume.pages, bookmark) or 0
+        if reader is not None:
+            reader.load(volume, start)
+            reader.bring_forward()
             return
-        self.yearbook_reader = YearbookReader(self, pages, contents, season_label, on_save)
+        self.yearbook_reader = YearbookReader(self, volume, lambda v: self.save_reader_volume(v), self._bookmark_page,
+                                              start)
         apply_window_icon(self.yearbook_reader)
+
+    def _bookmark_page(self, volume: yearbook_read.Volume, page_key: str) -> None:
+        self.settings[BOOKMARKS] = yearbook_read.with_bookmark(self.settings.get(BOOKMARKS), volume.archive_id,
+                                                               volume.season, volume.edition, page_key)
+        self._write_settings()
+
+    def _start_yearbook_job(self, text: str, target: Callable, *args) -> bool:
+        if self._exporting:
+            return False
+        self._exporting = True
+        self.export_button.configure(state="disabled", text="Exporting…")
+        self.detail_label.configure(text=text)
+        threading.Thread(target=target, args=args, daemon=True).start()
+        return True
+
+    def save_reader_volume(self, volume: yearbook_read.Volume) -> None:
+        """Save the book in the reading window. When the archive still holds the snapshot it was built from, that
+        book is saved as it stands; when a newer save has been banked since, both editions are named and the user
+        chooses (handled in "yearbook_moved_on")."""
+        self._start_yearbook_job("Checking the archive…", self._snapshot_worker, volume, export_folder())
+
+    def _snapshot_worker(self, volume: yearbook_read.Volume, folder: Path) -> None:
+        def job() -> None:
+            current = None
+            if ARCHIVE_PATH.exists():
+                with archive.Archive.open(ARCHIVE_PATH) as book:
+                    if book.identity() == volume.archive_id:
+                        current = book.coverage(volume.season)
+            if current is not None and volume.matches(current):
+                self.events.put(("exported", ("yearbook", yearbook_editions.save_built(volume.book, folder))))
+            else:
+                self.events.put(("yearbook_moved_on", (volume, current)))
+        self._yearbook_job(job)
+
+    def _save_snapshot_worker(self, volume: yearbook_read.Volume, folder: Path) -> None:
+        self._yearbook_job(lambda: self.events.put(
+            ("exported", ("yearbook", yearbook_editions.save_built(volume.book, folder)))))
+
+    def _refresh_worker(self, season: int, names: dict[int, str], marked: int | None, folder: Path) -> None:
+        def job() -> None:
+            with archive.Archive.open(ARCHIVE_PATH) as book:
+                volume = self._build_volume(book, season, names, marked)
+            self.events.put(("yearbook_refreshed", (volume, yearbook_editions.save_built(volume.book, folder))))
+        self._yearbook_job(job)
+
+    def _choose_edition(self, volume: yearbook_read.Volume, current: archive.BookCoverage | None) -> None:
+        """The archive has moved on since the book being read was built: name both editions and save the one chosen."""
+        parent = self.yearbook_reader if self.yearbook_reader is not None and self.yearbook_reader.winfo_exists() else self
+        reading = volume.edition_label
+        if current is not None and current.last_date is not None:
+            newer = yearbook_editions.date_text(current.last_date)
+            answer = messagebox.askyesnocancel(
+                "A newer save has been banked",
+                f"The book you are reading is the {reading} edition. Since it was built, the archive has banked a "
+                f"newer save, and the {volume.season_label} Yearbook would now be the {newer} edition.\n\n"
+                f"Yes: refresh the reader to the {newer} edition and save that.\n"
+                f"No: save the {reading} edition you are reading.\n"
+                f"Cancel: save nothing.", parent=parent)
+        else:
+            answer = False if messagebox.askyesno(
+                "The archive has changed",
+                f"The archive no longer holds the saves this book was built from.\n\n"
+                f"Save the {reading} edition you are reading?", parent=parent) else None
+        if answer is None:
+            return
+        if answer:
+            self._start_yearbook_job("Building the newer edition…", self._refresh_worker, volume.season,
+                                     dict(self.names), self._marked_club_uid(), export_folder())
+        else:
+            self._start_yearbook_job("Saving the edition you are reading…", self._save_snapshot_worker, volume,
+                                     export_folder())
 
     def open_export_folder(self) -> None:
         folder = export_folder()

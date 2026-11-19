@@ -2142,12 +2142,20 @@ class WindowTests(unittest.TestCase):
         cup = yearbook.CupBlock("FA Cup", "Round 1", "", "Sat 1 Aug", (yearbook.BookMatch("", "A", "B", "1-0"),), D(2026, 8, 1))
         return yearbook.Yearbook("2026/27", cover, (title, cup, week))
 
-    def open_reader(self, on_save=None):
-        pages, contents = yearbook_read.read_pages(self.sample_book())
-        self.app.show_yearbook_reader(pages, contents, "2026/27", on_save or (lambda: None))
+    def sample_volume(self, season=2026):
+        built = self.sample_book()
+        if season != 2026:
+            label = f"{season}/{(season + 1) % 100:02d}"
+            title = yearbook.TitlePage(label, ("Built from 2 banked saves.",))
+            built = yearbook.Yearbook(label, built.coverage, (title, *built.pages[1:]))
+        return yearbook_read.volume(built, season, "test-archive", built.coverage)
+
+    def open_reader(self, volume=None):
+        volume = volume or self.sample_volume()
+        self.app.show_yearbook_reader(volume)
         reader = self.app.yearbook_reader
         self.app.update()
-        return reader, pages
+        return reader, list(volume.pages)
 
     def test_the_reader_opens_on_the_title_page_and_steps_through_the_book_without_going_past_either_end(self):
         reader, pages = self.open_reader()
@@ -2194,14 +2202,15 @@ class WindowTests(unittest.TestCase):
         reader.show(2)
         self.assertEqual(reader.marked_rows, (1,))
 
-    def test_save_this_edition_calls_the_same_worker_and_closing_writes_nothing(self):
-        saved = []
-        reader, _ = self.open_reader(on_save=lambda: saved.append(True))
-        reader.close_button.invoke()
-        self.assertEqual(saved, [])
-        reader, _ = self.open_reader(on_save=lambda: saved.append(True))
-        reader.save_button.invoke()
-        self.assertEqual(saved, [True])
+    def test_save_this_edition_saves_the_volume_being_read_and_closing_writes_nothing(self):
+        with mock.patch.object(self.app, "save_reader_volume") as save:
+            reader, _ = self.open_reader()
+            reader.close_button.invoke()
+            save.assert_not_called()
+            volume = self.sample_volume()
+            reader, _ = self.open_reader(volume)
+            reader.save_button.invoke()
+        save.assert_called_once_with(volume)
 
     def test_the_arrow_keys_and_escape_work_in_the_reader(self):
         reader, _ = self.open_reader()
@@ -2223,10 +2232,121 @@ class WindowTests(unittest.TestCase):
         self.app.set_theme(other.name)
         self.assertEqual(reader.cget("fg_color"), other.window)
 
-    def test_a_second_request_brings_the_open_reader_forward_instead_of_opening_another(self):
-        reader, pages = self.open_reader()
-        self.app.show_yearbook_reader(pages, [("Title page", 0)], "2026/27", lambda: None)
+    def test_a_second_request_loads_the_requested_volume_into_the_same_window(self):
+        reader, _ = self.open_reader()
+        reader.show(2)
+        other = self.sample_volume(2025)
+        self.app.show_yearbook_reader(other)
+        self.app.update()
         self.assertIs(self.app.yearbook_reader, reader)
+        self.assertIs(reader.volume, other)
+        self.assertEqual(reader.title(), "Read the Yearbook 2025/26")
+        self.assertEqual(reader.heading_label.cget("text"), "Football Yearbook 2025/26")
+        self.assertEqual(list(reader.contents_list.get(0, "end")), [label for label, _ in other.contents])
+
+    def test_reading_another_season_while_the_reader_is_open_shows_that_season(self):
+        app = self.app
+        self.bank_into_archive()
+        app.names = {12: "Championship"}
+        app.read_yearbook(2026)
+        self.assertTrue(self.wait_until(lambda: app.yearbook_reader is not None and not app._exporting, 15))
+        reader = app.yearbook_reader
+        app.read_yearbook(2027)
+        self.assertTrue(self.wait_until(lambda: reader.volume.season == 2027 and not app._exporting, 15))
+        self.assertIs(app.yearbook_reader, reader)
+        self.assertEqual(reader.heading_label.cget("text"), "Football Yearbook 2027")
+
+    # ----------------------------------------------------------------- v2.8: bookmarks and the edition snapshot
+
+    def test_closing_the_reader_bookmarks_its_page_and_reopening_the_volume_returns_to_it(self):
+        reader, pages = self.open_reader()
+        reader.show(2)
+        reader.close_button.invoke()
+        self.app.update()
+        saved = json.loads(fm_review.SETTINGS_PATH.read_text(encoding="utf-8"))["yearbook_bookmarks"]
+        self.assertEqual(saved, {"test-archive|2026": {"edition": "2026-08-09", "page_key": pages[2].page_key}})
+        reader, _ = self.open_reader()
+        self.assertEqual(reader.index, 2)
+
+    def test_each_volume_keeps_its_own_bookmark_when_the_open_reader_changes_volume(self):
+        reader, pages = self.open_reader()
+        reader.show(2)
+        self.app.show_yearbook_reader(self.sample_volume(2025))
+        self.assertEqual(reader.index, 0)
+        reader.show(1)
+        self.app.show_yearbook_reader(self.sample_volume())
+        self.assertEqual(reader.index, 2)
+
+    def test_a_bookmark_in_a_shape_this_program_never_writes_opens_the_title_page(self):
+        for value in ("junk", {"test-archive|2026": {"page_key": 7}}, {"test-archive|2026": {"page_key": "league/99/1"}}):
+            self.app.settings["yearbook_bookmarks"] = value
+            reader, _ = self.open_reader()
+            self.assertEqual(reader.index, 0, value)
+            reader.destroy()
+
+    def moved_on(self):
+        """The archive after a later save of the same playthrough: the 2026 volume now runs to 21 Sep."""
+        later = dataset(extra=[fx(D(2026, 10, 3), 3, 4, md=9)])
+        return dataclasses.replace(later, info=dataclasses.replace(later.info, game_date=D(2026, 9, 21), file_name="y.fm"))
+
+    def open_banked_reader(self):
+        app = self.app
+        self.bank_into_archive()
+        app.names = {12: "Championship"}
+        app.read_yearbook(2026)
+        self.assertTrue(self.wait_until(lambda: app.yearbook_reader is not None and not app._exporting, 15))
+        return app.yearbook_reader
+
+    def save_and_wait(self, volume, answer=None):
+        out = Path(self.folder.name) / "exports"
+
+        def fake_render(book, path):
+            Path(path).write_bytes(b"%PDF-")
+
+        with mock.patch.object(fm_review, "export_folder", return_value=out), \
+                mock.patch.object(fm_review.yearbook_pdf, "render", side_effect=fake_render) as render, \
+                mock.patch.object(fm_review.messagebox, "askyesno", return_value=False), \
+                mock.patch.object(fm_review.messagebox, "askyesnocancel", return_value=answer) as ask:
+            self.app.save_reader_volume(volume)
+            self.assertTrue(self.wait_until(lambda: not self.app._exporting, 15))
+        return render, ask
+
+    def test_saving_from_the_reader_saves_exactly_the_book_being_read(self):
+        reader = self.open_banked_reader()
+        render, ask = self.save_and_wait(reader.volume)
+        ask.assert_not_called()
+        self.assertIs(render.call_args[0][0], reader.volume.book)
+        self.assertEqual(render.call_args[0][1].name, "Yearbook 2026 (in-game 1 Sep 2026).pdf")
+
+    def test_when_a_newer_save_was_banked_the_reader_names_both_editions_before_saving(self):
+        reader = self.open_banked_reader()
+        volume = reader.volume
+        self.bank_into_archive(self.moved_on())
+        render, ask = self.save_and_wait(volume, answer=None)              # Cancel
+        render.assert_not_called()
+        message = ask.call_args[0][1]
+        self.assertIn("1 Sep 2026", message)
+        self.assertIn("21 Sep 2026", message)
+        self.assertIs(reader.volume, volume)
+
+    def test_choosing_the_edition_being_read_saves_that_snapshot_under_its_own_date(self):
+        reader = self.open_banked_reader()
+        volume = reader.volume
+        self.bank_into_archive(self.moved_on())
+        render, _ = self.save_and_wait(volume, answer=False)               # No: keep the edition being read
+        self.assertIs(render.call_args[0][0], volume.book)
+        self.assertEqual(render.call_args[0][1].name, "Yearbook 2026 (in-game 1 Sep 2026).pdf")
+        self.assertIs(reader.volume, volume)
+
+    def test_choosing_to_refresh_loads_the_newer_edition_into_the_reader_then_saves_it(self):
+        reader = self.open_banked_reader()
+        volume = reader.volume
+        self.bank_into_archive(self.moved_on())
+        render, _ = self.save_and_wait(volume, answer=True)                # Yes: refresh to the newer edition
+        self.assertIsNot(reader.volume, volume)
+        self.assertEqual(reader.volume.edition, "2026-09-21")
+        self.assertIs(render.call_args[0][0], reader.volume.book)
+        self.assertEqual(render.call_args[0][1].name, "Yearbook 2026 (in-game 21 Sep 2026).pdf")
 
     def test_reading_builds_off_the_main_thread_then_opens_the_window_and_changes_nothing_on_disk(self):
         app = self.app

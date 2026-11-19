@@ -7,7 +7,7 @@ It only reads pages; building and saving happen on the main window's workers, ne
 from __future__ import annotations
 
 import tkinter as tk
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 
 import customtkinter as ctk
 from tksheet import Sheet
@@ -25,11 +25,16 @@ class YearbookReader(ctk.CTkToplevel):
 
     WIDTH, HEIGHT = 1140, 760
 
-    def __init__(self, master: ctk.CTk, pages: Sequence[yearbook_read.ReadPage], contents: Sequence[tuple[str, int]],
-                 season_label: str, on_save: Callable[[], object]) -> None:
+    def __init__(self, master: ctk.CTk, volume: yearbook_read.Volume,
+                 on_save: Callable[[yearbook_read.Volume], object],
+                 on_leave: Callable[[yearbook_read.Volume, str], object] = lambda volume, page_key: None,
+                 start: int = 0) -> None:
         super().__init__(master)
-        self.title(f"Read the Yearbook {season_label}")
-        self.pages, self.contents, self.on_save = list(pages), list(contents), on_save
+        self.on_save, self.on_leave = on_save, on_leave
+        self._left = False
+        self.volume = volume
+        self.pages: list[yearbook_read.ReadPage] = []
+        self.contents: list[tuple[str, int]] = []
         self.index = 0
         self.marked_rows: tuple[int, ...] = ()
         self.geometry(f"{self.WIDTH}x{self.HEIGHT}")
@@ -40,8 +45,6 @@ class YearbookReader(ctk.CTkToplevel):
         self.contents_list = tk.Listbox(self, width=30, exportselection=False, activestyle="none", borderwidth=0,
                                         highlightthickness=0, font=(FONT, 11))
         self.contents_list.grid(row=0, column=0, sticky="ns", padx=(14, 6), pady=(14, 6))
-        for label, _ in self.contents:
-            self.contents_list.insert("end", label)
         self.contents_list.bind("<<ListboxSelect>>", self._on_contents)
 
         self.body = ctk.CTkFrame(self, fg_color="transparent")
@@ -77,10 +80,31 @@ class YearbookReader(ctk.CTkToplevel):
         for key, step in (("<Right>", 1), ("<Left>", -1), ("<Next>", 1), ("<Prior>", -1)):
             self.bind(key, lambda _e, s=step: self.step(s))
         self.bind("<Escape>", lambda _e: self.destroy())
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
         self.apply_theme(master.theme)
-        self.show(0)
+        self.load(volume, start)
         self.transient(master)
         self.after(100, self.bring_forward)
+
+    def load(self, volume: yearbook_read.Volume, start: int = 0) -> None:
+        """Show a volume in this window, at page `start`. Call leave() first to bookmark the volume shown before."""
+        self.volume, self.pages, self.contents = volume, list(volume.pages), list(volume.contents)
+        self._left = False
+        self.title(f"Read the Yearbook {volume.season_label}")
+        self.contents_list.delete(0, "end")
+        for label, _ in self.contents:
+            self.contents_list.insert("end", label)
+        self.show(start)
+
+    def leave(self) -> None:
+        """Hand the page being read to on_leave, once, so the volume can reopen there."""
+        if not self._left and self.pages:
+            self._left = True
+            self.on_leave(self.volume, self.pages[self.index].page_key)
+
+    def destroy(self) -> None:
+        self.leave()
+        super().destroy()
 
     def apply_theme(self, theme: palette.Theme) -> None:
         self.configure(fg_color=theme.window)
@@ -159,7 +183,7 @@ class YearbookReader(ctk.CTkToplevel):
             self.show(self.contents[chosen[0]][1])
 
     def save(self) -> None:
-        self.on_save()
+        self.on_save(self.volume)
 
     def bring_forward(self) -> None:
         self.lift()
