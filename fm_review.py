@@ -1229,9 +1229,9 @@ class FMReviewApp(_Root):
         self.open_button.configure(state="normal")
         self.reopen_button.configure(state="normal")
         if kind == "schedule_ready":
-            serial, sched, snap, book = payload
+            serial, sched, snap, book, season = payload
             if serial == self._schedule_serial:
-                self.install_schedule_views(sched, snap, book)
+                self.install_schedule_views(sched, snap, book, season)
             return
         if kind == "xg":
             self.install_expected_goals(payload)
@@ -1584,13 +1584,14 @@ class FMReviewApp(_Root):
         ds = self.dataset
         if ds is None or club is None:
             return
-
+        self._manager_hub_view.clear(f"Building {club.name or 'the club'}'s overview…")   # never the old club's
         edits = self._club_colour_edits()
 
         def _worker():
             sched = fd.club_schedule(ds, club)
             snap = fd.manager_snapshot(ds, club)
-            self.events.put(("schedule_ready", (serial, sched, snap, self._roundel_book_for(sched, edits))))
+            season = fd.hub_season(ds, club)          # every step of the stepper, worked out once here
+            self.events.put(("schedule_ready", (serial, sched, snap, self._roundel_book_for(sched, edits), season)))
 
         import threading
         threading.Thread(target=_worker, daemon=True).start()
@@ -1634,12 +1635,14 @@ class FMReviewApp(_Root):
         threading.Thread(target=lambda: self.events.put(
             ("roundels_ready", (serial, self._roundel_book_for(sched, edits)))), daemon=True).start()
 
-    def install_schedule_views(self, sched: fd.Schedule, snap: fd.ManagerSnapshot, book: dict | None = None) -> None:
-        """Install schedule and snapshot data into the custom views (main thread only)."""
+    def install_schedule_views(self, sched: fd.Schedule, snap: fd.ManagerSnapshot, book: dict | None = None,
+                               season: fd.HubSeason | None = None) -> None:
+        """Install schedule and snapshot data into the custom views (main thread only). The Hub's stepper starts
+        again at the save's own date."""
         theme = self.view_theme
         self._roundel_book = book or {}
         self._schedule_view.install_schedule(sched, theme, self._club_roundels())
-        self._manager_hub_view.install_snapshot(snap, theme, self.names, self._club_roundels())
+        self._manager_hub_view.install_snapshot(snap, theme, self.names, self._club_roundels(), season)
         self._club_scope = f"{sched.club.name}: every competition, {sched.season_label} season · {sched.describe()}"
         if self.view in (SCHEDULE, MANAGER_HUB):
             self.render()

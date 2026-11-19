@@ -2776,6 +2776,83 @@ class ScheduleHubWiringTests(unittest.TestCase):
         self.assertEqual(canvas.itemcget(ring, "outline"), palette.HIGH_CONTRAST.table[1])
         self.assertEqual(app._manager_hub_view.club_badge.roundel.rim, palette.HIGH_CONTRAST.table[1])
 
+    # ----------------------------------------------------------------- v2.9: the Hub's matchday stepper
+
+    def open_hub(self, data=None):
+        app = self.app
+        self.follow_invented(data)
+        self.assertTrue(self.wait_for(lambda: app._manager_hub_view.season is not None), "the stepper never arrived")
+        app.set_view(fm_review.MANAGER_HUB)
+        app.update()
+        return app._manager_hub_view
+
+    def hub_values(self, hub):
+        return {row.label: row.value for row in hub._rows}
+
+    def test_the_stepper_opens_at_the_saves_date_and_names_the_matchday_and_its_snapshot_date(self):
+        hub = self.open_hub()
+        self.assertEqual(hub.index, 2)                                      # 20 Aug: before matchday 3
+        self.assertEqual(hub.step_label.cget("text"), "Matchday 3 · Before kick-off, Sat 22 Aug 15:00 (the save's date)")
+        self.assertTrue(hub.stepper.winfo_ismapped())
+
+    def test_previous_and_next_move_the_table_form_and_next_fixture_together(self):
+        hub = self.open_hub()
+        hub.previous_button.invoke()
+        self.app.update()
+        self.assertEqual(hub.index, 1)
+        values = self.hub_values(hub)
+        self.assertEqual(values["Position"], "1st of 4 · 3 pts from 1 played (calculated from the results)")
+        self.assertEqual(values["Form"], "W (all competitions)")
+        self.assertEqual(values["Next league match"], "Westford Town (away) · 15 Aug 2099")
+        self.assertIn("Northbridge Rovers", [r[1] for r in hub.excerpt_rows() if r[-1]])
+        self.assertEqual(hub.next_badge.roundel, palette.roundel(self.app.view_theme, None, "WT"))
+        hub.next_button.invoke()
+        self.assertEqual(hub.index, 2)
+        self.assertEqual(hub.next_button.cget("state"), "disabled")
+        hub.previous_button.invoke()
+        hub.previous_button.invoke()
+        self.assertEqual(hub.previous_button.cget("state"), "disabled")
+
+    def test_dragging_the_slider_settles_once_and_never_recalculates_the_season(self):
+        hub = self.open_hub()
+        shown = []
+        original = hub.show_step
+        with mock.patch.object(fd, "calculate_standings", side_effect=AssertionError("recalculated")), \
+                mock.patch.object(fd, "hub_season", side_effect=AssertionError("recalculated")), \
+                mock.patch.object(hub, "show_step", side_effect=lambda i: (shown.append(i), original(i))):
+            for value in (1.4, 0.2, 0.0, 0.6, 0.1):
+                hub.slider.set(value)
+                hub._on_slider(value)
+            self.assertEqual(shown, [])                                       # nothing until the drag pauses
+            self.assertTrue(self.wait_for(lambda: shown, 2))
+            self.wait_for(lambda: False, 0.4)
+        self.assertEqual(shown, [0])
+        self.assertEqual(hub.index, 0)
+
+    def test_today_returns_to_the_saves_own_date(self):
+        hub = self.open_hub()
+        hub.show_step(0)
+        hub.today_button.invoke()
+        self.assertEqual(hub.index, 2)
+
+    def test_with_no_save_date_today_is_unavailable_and_says_why(self):
+        hub = self.open_hub(self.invented_dataset([
+            lambda fx: fx(D(2099, 8, 8), 1, 2, 2, 1, md=1), lambda fx: fx(D(2099, 8, 15), 3, 1, md=2)], game_date=None))
+        self.assertEqual(hub.today_button.cget("state"), "disabled")
+        self.assertIn("The save's date is unknown", hub.step_label.cget("text"))
+
+    def test_following_another_club_or_opening_another_save_resets_the_stepper(self):
+        app = self.app
+        hub = self.open_hub()
+        hub.show_step(0)
+        app.set_focus(team(2))
+        self.assertIsNone(hub.season)                                        # emptied at once, not left on the old club
+        self.assertTrue(self.wait_for(lambda: hub.season is not None and hub.season.followed.club_uid == 2))
+        self.assertEqual(hub.index, hub.season.today)
+        app.install_dataset(self.invented_season())
+        self.assertIsNone(hub.season)
+        self.assertFalse(hub.stepper.winfo_ismapped())
+
     def _fg(self, button) -> str:
         c = button.cget("fg_color")
         return c if isinstance(c, str) else c[0]
