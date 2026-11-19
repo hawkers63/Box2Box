@@ -148,6 +148,11 @@ if _CTK_AVAILABLE:
             self._filter = ScheduleFilter()
             self._rebuild()
 
+        def clear(self) -> None:
+            self._schedule = None
+            self._filter = ScheduleFilter()
+            self._rebuild()
+
         def set_filter(self, f: ScheduleFilter) -> None:
             self._filter = f
             self._rebuild()

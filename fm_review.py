@@ -107,6 +107,8 @@ ANALYSIS = "Analysis"
 SCHEDULE = "Schedule"
 MANAGER_HUB = "Hub"
 VIEWS = ("Results", "Grid", "Table", ANALYSIS, SCHEDULE, MANAGER_HUB, HUB)
+SWITCH_VIEWS = tuple(v for v in VIEWS if v not in (SCHEDULE, MANAGER_HUB))   # club views have header buttons
+NO_CLUB_FOLLOWED = "No club followed: follow one from a right-click, the palette or Theme ▾ → Follow club…"
 ANALYSES = ("Form", "Positions", "xG", "Ties", "Bracket")
 POSITIONS_MODES = ("Matchday chart", "Season vs season")
 GROUPINGS = (fd.GROUP_BY_WEEK, fd.GROUP_BY_MATCHDAY, fd.GROUP_BY_DATE)
@@ -743,7 +745,8 @@ class FMReviewApp(_Root):
         self.focus: int | None = None
         self.view = VIEWS[0]
         self.last_comp_view = VIEWS[0]     # the view a competition opens in from the hub
-        self.view_labels = {view: view for view in VIEWS}     # each view's label on the switch, with its count
+        self.view_labels = {view: view for view in SWITCH_VIEWS}     # each view's label on the switch, with its count
+        self._club_scope = NO_CLUB_FOLLOWED                          # what the Schedule and Hub cover
         self.group_by = fd.GROUP_BY_WEEK
         self.table_split = fd.SPLIT_OVERALL
         self.analysis = ANALYSES[0]
@@ -894,6 +897,12 @@ class FMReviewApp(_Root):
         self.inspector_button = role("quiet", ctk.CTkButton(header, text="Inspector", width=90,
                                                             command=self.toggle_inspector))
         self.inspector_button.grid(row=0, column=3, rowspan=2, padx=(8, 0), sticky="e")
+        self.schedule_button = role("quiet", ctk.CTkButton(header, text=SCHEDULE, width=90,
+                                                           command=lambda: self.set_view(SCHEDULE)))
+        self.schedule_button.grid(row=0, column=4, rowspan=2, padx=(8, 0), sticky="e")
+        self.hub_button = role("quiet", ctk.CTkButton(header, text=MANAGER_HUB, width=60,
+                                                      command=lambda: self.set_view(MANAGER_HUB)))
+        self.hub_button.grid(row=0, column=5, rowspan=2, padx=(8, 0), sticky="e")
         self.export_menu = tk.Menu(self, tearoff=False)
         for kind, label in ((fx.EXCEL, "Excel workbook (.xlsx)"), (fx.HTML, "Web page (.html)"),
                             (fx.CSV, "CSV files (.csv)")):
@@ -920,7 +929,7 @@ class FMReviewApp(_Root):
         self.team_box = role("combo", ctk.CTkComboBox(controls, values=[ALL_TEAMS], width=250, command=self._on_team))
         self.team_box.pack(side="left", padx=(0, 16))
         self.team_box.bind("<Return>", self._on_team_typed)
-        self.view_switch = role("switch", ctk.CTkSegmentedButton(controls, values=list(VIEWS),
+        self.view_switch = role("switch", ctk.CTkSegmentedButton(controls, values=list(SWITCH_VIEWS),
                                                                  command=self._on_view_label))
         self.view_switch.set(self.view)
         self.view_switch.pack(side="left", padx=(0, 16))
@@ -1367,6 +1376,9 @@ class FMReviewApp(_Root):
         self._dataset_serial += 1
         self._followed_uid = None
         self._schedule_serial += 1
+        self._schedule_view.clear()                # the install below renders, so no render here
+        self._manager_hub_view.clear(NO_CLUB_FOLLOWED)
+        self._club_scope = NO_CLUB_FOLLOWED
         self.settings["last_save"] = dataset.info.path
         self._write_settings()
         info = dataset.info
@@ -1696,8 +1708,6 @@ class FMReviewApp(_Root):
         ds = self.dataset
         if ds is None or club is None:
             return
-        theme = self.view_theme
-        names = self.names
 
         def _worker():
             sched = fd.club_schedule(ds, club)
@@ -1708,15 +1718,24 @@ class FMReviewApp(_Root):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _clear_followed_uid(self) -> None:
-        """Remove the followed club; the Schedule and Hub views will show their empty states."""
+        """Remove the followed club and empty the Schedule and Hub at once."""
         self._followed_uid = None
         self._schedule_serial += 1
+        self._empty_club_views()
+
+    def _empty_club_views(self) -> None:
+        self._schedule_view.clear()
+        self._manager_hub_view.clear(NO_CLUB_FOLLOWED)
+        self._club_scope = NO_CLUB_FOLLOWED
+        if self.view in (SCHEDULE, MANAGER_HUB):
+            self.render()
 
     def install_schedule_views(self, sched: fd.Schedule, snap: fd.ManagerSnapshot) -> None:
         """Install schedule and snapshot data into the custom views (main thread only)."""
         theme = self.view_theme
         self._schedule_view.install_schedule(sched, theme)
         self._manager_hub_view.install_snapshot(snap, theme, self.names)
+        self._club_scope = f"{sched.club.name}: every competition, {sched.season_label} season · {sched.describe()}"
         if self.view in (SCHEDULE, MANAGER_HUB):
             self.render()
 
@@ -1759,13 +1778,13 @@ class FMReviewApp(_Root):
         the controls beside them. The buttons are rebuilt only when a label has changed."""
         room = self.winfo_width() >= self.px(COUNTS_MIN_WIDTH)
         labels = {}
-        for view in VIEWS:
+        for view in SWITCH_VIEWS:
             count = self._view_count(view) if room else ""
             labels[view] = f"{view} ({count})" if count else view
         if labels != self.view_labels:
             self.view_labels = labels
             self.view_switch.configure(values=list(labels.values()))
-        self.view_switch.set(self.view_labels[self.view])
+        self.view_switch.set(self.view_labels.get(self.view, ""))
 
     def _on_view_label(self, label: str) -> None:
         """A press on the switch: its label stands for a view."""
@@ -1819,7 +1838,7 @@ class FMReviewApp(_Root):
     def _set_controls_state(self, state: str) -> None:
         for widget in (self.season_menu, self.team_box, self.view_switch, self.group_switch, self.split_switch,
                        self.analysis_switch, self.rename_button, self.details_button, self.search_entry,
-                       self.inspector_button):
+                       self.inspector_button, self.schedule_button, self.hub_button):
             widget.configure(state=state)
         self.export_button.configure(state="disabled" if self._exporting else state)
 
@@ -2065,11 +2084,11 @@ class FMReviewApp(_Root):
         if self.view == HUB:
             self._render_competitions()
             return
-        if self.view == SCHEDULE:
-            self._show_custom_view(self._schedule_view)
-            return
-        if self.view == MANAGER_HUB:
-            self._show_custom_view(self._manager_hub_view)
+        if self.view in (SCHEDULE, MANAGER_HUB):
+            self._show_custom_view(self._schedule_view if self.view == SCHEDULE else self._manager_hub_view)
+            self.coverage_label.configure(text=self._club_scope)
+            self.note_label.configure(text="")
+            self.detail_label.configure(text="")
             return
         if self.comp_id is None:
             return

@@ -681,7 +681,7 @@ class WindowTests(unittest.TestCase):
 
     def test_the_view_switch_counts_what_is_still_to_play_and_the_competitions(self):
         app = self.app
-        self.assertEqual(list(app.view_labels.values()), list(fm_review.VIEWS))        # no save: plain names
+        self.assertEqual(list(app.view_labels.values()), list(fm_review.SWITCH_VIEWS))        # no save: plain names
         self.widen()
         app.install_dataset(dataset())
         self.assertEqual(list(app.view_labels.values()),
@@ -720,7 +720,7 @@ class WindowTests(unittest.TestCase):
         # They add about 100 px to the controls row, so a window too narrow for the whole row shows plain names.
         app = self.app
         app.install_dataset(dataset())                           # the test window is 1300 px wide: too narrow
-        self.assertEqual(list(app.view_labels.values()), list(fm_review.VIEWS))
+        self.assertEqual(list(app.view_labels.values()), list(fm_review.SWITCH_VIEWS))
         self.widen()
         self.assertTrue(self.wait_until(lambda: app.view_labels["Results"] == "Results (2)"), "no counts when wide")
         app.geometry("1300x800+-4000+0")
@@ -2343,9 +2343,59 @@ class ScheduleHubWiringTests(unittest.TestCase):
         self.app.destroy()
         self.folder.cleanup()
 
+    def wait_for(self, condition, seconds=10.0):
+        stop = time.monotonic() + seconds
+        while time.monotonic() < stop:
+            self.app.update()
+            if condition():
+                return True
+            time.sleep(0.02)
+        return False
+
+    def follow_hull(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.set_focus(team(1))
+        self.assertTrue(self.wait_for(lambda: app._schedule_view._schedule is not None), "schedule never arrived")
+
     def test_schedule_and_hub_appear_in_views(self):
         self.assertIn(fm_review.SCHEDULE, fm_review.VIEWS)
         self.assertIn(fm_review.MANAGER_HUB, fm_review.VIEWS)
+
+    def test_schedule_and_hub_sit_beside_the_switch_not_on_it(self):
+        app = self.app
+        app.install_dataset(dataset())
+        self.assertEqual(list(fm_review.SWITCH_VIEWS), ["Results", "Grid", "Table", "Analysis", "Competitions"])
+        self.assertNotIn(fm_review.SCHEDULE, app.view_labels)
+        app.schedule_button.invoke()
+        self.assertEqual(app.view, fm_review.SCHEDULE)
+        self.assertEqual(app.view_switch.get(), "")              # no competition view is selected
+        app.hub_button.invoke()
+        self.assertEqual(app.view, fm_review.MANAGER_HUB)
+
+    def test_the_schedule_names_its_club_and_scope(self):
+        app = self.app
+        self.follow_hull()
+        app.set_view(fm_review.SCHEDULE)
+        text = app.coverage_label.cget("text")
+        self.assertIn("Hull City", text)
+        self.assertIn("every competition", text)
+
+    def test_clearing_the_followed_club_empties_schedule_and_hub_at_once(self):
+        app = self.app
+        self.follow_hull()
+        app._clear_followed_uid()
+        self.assertIsNone(app._schedule_view._schedule)
+        self.assertEqual(app._manager_hub_view._rows, [])
+        app.set_view(fm_review.SCHEDULE)
+        self.assertIn("No club followed", app.coverage_label.cget("text"))
+
+    def test_a_new_save_empties_schedule_and_hub(self):
+        app = self.app
+        self.follow_hull()
+        app.install_dataset(dataset())
+        self.assertIsNone(app._schedule_view._schedule)
+        self.assertEqual(app._manager_hub_view._rows, [])
 
     def test_install_dataset_clears_followed_uid(self):
         app = self.app

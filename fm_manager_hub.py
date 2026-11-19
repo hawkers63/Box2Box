@@ -105,6 +105,7 @@ if _CTK_AVAILABLE:
             self._theme: pal.Theme = pal.MIDNIGHT_EMERALD
             self._competition_names: dict[int, str] = {}
             self._rows: list[HubRow] = []
+            self._empty_text = "No save loaded."
             self._widgets: list[tuple] = []
             self._build_ui()
 
@@ -127,6 +128,12 @@ if _CTK_AVAILABLE:
             self._rows = hub_rows(snapshot, self._competition_names)
             self._repaint()
 
+        def clear(self, text: str) -> None:
+            self._snapshot = None
+            self._rows = []
+            self._empty_text = text
+            self._repaint()
+
         def set_theme(self, theme: pal.Theme) -> None:
             self._theme = theme
             self._repaint()
@@ -137,7 +144,7 @@ if _CTK_AVAILABLE:
             for w in self._content.winfo_children():
                 w.destroy()
             if not self._rows:
-                ctk.CTkLabel(self._content, text="No save loaded.", anchor="w").grid(
+                ctk.CTkLabel(self._content, text=self._empty_text, anchor="w").grid(
                     row=0, column=0, columnspan=2, sticky="ew", padx=8, pady=4)
                 return
             theme = self._theme
