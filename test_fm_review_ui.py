@@ -1958,6 +1958,66 @@ class WindowTests(unittest.TestCase):
         app.handle_event(("loaded", dataset()))
         self.assertTrue(self.wait_until(lambda: self.detail() == "Already banked."), self.detail())
 
+    def with_reports(self, home=1.5, away=0.5):
+        """The test save again, with a match report for its first played match."""
+        first = next(f for f in dataset().fixtures[101] if f.played)
+        return dataset(match_stats=test_fm_data.match_stats(first, home, away))
+
+    def test_the_expected_goals_that_arrive_after_the_save_are_banked_with_it(self):
+        app = self.app
+        app.handle_event(("loaded", dataset()))
+        self.assertTrue(self.wait_until(lambda: self.detail().startswith("Banked:")), self.detail())
+        app.handle_event(("xg", self.with_reports()))
+        self.assertTrue(self.wait_until(lambda: self.detail().startswith("Expected goals banked for 1 matches")), self.detail())
+        with archive.Archive.open(fm_review.ARCHIVE_PATH) as book:
+            self.assertEqual(list(book.expected_goals().values()), [(1.5, 0.5)])
+
+    def test_the_expected_goals_wait_for_the_save_to_finish_banking_first(self):
+        app = self.app
+        real = archive.Archive.bank
+
+        def slow(book, data):
+            time.sleep(0.6)
+            return real(book, data)
+
+        with mock.patch.object(archive.Archive, "bank", slow):
+            app.handle_event(("loaded", dataset()))
+            app.handle_event(("xg", self.with_reports()))
+            self.assertTrue(self.wait_until(lambda: self.detail().startswith("Expected goals banked"), 10), self.detail())
+        with archive.Archive.open(fm_review.ARCHIVE_PATH) as book:
+            self.assertEqual(len(book.expected_goals()), 1)
+
+    def test_a_save_with_no_match_reports_adds_nothing_and_says_nothing(self):
+        app = self.app
+        app.handle_event(("loaded", dataset()))
+        self.assertTrue(self.wait_until(lambda: self.detail().startswith("Banked:")))
+        app.handle_event(("xg", dataset()))
+        self.wait_until(lambda: False, 0.8)
+        self.assertTrue(self.detail().startswith("Banked:"), self.detail())
+
+    def test_a_save_that_could_not_be_banked_does_not_get_its_expected_goals_banked_either(self):
+        app = self.app
+        error = archive.WorldMismatch("These results do not match the archive, so this looks like a different playthrough.")
+        with mock.patch.object(archive.Archive, "bank", side_effect=error):
+            app.handle_event(("loaded", dataset()))
+            self.assertTrue(self.wait_until(lambda: "different playthrough" in self.detail()))
+            app.handle_event(("xg", self.with_reports()))
+            self.wait_until(lambda: False, 0.8)
+        self.assertIn("different playthrough", self.detail())
+        with archive.Archive.open(fm_review.ARCHIVE_PATH) as book:
+            self.assertEqual(book.expected_goals(), {})
+
+    def test_a_failure_banking_the_expected_goals_is_logged_and_shown_and_the_save_stays_open(self):
+        app = self.app
+        app.handle_event(("loaded", dataset()))
+        self.assertTrue(self.wait_until(lambda: self.detail().startswith("Banked:")))
+        with mock.patch.object(archive.Archive, "bank_expected_goals", side_effect=RuntimeError("disk full")):
+            data = self.with_reports()
+            app.handle_event(("xg", data))
+            self.assertTrue(self.wait_until(lambda: "could not be banked" in self.detail()), self.detail())
+        self.assertIn("disk full", fm_review.ERROR_LOG.read_text(encoding="utf-8"))
+        self.assertIs(app.dataset, data)
+
     def test_a_save_from_a_different_playthrough_says_so_and_stays_open(self):
         app = self.app
         error = archive.WorldMismatch("These results do not match the archive, so this looks like a different "

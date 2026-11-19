@@ -1249,6 +1249,30 @@ class FMReviewApp(_Root):
             self.events.put(("bank_failed", f"This save could not be banked into the archive "
                                             f"({type(exc).__name__}: {exc}). It is still open."))
 
+    def _start_xg_banking(self, dataset: fd.Dataset) -> None:
+        """Bank the expected goals that arrive a few seconds after the save, once the save itself has been banked.
+        Nothing happens for a save whose match reports could not be read."""
+        if not dataset.expected_goals:
+            return
+        self._bank_thread = threading.Thread(target=self._xg_bank_worker,
+                                             args=(dataset, getattr(self, "_bank_thread", None)), daemon=True)
+        self._bank_thread.start()
+
+    def _xg_bank_worker(self, dataset: fd.Dataset, banking: threading.Thread | None) -> None:
+        if banking is not None:
+            banking.join()
+        try:
+            with archive.Archive.open(ARCHIVE_PATH) as book:
+                report = book.bank_expected_goals(dataset)
+            if report is not None:                    # None: the save itself was not banked, so there is nothing to add to
+                self.events.put(("banked", report))
+        except archive.ArchiveError as exc:
+            self.events.put(("bank_failed", str(exc)))
+        except Exception as exc:
+            self._log_error(traceback.format_exc())
+            self.events.put(("bank_failed", f"The expected goals could not be banked into the archive "
+                                            f"({type(exc).__name__}: {exc}). The save is still open."))
+
     def _poll(self) -> None:
         try:
             while True:
@@ -1303,6 +1327,7 @@ class FMReviewApp(_Root):
         self.reopen_button.configure(state="normal")
         if kind == "xg":
             self.install_expected_goals(payload)
+            self._start_xg_banking(payload)
         else:
             # A failed import leaves whatever was open before untouched.
             kept = "\n\nThe save that was already open is still shown." if self.dataset else ""

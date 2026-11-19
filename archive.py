@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import math
 import sqlite3
 from collections import defaultdict
 from collections.abc import Callable, Sequence
@@ -19,7 +20,7 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from typing import NamedTuple
 
-SCHEMA_VERSION = 2          # 2: competitions.zone_rules
+SCHEMA_VERSION = 3          # 2: competitions.zone_rules; 3: fixtures.home_xg and away_xg, conflicts.kind
 
 _SCHEMA = """
 CREATE TABLE meta (schema_version INTEGER NOT NULL);
@@ -35,10 +36,12 @@ CREATE TABLE fixtures (
     away_uid INTEGER NOT NULL, meeting INTEGER NOT NULL,
     date TEXT, kick_off TEXT, home_goals INTEGER, away_goals INTEGER, played INTEGER NOT NULL,
     round_index INTEGER, round_label TEXT, round_raw INTEGER, home_name TEXT, away_name TEXT, source_date TEXT,
+    home_xg REAL, away_xg REAL,
     PRIMARY KEY (competition_key, season, home_uid, away_uid, meeting));
 CREATE TABLE conflicts (
     competition_key INTEGER, season INTEGER, home_uid INTEGER, away_uid INTEGER, meeting INTEGER,
-    kept_home INTEGER, kept_away INTEGER, other_home INTEGER, other_away INTEGER, import_id INTEGER);
+    kept_home INTEGER, kept_away INTEGER, other_home INTEGER, other_away INTEGER, import_id INTEGER,
+    kind TEXT NOT NULL DEFAULT 'score');
 """
 
 
@@ -95,15 +98,23 @@ class ArchivedFixture:
     home_name: str
     away_name: str
     source_date: dt.date | None
+    home_xg: float | None = None          # expected goals from the save's match report; None when it held none
+    away_xg: float | None = None
 
     @property
     def scored(self) -> bool:
         return self.home_goals is not None and self.away_goals is not None
 
+    @property
+    def has_xg(self) -> bool:
+        return self.home_xg is not None and self.away_xg is not None
+
 
 class MergeResult(NamedTuple):
     fixture: ArchivedFixture
     outcome: str          # "added", "updated", "unchanged" or "conflict"
+    kinds: tuple[str, ...] = ()           # what conflicted: "score" and/or "xg"
+    loser: ArchivedFixture | None = None  # the copy that was not kept, when something conflicted
 
 
 def _rank(f: ArchivedFixture) -> tuple:
@@ -113,19 +124,39 @@ def _rank(f: ArchivedFixture) -> tuple:
     none = lambda value, low: low if value is None else value
     return (f.played, f.scored, none(f.source_date, dt.date.min), none(f.date, dt.date.min),
             none(f.home_goals, -1), none(f.away_goals, -1), none(f.kick_off, dt.time.min),
-            none(f.round_index, -1), f.round_label or "", none(f.round_raw, -1), f.home_name, f.away_name)
+            none(f.round_index, -1), f.round_label or "", none(f.round_raw, -1), f.home_name, f.away_name,
+            none(f.home_xg, -1), none(f.away_xg, -1))
+
+
+XG_PLACES = 4
+XG_TOLERANCE = 1e-4          # figures this close are the same figure: the save stores them as 32-bit floats
 
 
 def merge_fixture(old: ArchivedFixture | None, new: ArchivedFixture) -> MergeResult:
     """Merge a fixture from a save into the archive's copy. A played result is never replaced by "not played"
     or by a missing score; otherwise the later save wins (see _rank). Two played, scored results that differ are
-    a conflict: the later save is kept and the caller records both."""
+    a conflict: the later save is kept and the caller records both. Expected goals are merged on their own: a
+    missing figure is filled from either copy and never replaces a stored one, and two different figures are a
+    conflict too."""
     if old is None:
         return MergeResult(new, "added")
     winner = max(old, new, key=_rank)
+    other = new if winner is old else old
+    kinds = []
     both_played = old.played and new.played and old.scored and new.scored
     if both_played and (old.home_goals, old.away_goals) != (new.home_goals, new.away_goals):
-        return MergeResult(winner, "conflict")
+        kinds.append("score")
+    if winner.has_xg:
+        figures = (winner.home_xg, winner.away_xg)
+        if other.has_xg and not (math.isclose(winner.home_xg, other.home_xg, abs_tol=XG_TOLERANCE)
+                                 and math.isclose(winner.away_xg, other.away_xg, abs_tol=XG_TOLERANCE)):
+            kinds.append("xg")
+    else:
+        figures = (other.home_xg, other.away_xg) if other.has_xg else (None, None)
+    figures = tuple(None if v is None else round(v, XG_PLACES) for v in figures)
+    winner = replace(winner, home_xg=figures[0], away_xg=figures[1])
+    if kinds:
+        return MergeResult(winner, "conflict", tuple(kinds), other)
     same = replace(winner, source_date=None) == replace(old, source_date=None)
     return MergeResult(winner, "unchanged" if same else "updated")
 
@@ -153,6 +184,24 @@ class BankReport:
         text = f"Banked: {self.added} new fixtures, {self.updated} updated, {self.conflicts} conflicts."
         if self.skipped_unresolved:
             text += f" {self.skipped_unresolved} skipped (no club the save could resolve)."
+        return text
+
+
+@dataclass(frozen=True, slots=True)
+class XgBankReport:
+    """What adding a save's expected goals to the archive changed."""
+
+    filled: int          # fixtures that gained figures
+    unchanged: int       # fixtures whose figures were already there
+    conflicts: int
+    missing: int         # matches the archive does not hold (nothing is added)
+
+    def describe(self) -> str:
+        if not self.filled and not self.conflicts:
+            return "Expected goals were already banked."
+        text = f"Expected goals banked for {self.filled:,} matches."
+        if self.conflicts:
+            text += f" {self.conflicts} differed from figures already stored."
         return text
 
 
@@ -216,16 +265,27 @@ class BookCoverage:
 
 
 _COLUMNS = ("competition_key", "season", "home_uid", "away_uid", "meeting", "date", "kick_off", "home_goals",
-            "away_goals", "played", "round_index", "round_label", "round_raw", "home_name", "away_name", "source_date")
+            "away_goals", "played", "round_index", "round_label", "round_raw", "home_name", "away_name", "source_date",
+            "home_xg", "away_xg")
 
 
 def _iso(value: dt.date | dt.time | None) -> str | None:
     return None if value is None else value.isoformat()
 
 
+def _readable_xg(expected) -> tuple[float, float] | None:
+    """A match's expected goals as a pair to store, or None unless both are finite numbers of zero or more."""
+    if expected is None:
+        return None
+    pair = (expected.home, expected.away)
+    if all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v >= 0 for v in pair):
+        return round(float(pair[0]), XG_PLACES), round(float(pair[1]), XG_PLACES)
+    return None
+
+
 def _row(f: ArchivedFixture) -> tuple:
     return (*f.key, _iso(f.date), _iso(f.kick_off), f.home_goals, f.away_goals, int(f.played), f.round_index,
-            f.round_label, f.round_raw, f.home_name, f.away_name, _iso(f.source_date))
+            f.round_label, f.round_raw, f.home_name, f.away_name, _iso(f.source_date), f.home_xg, f.away_xg)
 
 
 def _fixture(row: Sequence) -> ArchivedFixture:
@@ -233,7 +293,8 @@ def _fixture(row: Sequence) -> ArchivedFixture:
         key=tuple(row[:5]), date=dt.date.fromisoformat(row[5]) if row[5] else None,
         kick_off=dt.time.fromisoformat(row[6]) if row[6] else None, home_goals=row[7], away_goals=row[8],
         played=bool(row[9]), round_index=row[10], round_label=row[11], round_raw=row[12], home_name=row[13],
-        away_name=row[14], source_date=dt.date.fromisoformat(row[15]) if row[15] else None)
+        away_name=row[14], source_date=dt.date.fromisoformat(row[15]) if row[15] else None,
+        home_xg=row[16] if len(row) > 16 else None, away_xg=row[17] if len(row) > 17 else None)
 
 
 class Archive:
@@ -247,6 +308,7 @@ class Archive:
         """Open the archive at `path`, creating it at the current schema if it does not exist. A file written
         by a newer Box2Box is refused and left untouched."""
         path = Path(path)
+        db = None
         try:
             db = sqlite3.connect(path)
             has_meta = db.execute("SELECT 1 FROM sqlite_master WHERE name = 'meta'").fetchone()
@@ -260,17 +322,24 @@ class Archive:
                     with db:                                  # older archives are upgraded in place, keeping their data
                         if found < 2:
                             db.execute("ALTER TABLE competitions ADD COLUMN zone_rules TEXT")
+                        if found < 3:                             # expected goals, filled in when a save with reports is banked
+                            db.execute("ALTER TABLE fixtures ADD COLUMN home_xg REAL")
+                            db.execute("ALTER TABLE fixtures ADD COLUMN away_xg REAL")
+                            db.execute("ALTER TABLE conflicts ADD COLUMN kind TEXT NOT NULL DEFAULT 'score'")
                         db.execute("UPDATE meta SET schema_version = ?", (SCHEMA_VERSION,))
                 if found > SCHEMA_VERSION:
                     db.close()
                     raise ArchiveError(f"This archive was written by a newer Box2Box (schema {found}); "
                                        f"this version understands schema {SCHEMA_VERSION}. Nothing was changed.")
         except sqlite3.Error as exc:
+            if db is not None:
+                db.close()
             raise ArchiveError(f"The archive at {path} could not be opened: {exc}") from exc
         return cls(db, path)
 
     def _archived(self, dataset) -> tuple[list[ArchivedFixture], int]:
         """The save's identifiable fixtures as archive records, and how many it could not identify."""
+        from fm_data import fixture_key
         everything = [f for fixtures in dataset.fixtures.values() for f in fixtures]
         database_ids = {c.id: c.database_id for c in dataset.competitions}
         keys = fixture_keys(everything, lambda f: competition_key(f.competition_id, database_ids.get(f.competition_id)))
@@ -282,10 +351,12 @@ class Archive:
             label = getattr(getattr(f, "round", None), "label", None)
             label = getattr(label, "name", label)             # an enum member is stored by its name
             raw = getattr(getattr(f, "round", None), "raw", None)
+            figures = _readable_xg(dataset.expected_goals.get(fixture_key(f))) if f.played else None
             records.append(ArchivedFixture(
                 key=key, date=f.date, kick_off=f.kick_off_time, home_goals=f.home_goals, away_goals=f.away_goals,
                 played=bool(f.played), round_index=f.round_index, round_label=label, round_raw=raw,
-                home_name=f.home_club_name or "", away_name=f.away_club_name or "", source_date=dataset.info.game_date))
+                home_name=f.home_club_name or "", away_name=f.away_club_name or "", source_date=dataset.info.game_date,
+                home_xg=figures[0] if figures else None, away_xg=figures[1] if figures else None))
         return records, skipped
 
     def _fill_short_names(self, dataset) -> None:
@@ -313,6 +384,16 @@ class Archive:
             f"SELECT {', '.join(_COLUMNS)} FROM fixtures WHERE competition_key = ? AND season = ? AND home_uid = ? "
             "AND away_uid = ? AND meeting = ?", key).fetchone()
         return _fixture(row) if row else None
+
+    def _record_conflicts(self, key: FixtureKey, result: MergeResult, import_id: int) -> None:
+        """Write one row for each kind of disagreement a merge found: the kept values and the ones set aside."""
+        for kind in result.kinds:
+            kept, other = result.fixture, result.loser
+            pair = ((kept.home_goals, kept.away_goals, other.home_goals, other.away_goals) if kind == "score"
+                    else (kept.home_xg, kept.away_xg, other.home_xg, other.away_xg))
+            self._db.execute("INSERT INTO conflicts (competition_key, season, home_uid, away_uid, meeting, kept_home, "
+                             "kept_away, other_home, other_away, import_id, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                             (*key, *pair, import_id, kind))
 
     def _check_world(self, records: Sequence[ArchivedFixture]) -> None:
         """Refuse a save whose played results disagree with the archive's beyond WORLD_MAX_DISAGREEMENT."""
@@ -351,14 +432,10 @@ class Archive:
                 old = self._stored(f.key)
                 result = merge_fixture(old, f)
                 counts[result.outcome] += 1
-                if result.outcome == "conflict":
-                    loser = f if result.fixture == old else old
-                    self._db.execute("INSERT INTO conflicts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                                     (*f.key, result.fixture.home_goals, result.fixture.away_goals,
-                                      loser.home_goals, loser.away_goals, import_id))
+                self._record_conflicts(f.key, result, import_id)
                 if result.fixture != old:
                     self._db.execute(
-                        f"INSERT OR REPLACE INTO fixtures ({', '.join(_COLUMNS)}) VALUES ({', '.join('?' * 16)})",
+                        f"INSERT OR REPLACE INTO fixtures ({', '.join(_COLUMNS)}) VALUES ({', '.join('?' * len(_COLUMNS))})",
                         _row(result.fixture))
             self._bank_competitions(dataset, records)
             for f in records:
@@ -372,6 +449,49 @@ class Archive:
                 "WHERE id = ?", (counts["added"], counts["updated"], counts["unchanged"], counts["conflict"], skipped,
                                  import_id))
         return BankReport(counts["added"], counts["updated"], counts["unchanged"], counts["conflict"], skipped, False)
+
+    def bank_expected_goals(self, dataset) -> XgBankReport | None:
+        """Add the expected goals a save's match reports hold to fixtures already banked from that save, once its
+        statistics have been read (they arrive a few seconds after the save opens). Only fixtures already in the
+        archive are touched, none is added, and nothing happens when this save was never banked (None). A missing
+        figure is filled, a stored one is never replaced by a missing one, and a different figure is a conflict."""
+        info = dataset.info
+        row = self._db.execute("SELECT id FROM imports WHERE file_name = ? AND game_date IS ?",
+                               (info.file_name, _iso(info.game_date))).fetchone()
+        if row is None:
+            return None
+        records, _ = self._archived(dataset)
+        filled = unchanged = conflicts = missing = 0
+        with self._db:
+            for f in records:
+                if not f.has_xg:
+                    continue
+                old = self._stored(f.key)
+                if old is None:
+                    missing += 1
+                    continue
+                result = merge_fixture(old, f)
+                self._record_conflicts(f.key, result, row[0])
+                conflicts += result.outcome == "conflict"
+                if result.fixture != old:
+                    self._db.execute(f"INSERT OR REPLACE INTO fixtures ({', '.join(_COLUMNS)}) "
+                                     f"VALUES ({', '.join('?' * len(_COLUMNS))})", _row(result.fixture))
+                    filled += old.home_xg is None
+                else:
+                    unchanged += 1
+        return XgBankReport(filled, unchanged, conflicts, missing)
+
+    def expected_goals(self) -> dict[tuple, tuple[float, float]]:
+        """The expected goals the archive holds, keyed as the save's own statistics name a match (competition key, home
+        club, away club, date), so a book can join them to its fixtures. A key that more than one fixture shares is
+        ambiguous and gives nothing."""
+        rows = self._db.execute("SELECT competition_key, home_uid, away_uid, date, home_xg, away_xg FROM fixtures "
+                                "WHERE date IS NOT NULL").fetchall()
+        shared: dict[tuple, int] = defaultdict(int)
+        for r in rows:
+            shared[r[:4]] += 1
+        return {(r[0], r[1], r[2], dt.date.fromisoformat(r[3])): (r[4], r[5]) for r in rows
+                if r[4] is not None and r[5] is not None and shared[r[:4]] == 1}
 
     def seasons(self) -> list[int]:
         """Every season with a fixture in the archive, newest first."""

@@ -61,6 +61,9 @@ class ArchiveFileTests(unittest.TestCase):
         with self.connect() as db:
             db.execute("INSERT INTO clubs (uid, name, short_name, nation_id) VALUES (1, 'Hull City', 'Hull', 5)")
             db.execute("ALTER TABLE competitions DROP COLUMN zone_rules")          # what a version 1 file looks like
+            db.execute("ALTER TABLE fixtures DROP COLUMN home_xg")
+            db.execute("ALTER TABLE fixtures DROP COLUMN away_xg")
+            db.execute("ALTER TABLE conflicts DROP COLUMN kind")
             db.execute("UPDATE meta SET schema_version = 1")
             db.commit()
         with archive.Archive.open(self.path):
@@ -455,3 +458,163 @@ class ReadBackTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def afx(hxg=None, axg=None, played=True, hg=1, ag=0, **kw):
+    """An ArchivedFixture with expected goals, for the merge tests."""
+    return dataclasses.replace(af(played, hg, ag, **kw), home_xg=hxg, away_xg=axg)
+
+
+class XgSchemaTests(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        self.path = Path(self.folder.name) / "archive.sqlite"
+
+    def connect(self):
+        return contextlib.closing(sqlite3.connect(self.path))
+
+    def test_a_new_archive_is_schema_3_with_nullable_xg_columns(self):
+        self.assertEqual(archive.SCHEMA_VERSION, 3)
+        with archive.Archive.open(self.path):
+            pass
+        with self.connect() as db:
+            columns = {r[1]: r[3] for r in db.execute("PRAGMA table_info(fixtures)")}       # name -> not null
+            self.assertEqual((columns["home_xg"], columns["away_xg"]), (0, 0))
+            self.assertIn("kind", {r[1] for r in db.execute("PRAGMA table_info(conflicts)")})
+
+    def test_a_schema_2_archive_is_migrated_in_place_keeping_its_data_and_filling_nothing(self):
+        data = bank_dataset([fx(D(2026, 8, 8), 1, 2, 1, 0, md=1)])
+        with archive.Archive.open(self.path) as a:
+            a.bank(data)
+        with self.connect() as db:
+            db.execute("ALTER TABLE fixtures DROP COLUMN home_xg")
+            db.execute("ALTER TABLE fixtures DROP COLUMN away_xg")
+            db.execute("ALTER TABLE conflicts DROP COLUMN kind")
+            db.execute("UPDATE meta SET schema_version = 2")
+            db.commit()
+        with archive.Archive.open(self.path):
+            pass
+        with self.connect() as db:
+            self.assertEqual(db.execute("SELECT schema_version FROM meta").fetchone()[0], 3)
+            self.assertEqual(db.execute("SELECT COUNT(*), COUNT(home_xg), COUNT(away_xg) FROM fixtures").fetchone(), (1, 0, 0))
+
+
+class XgMergeTests(unittest.TestCase):
+    OLD, NEW = dt.date(2026, 11, 1), dt.date(2026, 11, 8)
+
+    def test_a_later_save_fills_a_missing_figure(self):
+        result = archive.merge_fixture(afx(source=self.OLD), afx(1.42, 0.37, source=self.NEW))
+        self.assertEqual((result.outcome, result.fixture.home_xg, result.fixture.away_xg), ("updated", 1.42, 0.37))
+
+    def test_a_figure_is_never_replaced_by_a_missing_one_even_from_a_later_save(self):
+        result = archive.merge_fixture(afx(1.42, 0.37, source=self.OLD), afx(source=self.NEW))
+        self.assertEqual((result.fixture.home_xg, result.fixture.away_xg), (1.42, 0.37))
+
+    def test_the_same_figures_again_are_unchanged(self):
+        self.assertEqual(archive.merge_fixture(afx(1.42, 0.37), afx(1.42, 0.37)).outcome, "unchanged")
+
+    def test_two_different_figures_are_a_conflict_recorded_as_one_and_the_later_save_is_kept(self):
+        result = archive.merge_fixture(afx(1.42, 0.37, source=self.OLD), afx(2.0, 0.5, source=self.NEW))
+        self.assertEqual((result.outcome, result.kinds, result.fixture.home_xg), ("conflict", ("xg",), 2.0))
+
+    def test_a_score_conflict_and_a_figure_conflict_are_both_recorded(self):
+        result = archive.merge_fixture(afx(1.0, 0.0, hg=2, ag=1, source=self.OLD), afx(3.0, 1.0, hg=0, ag=0, source=self.NEW))
+        self.assertEqual(result.kinds, ("score", "xg"))
+
+    def test_figures_that_differ_only_by_rounding_noise_are_not_a_conflict(self):
+        self.assertEqual(archive.merge_fixture(afx(1.42, 0.37), afx(1.42 + 1e-9, 0.37)).outcome, "unchanged")
+
+    def test_merging_with_figures_is_the_same_whichever_way_round(self):
+        samples = [afx(), afx(1.42, 0.37), afx(2.0, 0.5, source=self.NEW), afx(1.0, 0.1, source=self.NEW), afx(0.0, 0.0),
+                   afx(1.42, 0.37, hg=2, source=self.NEW), afx(None, None, played=False, hg=None, ag=None)]
+        for a, b in itertools.permutations(samples, 2):
+            self.assertEqual(archive.merge_fixture(a, b).fixture, archive.merge_fixture(b, a).fixture, (a, b))
+
+
+def xg_dataset(fixtures, figures, **kw):
+    """A Dataset whose fixtures (by index) carry expected goals: figures is {index: (home, away)}."""
+    data = bank_dataset(fixtures, **kw)
+    played = data.fixtures[101]
+    expected = {fd.fixture_key(played[i]): fd.ExpectedGoals(h, a, h, a) for i, (h, a) in figures.items()}
+    return dataclasses.replace(data, expected_goals=expected)
+
+
+class XgBankTests(unittest.TestCase):
+    FIXTURES = [fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 15), 3, 4, 2, 2, md=2), fx(D(2026, 8, 22), 1, 3, md=3)]
+
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        self.path = Path(self.folder.name) / "archive.sqlite"
+
+    def stored(self):
+        with contextlib.closing(sqlite3.connect(self.path)) as db:
+            return db.execute("SELECT home_uid, home_xg, away_xg FROM fixtures ORDER BY date").fetchall()
+
+    def test_banking_a_save_with_reports_stores_the_figures_and_leaves_the_rest_null(self):
+        with archive.Archive.open(self.path) as a:
+            a.bank(xg_dataset(self.FIXTURES, {0: (1.42, 0.37)}))
+        self.assertEqual(self.stored(), [(1, 1.42, 0.37), (3, None, None), (1, None, None)])
+
+    def test_a_figure_that_is_not_finite_or_is_negative_is_never_stored(self):
+        with archive.Archive.open(self.path) as a:
+            a.bank(xg_dataset(self.FIXTURES, {0: (float("nan"), 0.3), 1: (-0.5, 1.0)}))
+        self.assertEqual(self.stored(), [(1, None, None), (3, None, None), (1, None, None)])
+
+    def test_the_second_step_fills_a_save_banked_without_figures_and_adds_no_fixtures(self):
+        with archive.Archive.open(self.path) as a:
+            a.bank(bank_dataset(self.FIXTURES))
+            report = a.bank_expected_goals(xg_dataset(self.FIXTURES, {0: (1.42, 0.37), 1: (0.9, 1.1)}))
+        self.assertEqual((report.filled, report.conflicts, report.missing), (2, 0, 0))
+        self.assertEqual(self.stored(), [(1, 1.42, 0.37), (3, 0.9, 1.1), (1, None, None)])
+
+    def test_the_second_step_changes_nothing_when_run_twice(self):
+        data = xg_dataset(self.FIXTURES, {0: (1.42, 0.37)})
+        with archive.Archive.open(self.path) as a:
+            a.bank(bank_dataset(self.FIXTURES))
+            a.bank_expected_goals(data)
+            before = self.stored()
+            report = a.bank_expected_goals(data)
+        self.assertEqual((report.filled, report.unchanged), (0, 1))
+        self.assertEqual(self.stored(), before)
+
+    def test_the_second_step_ignores_a_save_that_was_never_banked(self):
+        with archive.Archive.open(self.path) as a:
+            self.assertIsNone(a.bank_expected_goals(xg_dataset(self.FIXTURES, {0: (1.42, 0.37)})))
+            self.assertEqual(a.imports(), [])
+        self.assertEqual(self.stored(), [])
+
+    def test_a_save_banked_twice_and_filled_in_either_order_gives_the_same_archive(self):
+        first, second = bank_dataset(self.FIXTURES, file="a.fm", game=D(2026, 9, 1)), \
+            xg_dataset(self.FIXTURES, {0: (1.42, 0.37)}, file="b.fm", game=D(2026, 9, 8))
+        results = []
+        for order in ((first, second), (second, first)):
+            path = Path(self.folder.name) / f"{len(results)}.sqlite"
+            with archive.Archive.open(path) as a:
+                for data in order:
+                    a.bank(data)
+                a.bank_expected_goals(second)
+            with contextlib.closing(sqlite3.connect(path)) as db:
+                results.append(db.execute("SELECT home_uid, date, home_xg, away_xg FROM fixtures ORDER BY date").fetchall())
+        self.assertEqual(results[0], results[1])
+
+    def test_two_different_figures_for_one_match_are_recorded_as_a_figure_conflict(self):
+        with archive.Archive.open(self.path) as a:
+            a.bank(xg_dataset(self.FIXTURES, {0: (1.42, 0.37)}, file="a.fm", game=D(2026, 9, 1)))
+            report = a.bank(xg_dataset(self.FIXTURES, {0: (2.0, 0.5)}, file="b.fm", game=D(2026, 9, 8)))
+        self.assertEqual(report.conflicts, 1)
+        with contextlib.closing(sqlite3.connect(self.path)) as db:
+            kind, kept_home, other_home = db.execute("SELECT kind, kept_home, other_home FROM conflicts").fetchone()
+        self.assertEqual((kind, kept_home, other_home), ("xg", 2.0, 1.42))
+
+    def test_the_figures_read_back_by_the_games_own_match_key_and_an_ambiguous_key_gives_none(self):
+        with archive.Archive.open(self.path) as a:
+            a.bank(xg_dataset(self.FIXTURES, {0: (1.42, 0.37)}))
+            figures = a.expected_goals()
+        self.assertEqual(figures, {(12, 1, 2, D(2026, 8, 8)): (1.42, 0.37)})
+        twice = [fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 8), 1, 2, 2, 0, md=2)]
+        path = Path(self.folder.name) / "dup.sqlite"
+        with archive.Archive.open(path) as a:
+            a.bank(xg_dataset(twice, {0: (1.0, 1.0)}))
+            self.assertEqual(a.expected_goals(), {})
