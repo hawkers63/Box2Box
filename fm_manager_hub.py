@@ -14,6 +14,7 @@ from typing import NamedTuple
 
 import fm_data as fd
 import palette as pal
+import roundel_ui
 
 # ---------------------------------------------------------------------------
 # Pure model
@@ -98,12 +99,15 @@ if _CTK_AVAILABLE:
 
         ROW_HEIGHT = 28
         LABEL_WIDTH = 110
+        CLUB_ROUNDEL = 40           # the followed club's roundel in the header
+        NEXT_ROUNDEL = 24           # the next opponent's roundel on the Next row
 
         def __init__(self, master, **kw):
             super().__init__(master, **kw)
             self._snapshot: fd.ManagerSnapshot | None = None
             self._theme: pal.Theme = pal.MIDNIGHT_EMERALD
             self._competition_names: dict[int, str] = {}
+            self._roundels: dict[str | None, pal.Roundel] = {}
             self._rows: list[HubRow] = []
             self._empty_text = "No save loaded."
             self._widgets: list[tuple] = []
@@ -111,20 +115,28 @@ if _CTK_AVAILABLE:
 
         def _build_ui(self) -> None:
             self.grid_columnconfigure(0, weight=1)
-            self._header = ctk.CTkLabel(self, text="Club overview",
-                                        font=("Segoe UI", 13, "bold"), anchor="w")
-            self._header.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 4))
+            top = ctk.CTkFrame(self, fg_color="transparent")
+            top.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 4))
+            self.club_badge = roundel_ui.RoundelBadge(top, self.CLUB_ROUNDEL)
+            self.club_badge.pack(side="left", padx=(0, 10))
+            self._header = ctk.CTkLabel(top, text="Club overview", font=("Segoe UI", 13, "bold"), anchor="w")
+            self._header.pack(side="left")
             self._content = ctk.CTkFrame(self, fg_color="transparent")
             self._content.grid(row=1, column=0, sticky="nsew", padx=4, pady=4)
-            self._content.grid_columnconfigure(1, weight=1)
+            self._content.grid_columnconfigure(2, weight=1)
+            self.next_badge = roundel_ui.RoundelBadge(self, self.NEXT_ROUNDEL)
 
         # ---- public API (call on main thread only) ---------------------
 
         def install_snapshot(self, snapshot: fd.ManagerSnapshot, theme: pal.Theme,
-                              competition_names: dict[int, str] | None = None) -> None:
+                              competition_names: dict[int, str] | None = None,
+                              roundels: dict[str | None, pal.Roundel] | None = None) -> None:
+            """Show a snapshot. `roundels` maps club names to their roundels in this theme (palette.roundel_book),
+            worked out off the main thread."""
             self._snapshot = snapshot
             self._theme = theme
             self._competition_names = competition_names or {}
+            self._roundels = roundels or {}
             self._rows = hub_rows(snapshot, self._competition_names)
             self._repaint()
 
@@ -134,8 +146,10 @@ if _CTK_AVAILABLE:
             self._empty_text = text
             self._repaint()
 
-        def set_theme(self, theme: pal.Theme) -> None:
+        def set_theme(self, theme: pal.Theme, roundels: dict[str | None, pal.Roundel] | None = None) -> None:
             self._theme = theme
+            if roundels is not None:
+                self._roundels = roundels
             self._repaint()
 
         # ---- internal rendering ----------------------------------------
@@ -143,6 +157,15 @@ if _CTK_AVAILABLE:
         def _repaint(self) -> None:
             for w in self._content.winfo_children():
                 w.destroy()
+            theme = self._theme
+            snap = self._snapshot
+            self._header.configure(text=snap.followed.name if snap is not None else "Club overview",
+                                   text_color=theme.text)
+            self.club_badge.show(self._roundels.get(snap.followed.name) if snap is not None else None, theme.window)
+            next_item = snap.next_item if snap is not None else None
+            self.next_badge.grid_forget()
+            self.next_badge.show(self._roundels.get(next_item.opponent_club) if next_item is not None else None,
+                                 theme.window)
             if not self._rows:
                 ctk.CTkLabel(self._content, text=self._empty_text, anchor="w").grid(
                     row=0, column=0, columnspan=2, sticky="ew", padx=8, pady=4)
@@ -159,4 +182,7 @@ if _CTK_AVAILABLE:
                 val = ctk.CTkLabel(self._content, text=row.value,
                                    anchor="w", text_color=label_fg,
                                    font=("Segoe UI", 9, "bold" if not row.muted and row.label else "normal"))
-                val.grid(row=i, column=1, sticky="ew", padx=(0, 8), pady=1)
+                val.grid(row=i, column=2, sticky="ew", padx=(0, 8), pady=1)
+                if row.label == "Next" and self.next_badge.roundel is not None:
+                    self.next_badge.tk.call("raise", self.next_badge._w)     # Canvas.lift raises items
+                    self.next_badge.grid(in_=self._content, row=i, column=1, padx=(0, 6))

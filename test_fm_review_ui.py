@@ -2700,6 +2700,82 @@ class ScheduleHubWiringTests(unittest.TestCase):
         self.assertEqual(app.season_menu.cget("state"), "disabled")
         self.assertEqual(app.team_box.cget("state"), "disabled")
 
+    # ----------------------------------------------------------------- v2.9: roundels (made-up clubs and dates)
+
+    INVENTED = {1: ("Northbridge Rovers", "Northbridge"), 2: ("Eastholm Athletic", "Eastholm"),
+                3: ("Westford Town", "Westford"), 4: ("Southmere United", "Southmere"), 5: ("Kingsbay City", "Kingsbay")}
+    INVENTED_COLOURS = {"Northbridge Rovers": ["#7a1f2b", "#f2c94c"], "Eastholm Athletic": ["#0b3d91", "#ffffff"]}
+
+    def invented_dataset(self, fixtures, game_date=D(2099, 8, 20)):
+        with mock.patch.dict(test_fm_data.CLUBS, self.INVENTED):
+            built = [f(fx) for f in fixtures]
+            return fd.build_dataset(dataclasses.replace(info(), game_date=game_date), built,
+                                    clubs=[club(n) for n in range(1, 6)], competitions=[NS(id=101, database_id=12)])
+
+    def invented_season(self):
+        return self.invented_dataset([
+            lambda fx: fx(D(2099, 8, 8), 1, 2, 2, 1, md=1), lambda fx: fx(D(2099, 8, 8), 3, 4, 1, 1, md=1),
+            lambda fx: fx(D(2099, 8, 15), 3, 1, 0, 0, md=2), lambda fx: fx(D(2099, 8, 15), 2, 4, 2, 0, md=2),
+            lambda fx: fx(D(2099, 8, 22), 1, 4, md=3), lambda fx: fx(D(2099, 8, 22), 2, 3, md=3),
+        ])
+
+    def follow_invented(self, data=None):
+        app = self.app
+        app.settings["club_colours"] = dict(self.INVENTED_COLOURS)
+        app.install_dataset(data or self.invented_season())
+        app.set_focus(team(1))
+        self.assertTrue(self.wait_for(lambda: app._schedule_view._schedule is not None), "schedule never arrived")
+
+    def disc_fill(self, canvas, tag):
+        (item,) = canvas.find_withtag(tag)
+        return canvas.itemcget(item, "fill")
+
+    def test_each_schedule_row_shows_its_opponents_roundel_or_the_neutral_one(self):
+        app = self.app
+        self.follow_invented()
+        app.set_view(fm_review.SCHEDULE)
+        app.update()
+        view, theme = app._schedule_view, app.view_theme
+        canvas = view._canvas
+        opponents = [i.opponent_club for i in view._filtered]
+        self.assertEqual(opponents, ["Eastholm Athletic", "Westford Town", "Southmere United"])
+        self.assertEqual(self.disc_fill(canvas, "disc_0"), palette.roundel(theme, ("#0b3d91", "#ffffff"), "EA").disc)
+        self.assertEqual(self.disc_fill(canvas, "disc_1"), palette.roundel(theme, None, "WT").disc)
+        self.assertEqual(canvas.itemcget(canvas.find_withtag("initials_0")[0], "text"), "EA")
+
+    def test_result_pills_keep_their_letters_venue_and_theme_colours_beside_the_roundels(self):
+        app = self.app
+        self.follow_invented()
+        app.set_view(fm_review.SCHEDULE)
+        app.update()
+        canvas = app._schedule_view._canvas
+        self.assertIsNotNone(app.club_tint)                       # the followed club tints the window...
+        self.assertEqual(self.disc_fill(canvas, "pill_0"), app.theme.colours["W"][0])   # ...but never a result
+        texts = [canvas.itemcget(i, "text") for i in canvas.find_withtag("row_0") if canvas.type(i) == "text"]
+        self.assertIn("W", texts)
+        self.assertTrue(any(t.startswith("H ") for t in texts), texts)
+
+    def test_the_hub_shows_the_followed_clubs_roundel_and_the_next_opponents(self):
+        app = self.app
+        self.follow_invented()
+        app.set_view(fm_review.MANAGER_HUB)
+        app.update()
+        hub = app._manager_hub_view
+        self.assertEqual(hub.club_badge.roundel.disc, "#7a1f2b")
+        self.assertEqual(hub.club_badge.roundel.initials, "NR")
+        self.assertEqual(hub.next_badge.roundel, palette.roundel(app.view_theme, None, "SU"))
+
+    def test_a_theme_change_repaints_the_roundels_in_that_theme(self):
+        app = self.app
+        self.follow_invented()
+        app.set_view(fm_review.SCHEDULE)
+        app.set_theme(palette.HIGH_CONTRAST.name)
+        app.update()
+        canvas = app._schedule_view._canvas
+        (ring,) = canvas.find_withtag("ring_0")
+        self.assertEqual(canvas.itemcget(ring, "outline"), palette.HIGH_CONTRAST.table[1])
+        self.assertEqual(app._manager_hub_view.club_badge.roundel.rim, palette.HIGH_CONTRAST.table[1])
+
     def _fg(self, button) -> str:
         c = button.cget("fg_color")
         return c if isinstance(c, str) else c[0]

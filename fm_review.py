@@ -622,6 +622,7 @@ class FMReviewApp(_Root):
         self._drop_note_job: str | None = None    # clears a refused drop's reason after a while
         self._dataset_serial = 0                  # bumped per installed save
         self._schedule_serial = 0                 # bumped when followed club or save changes
+        self._roundel_book: dict = {}             # theme name -> club name -> palette.Roundel, for the club views
         self._followed_uid: fd.FollowedClub | None = None   # persists across competition changes; resets on new save
         self._club_cache: tuple[int, tuple[fd.ClubEntry, ...]] | None = None    # the palette's clubs, per save
         self.opponent_filter: tuple[int, int] | None = None   # Results shows only matches between these two teams
@@ -973,6 +974,7 @@ class FMReviewApp(_Root):
         self._recolour()
         self._update_header_buttons()
         self._update_club_tint()
+        self._retheme_club_views()
         self._fill_competition_list()
         if self.about_window is not None and self.about_window.winfo_exists():
             self.about_window.apply_theme(theme)
@@ -1036,6 +1038,7 @@ class FMReviewApp(_Root):
         self.settings["club_colours"] = edits
         self._write_settings()
         self._update_club_tint()
+        self._rebuild_roundels()
         self.render()
 
     def reset_club_colours(self, club: str) -> None:
@@ -1043,6 +1046,7 @@ class FMReviewApp(_Root):
         self.settings["club_colours"] = self._club_edits_without(club)
         self._write_settings()
         self._update_club_tint()
+        self._rebuild_roundels()
         self.render()
 
     def show_club_colours(self) -> None:
@@ -1186,6 +1190,12 @@ class FMReviewApp(_Root):
             self.detail_label.configure(text="")
             self.show_yearbook_reader(payload)
             return
+        if kind == "roundels_ready":
+            serial, book = payload
+            if serial == self._schedule_serial:
+                self._roundel_book = book
+                self._retheme_club_views()
+            return
         if kind == "yearbook_moved_on":
             self._exporting = False
             self.export_button.configure(state="normal" if self.dataset else "disabled", text=EXPORT_LABEL)
@@ -1219,9 +1229,9 @@ class FMReviewApp(_Root):
         self.open_button.configure(state="normal")
         self.reopen_button.configure(state="normal")
         if kind == "schedule_ready":
-            serial, sched, snap = payload
+            serial, sched, snap, book = payload
             if serial == self._schedule_serial:
-                self.install_schedule_views(sched, snap)
+                self.install_schedule_views(sched, snap, book)
             return
         if kind == "xg":
             self.install_expected_goals(payload)
@@ -1575,10 +1585,12 @@ class FMReviewApp(_Root):
         if ds is None or club is None:
             return
 
+        edits = self._club_colour_edits()
+
         def _worker():
             sched = fd.club_schedule(ds, club)
             snap = fd.manager_snapshot(ds, club)
-            self.events.put(("schedule_ready", (serial, sched, snap)))
+            self.events.put(("schedule_ready", (serial, sched, snap, self._roundel_book_for(sched, edits))))
 
         import threading
         threading.Thread(target=_worker, daemon=True).start()
@@ -1596,11 +1608,38 @@ class FMReviewApp(_Root):
         if self.view in (SCHEDULE, MANAGER_HUB):
             self.render()
 
-    def install_schedule_views(self, sched: fd.Schedule, snap: fd.ManagerSnapshot) -> None:
+    def _club_colour_edits(self) -> dict:
+        edits = self.settings.get("club_colours")
+        return dict(edits) if isinstance(edits, dict) else {}
+
+    @staticmethod
+    def _roundel_book_for(sched: fd.Schedule, edits: dict) -> dict:
+        """Every theme's roundel for the followed club and each opponent (worker thread)."""
+        return palette.roundel_book([sched.club.name, *(i.opponent_club for i in sched.items)],
+                                    lambda name: club_colours.colours_for(name, edits), club_colours.initials)
+
+    def _club_roundels(self) -> dict:
+        return self._roundel_book.get(self.view_theme.name, {})
+
+    def _retheme_club_views(self) -> None:
+        """Repaint the Schedule and Hub in the window's colours: their roundels were worked out for every theme."""
+        self._schedule_view.set_theme(self.view_theme, self._club_roundels())
+        self._manager_hub_view.set_theme(self.view_theme, self._club_roundels())
+
+    def _rebuild_roundels(self) -> None:
+        """Work the roundels out again after a club's colours were edited, off the main thread."""
+        sched, serial, edits = self._schedule_view._schedule, self._schedule_serial, self._club_colour_edits()
+        if sched is None:
+            return
+        threading.Thread(target=lambda: self.events.put(
+            ("roundels_ready", (serial, self._roundel_book_for(sched, edits)))), daemon=True).start()
+
+    def install_schedule_views(self, sched: fd.Schedule, snap: fd.ManagerSnapshot, book: dict | None = None) -> None:
         """Install schedule and snapshot data into the custom views (main thread only)."""
         theme = self.view_theme
-        self._schedule_view.install_schedule(sched, theme)
-        self._manager_hub_view.install_snapshot(snap, theme, self.names)
+        self._roundel_book = book or {}
+        self._schedule_view.install_schedule(sched, theme, self._club_roundels())
+        self._manager_hub_view.install_snapshot(snap, theme, self.names, self._club_roundels())
         self._club_scope = f"{sched.club.name}: every competition, {sched.season_label} season · {sched.describe()}"
         if self.view in (SCHEDULE, MANAGER_HUB):
             self.render()

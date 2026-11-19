@@ -16,6 +16,7 @@ from typing import Sequence
 
 import fm_data as fd
 import palette as pal
+import roundel_ui
 
 # ---------------------------------------------------------------------------
 # Pure filter model
@@ -92,6 +93,7 @@ if _CTK_AVAILABLE:
         """
 
         ROW_HEIGHT = 32
+        ROUNDEL = 22            # the opponent's roundel, in pixels across
         PAGE_SIZE = 50          # max rows rendered at once; neighbouring pages pre-fetched lazily
 
         def __init__(self, master, *, on_inspect=None, on_right_click=None,
@@ -101,6 +103,7 @@ if _CTK_AVAILABLE:
             self._filter = ScheduleFilter()
             self._filtered: tuple[fd.ScheduleItem, ...] = ()
             self._theme: pal.Theme = pal.MIDNIGHT_EMERALD
+            self._roundels: dict[str | None, pal.Roundel] = {}
             self._compact = compact
             self._on_inspect = on_inspect           # (item) → None
             self._on_right_click = on_right_click   # (event, item) → None
@@ -142,9 +145,13 @@ if _CTK_AVAILABLE:
 
         # ---- public API (call on main thread only) ---------------------
 
-        def install_schedule(self, schedule: fd.Schedule, theme: pal.Theme) -> None:
+        def install_schedule(self, schedule: fd.Schedule, theme: pal.Theme,
+                             roundels: dict[str | None, pal.Roundel] | None = None) -> None:
+            """Show a schedule. `roundels` maps each opponent's club name (None: unresolved) to its roundel in this
+            theme, worked out off the main thread (palette.roundel_book)."""
             self._schedule = schedule
             self._theme = theme
+            self._roundels = roundels or {}
             self._filter = ScheduleFilter()
             self._rebuild()
 
@@ -157,8 +164,10 @@ if _CTK_AVAILABLE:
             self._filter = f
             self._rebuild()
 
-        def set_theme(self, theme: pal.Theme) -> None:
+        def set_theme(self, theme: pal.Theme, roundels: dict[str | None, pal.Roundel] | None = None) -> None:
             self._theme = theme
+            if roundels is not None:
+                self._roundels = roundels
             self._repaint()
 
         def set_compact(self, compact: bool) -> None:
@@ -237,8 +246,13 @@ if _CTK_AVAILABLE:
                 date_text = item.fixture.date.strftime("%d %b %Y").lstrip("0") if item.fixture.date else "—"
                 self._canvas.create_text(6, y0 + h // 2, anchor="w", text=date_text,
                                          fill=theme.table[1], font=("Segoe UI", 9), tags=f"row_{i}")
-                # opponent
+                # opponent, after a roundel in their colours (an identity aid, not a crest)
                 opp_x = 90
+                badge = self._roundels.get(item.opponent_club)
+                if badge is not None:
+                    roundel_ui.draw_roundel(self._canvas, opp_x + self.ROUNDEL // 2, y0 + h // 2, self.ROUNDEL,
+                                            badge, (f"row_{i}", "roundel"), i)
+                    opp_x += self.ROUNDEL + 6
                 self._canvas.create_text(opp_x, y0 + h // 2, anchor="w",
                                          text=f"{item.venue}  {item.opponent}",
                                          fill=theme.link if item.home else theme.table[1],
@@ -251,7 +265,7 @@ if _CTK_AVAILABLE:
                     score_fg = result_pair[1] or theme.table[1]
                     if result_pair[0]:
                         self._canvas.create_rectangle(score_x - 2, y0 + 4, score_x + 56, y1 - 4,
-                                                      fill=result_pair[0], outline="", tags=f"row_{i}")
+                                                      fill=result_pair[0], outline="", tags=(f"row_{i}", f"pill_{i}"))
                     self._canvas.create_text(score_x, y0 + h // 2, anchor="w", text=score_text,
                                              fill=score_fg, font=("Segoe UI", 9, "bold"), tags=f"row_{i}")
                     # outcome letter
