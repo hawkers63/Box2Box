@@ -199,3 +199,33 @@ class RoundelTests(unittest.TestCase):
         for theme in palette.THEMES:
             palette.roundel(theme, self.CLUB, "NR")
         self.assertEqual(before, {t.name: (dict(t.colours), dict(t.zones)) for t in palette.THEMES})
+
+
+class RoundelBookTests(unittest.TestCase):
+    COLOURS = {"Northbridge Rovers": ("#7a1f2b", "#f2c94c")}
+
+    def book(self):
+        return palette.roundel_book(["Northbridge Rovers", "Eastholm Athletic", None, "Northbridge Rovers"],
+                                    self.COLOURS.get, lambda name: name[:2].upper())
+
+    def test_every_theme_has_a_roundel_for_every_club_named(self):
+        book = self.book()
+        self.assertEqual(set(book), {t.name for t in palette.THEMES})
+        for theme in palette.THEMES:
+            self.assertEqual(set(book[theme.name]), {"Northbridge Rovers", "Eastholm Athletic", None})
+            self.assertEqual(book[theme.name]["Northbridge Rovers"],
+                             palette.roundel(theme, ("#7a1f2b", "#f2c94c"), "NO"))
+
+    def test_a_club_without_colours_or_without_a_name_is_neutral_and_the_nameless_one_has_no_initials(self):
+        for roundels in self.book().values():
+            self.assertFalse(roundels["Eastholm Athletic"].known)
+            self.assertEqual(roundels["Eastholm Athletic"].initials, "EA")
+            self.assertEqual((roundels[None].known, roundels[None].initials), (False, ""))
+
+    def test_by_default_the_rim_stands_apart_from_both_row_colours(self):
+        for theme in palette.THEMES:
+            for colours in (("#1b1b1b", "#1b1b1b"), ("#2a2a2a", "#242424"), None):
+                r = palette.roundel(theme, colours, "WT")
+                for surface in (theme.table[0], theme.window):
+                    self.assertGreaterEqual(palette.contrast_ratio(r.rim, surface), palette.NON_TEXT,
+                                            (theme.name, surface))

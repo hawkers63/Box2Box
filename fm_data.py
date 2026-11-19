@@ -2995,6 +2995,7 @@ class ScheduleItem:
     days: int | None
     xg: ExpectedGoals | None
     xg_state: str              # known, pending or unavailable for a played match; "" for one not yet played
+    opponent_club: str | None = None   # the opponent's club as the save names it; None when it cannot be resolved
 
     @property
     def played(self) -> bool:
@@ -3090,7 +3091,8 @@ def _schedule_item(dataset: Dataset, f: Fixture, ref: FixtureRef, ids: frozenset
         ref=ref, fixture=f, competition_id=f.competition_id, team_id=own, opponent_id=other, opponent=opponent,
         home=home, venue="N" if f.is_neutral_venue else "H" if home else "A", neutral=f.is_neutral_venue,
         outcome=outcome, score=score, when=when, days=days,
-        xg=dataset.expected_goals.get(fixture_key(f)) if state == STATE_KNOWN else None, xg_state=state)
+        xg=dataset.expected_goals.get(fixture_key(f)) if state == STATE_KNOWN else None, xg_state=state,
+        opponent_club=f.away_club_name if home else f.home_club_name)
 
 
 def club_schedule(

@@ -9,7 +9,7 @@ are its own. No UI code here, so the exports can use it without loading a window
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 
 import fm_data as fd
@@ -344,10 +344,12 @@ class Roundel:
 
 def roundel(theme: Theme, colours: tuple[str, str] | None, initials: str = "", *,
             surface: str | None = None) -> Roundel:
-    """A club's roundel on `surface` (the theme's table colour unless given). The club's colours are used as they
-    are, in every theme: a roundel is not a tint, so High-Contrast keeps them and rims them in its own text colour.
-    Result, zone and warning colours are never touched."""
-    surface = surface or theme.table[0]
+    """A club's roundel on `surface`, or by default on either of the theme's row colours (its table and its
+    window), as alternate rows use both. The club's colours are used as they are, in every theme: a roundel is not
+    a tint, so High-Contrast keeps them and rims them in its own text colour. Result, zone and warning colours are
+    never touched."""
+    surfaces = (surface,) if surface else (theme.table[0], theme.window)
+    surface = surfaces[0]
     if colours is None:
         disc, ring = blend(surface, theme.muted, 0.35), blend(surface, theme.muted, 0.18)
         known = False
@@ -356,8 +358,18 @@ def roundel(theme: Theme, colours: tuple[str, str] | None, initials: str = "", *
         if contrast_ratio(ring, disc) < DISTINCT:
             ring = _nearest(ring, (disc, DISTINCT))
         known = True
-    rim = theme.table[1] if not theme.club_colours else _nearest(ring, (surface, NON_TEXT))
+    rim = theme.table[1] if not theme.club_colours else _nearest(ring, *((s, NON_TEXT) for s in surfaces))
     return Roundel(rim, ring, disc, readable_text(disc), initials, known)
+
+
+def roundel_book(clubs: Iterable[str | None], colours_of: Callable[[str], tuple[str, str] | None],
+                 initials_of: Callable[[str], str]) -> dict[str, dict[str | None, Roundel]]:
+    """Every theme's roundel for each club named, by theme name and then club name, worked out once (off the
+    window's thread) so a theme change only picks. None stands for a side the save cannot resolve: neutral, no
+    initials."""
+    names = set(clubs)
+    return {theme.name: {name: roundel(theme, colours_of(name) if name else None, initials_of(name) if name else "")
+                         for name in names} for theme in THEMES}
 
 
 def with_club(theme: Theme, tint: ClubTint | None) -> Theme:
