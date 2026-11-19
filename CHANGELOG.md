@@ -1,8 +1,8 @@
 # Changelog
 
-**Release:** 2.8  
+**Release:** 2.9  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 2.8), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.9), launched with `Box2Box.bat`
 
 All notable changes to this project will be documented in this file.
 
@@ -10,6 +10,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [2.9] - 2026-11-19
+
+Club roundels, and a Hub you can step back through the season.
+
+### Added
+
+- **Club roundels.** A small two-colour roundel, drawn from a club's colours (Theme ▾ → Club colours…), now sits beside each opponent on the Schedule, beside the followed club at the top of the Hub, and beside the next opponent on the Hub. It is an aid to telling clubs apart, not a club crest. A club with no colours gets a plain grey roundel. Its initials read at 4.5:1 or better in every theme, and in High-Contrast it is outlined in white. Results keep their W, D, L or ? letters, the H, A or N venue, and their own colours, whatever the club's colours. Exports, CSV files and the Yearbook are unchanged.
+- **Matchday stepper on the Hub.** ‹ Previous, Next › and a slider move the Hub's position, table excerpt, form and next match to any of the followed club's league matchdays, each as it stood just before that match's kick-off. The label names the matchday and the date of its snapshot (a matchday played late keeps its number). Nothing from the chosen match or any later one is counted, including other matches the same day and matches with no kick-off time. **Today** returns to the save's own date. A finished season ends with a step after the last match; a club with no league steps through its matches without a league position; undated matches are counted but not placed. Following another club or opening another save starts the stepper again at the save's date.
+- **A table excerpt on the Hub**: the followed club and the clubs round it, worked out from the results.
+
+### Fixed
+
+- **The Hub's league position** now appears. It was never shown before.
+- **Schedule and Hub follow a theme change** at once, instead of keeping the colours they opened with.
 
 ## [2.8] - 2026-11-19
 

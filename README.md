@@ -8,7 +8,7 @@
 
 A Windows desktop viewer for the fixtures, results, grids and league tables in a Football Manager 27 (or 26) save. Saves are read with [fmsave](https://rhiever.github.io/fmsave/) and are never modified.
 
-[![Release 2.8](https://img.shields.io/badge/Release-2.8-0EA5E9)](https://github.com/hawkers63/Box2Box/releases/latest)
+[![Release 2.9](https://img.shields.io/badge/Release-2.9-0EA5E9)](https://github.com/hawkers63/Box2Box/releases/latest)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)](https://www.microsoft.com/windows)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![GUI](https://img.shields.io/badge/GUI-CustomTkinter%20%2B%20tksheet-10B981)](https://customtkinter.tomschimansky.com/)
@@ -20,9 +20,9 @@ A Windows desktop viewer for the fixtures, results, grids and league tables in a
 
 **Database viewer** · entry point `fm_review.py` · launcher `Box2Box.bat`
 
-**Release:** 2.8  
+**Release:** 2.9  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 2.8), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.9), launched with `Box2Box.bat`
 
 </div>
 
@@ -256,6 +256,15 @@ Open a feature for the full details.
 </details>
 
 <details>
+<summary><b>🗓️ Schedule and Hub</b></summary>
+
+**Schedule and Hub.** Follow a club, then open **Schedule** for every match it plays this season, across all its competitions, or **Hub** for an overview: its role, league position, form, next match and a few rows of the table round it. Each club has a small two-colour roundel drawn from its colours (Theme ▾ → Club colours…): an aid to telling clubs apart, not a club crest. A club with no colours gets a plain grey one. Results keep their W, D, L or ? letters and their colours.
+
+**Matchday stepper.** On the Hub, **‹ Previous**, **Next ›** and the slider move the position, table, form and next match back or forward through the club's league matchdays, each shown as it stood just before that match's kick-off. A matchday keeps its number even if it was played late, and the label gives the date of each snapshot. No result from that match or any later one is counted. **Today** returns to the save's own date. A club with no league steps through its matches without a league position. Undated matches cannot be placed and are only counted.
+
+</details>
+
+<details>
 <summary><b>📋 Copy for a post</b></summary>
 
 **Copy for a post.** **Export ▾ → Copy for a post ▸** (or the command palette) copies the **Table**, **My club's results** (with your next match) or the **Recent results** (the latest round) as a table ready to paste into a Reddit or SI forums career update. One copy puts two versions on the clipboard: Markdown text, which Reddit's editor takes, and an HTML table, which a rich editor takes. Each ends with the in-game date and how complete the data is, and a match with no recoverable score reads "n/a". Zone and club colours are left out, because forums strip them.
@@ -471,6 +480,7 @@ The tests write only to temporary directories and do not need a real Football Ma
 
 | Release | Date | Highlights |
 | --- | --- | --- |
+| [**2.9**](https://github.com/hawkers63/Box2Box/releases/tag/v2.9) | 19&nbsp;Nov&nbsp;2026 | 🔵 Club roundels on the Schedule and Hub, and a matchday stepper that shows the Hub as it stood before each league match |
 | [**2.8**](https://github.com/hawkers63/Box2Box/releases/tag/v2.8) | 19&nbsp;Nov&nbsp;2026 | 📖 Yearbook reader spreads, bookmarks and a chapter strip; saves the edition you are reading; Schedule and Hub show when they are open |
 | [**2.7**](https://github.com/hawkers63/Box2Box/releases/tag/v2.7) | 19&nbsp;Nov&nbsp;2026 | 🗓️ Schedule view, manager hub, and badge contrast fixes meeting WCAG AA |
 | [**2.6**](https://github.com/hawkers63/Box2Box/releases/tag/v2.6) | 19&nbsp;Nov&nbsp;2026 | 📈 The archive remembers expected goals, and the Yearbook's final tables show xG, xGA and goals minus xG where the saves kept them |
