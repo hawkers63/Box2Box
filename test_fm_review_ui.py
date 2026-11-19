@@ -26,6 +26,9 @@ import archive
 import fm_data as fd
 import fm_review
 import inspector
+import yearbook
+import yearbook_editions
+import yearbook_read
 import palette
 import test_fm_data
 from test_fm_data import LEAGUE, D, club, fx, info, match_stats, row, team, unresolved_away
@@ -2019,8 +2022,8 @@ class WindowTests(unittest.TestCase):
             self.assertTrue(app._exporting)
             self.assertTrue(self.wait_until(lambda: not app._exporting, 10))
         self.assertEqual(seen["book"].season_label, "2026")
-        self.assertEqual(seen["path"], out / "Yearbook 2026.pdf")
-        self.assertIn("Yearbook 2026.pdf", self.detail())
+        self.assertEqual(seen["path"], out / "Yearbooks" / "2026" / "Yearbook 2026 (in-game 1 Sep 2026).pdf")
+        self.assertIn("Saved the 1 Sep 2026 edition.", self.detail())
 
     def test_the_yearbook_menu_offers_to_mark_the_followed_club_only_when_one_is_followed(self):
         app = self.app
@@ -2063,9 +2066,192 @@ class WindowTests(unittest.TestCase):
         app = self.app
         app.install_dataset(dataset())
         titles = lambda: [i.title for i in app._palette_items()]
-        self.assertNotIn("Export Yearbook (PDF)…", titles())
+        self.assertNotIn("Save Yearbook edition…", titles())
         self.bank_into_archive()
-        self.assertIn("Export Yearbook (PDF)…", titles())
+        self.assertIn("Save Yearbook edition…", titles())
+
+    # ----------------------------------------------------------------- v2.5: editions and the read window
+
+    def sample_book(self):
+        cover = archive.BookCoverage(1, D(2026, 8, 9), D(2026, 8, 9), (), True)
+        title = yearbook.TitlePage("2026/27", ("Built from 1 banked save.", "Season in progress."))
+        lines = tuple(yearbook.TableLine(i, t, 3, 2, 1, 0, 5, 2, 3, 7, "WWD", "relegation" if i == 2 else "", "▲1", "2.33",
+                                         t == "Leeds United") for i, t in enumerate(("Hull City", "Leeds United"), 1))
+        week = yearbook.LeaguePage("Premier League", 1, "Matchweek 1 · Sat 8 – Mon 10 Aug",
+                                   (yearbook.BookMatch("Sat 8", "Hull City", "Leeds United", "2-0"),), lines, D(2026, 8, 8))
+        cup = yearbook.CupBlock("FA Cup", "Round 1", "", "Sat 1 Aug", (yearbook.BookMatch("", "A", "B", "1-0"),), D(2026, 8, 1))
+        return yearbook.Yearbook("2026/27", cover, (title, cup, week))
+
+    def open_reader(self, on_save=None):
+        pages, contents = yearbook_read.read_pages(self.sample_book())
+        self.app.show_yearbook_reader(pages, contents, "2026/27", on_save or (lambda: None))
+        reader = self.app.yearbook_reader
+        self.app.update()
+        return reader, pages
+
+    def test_the_reader_opens_on_the_title_page_and_steps_through_the_book_without_going_past_either_end(self):
+        reader, pages = self.open_reader()
+        self.assertEqual(reader.heading_label.cget("text"), "Football Yearbook 2026/27")
+        self.assertIn("Page 1 of 3", reader.page_label.cget("text"))
+        reader.previous()
+        self.assertEqual(reader.index, 0)
+        reader.next()
+        reader.next()
+        reader.next()
+        self.assertEqual(reader.index, 2)
+        self.assertIn("Page 3 of 3", reader.page_label.cget("text"))
+
+    def test_a_table_page_shows_the_pdfs_columns_its_lines_and_its_footnote(self):
+        reader, pages = self.open_reader()
+        reader.show(2)
+        self.assertEqual(list(reader.sheet.headers()), list(pages[2].columns))
+        self.assertEqual([list(r) for r in reader.sheet.get_sheet_data()], [list(r) for r in pages[2].rows])
+        self.assertIn("Sat 8   Hull City 2-0 Leeds United", reader.lines_box.get("1.0", "end"))
+        self.assertIn("Table calculated from the results.", reader.notes_label.cget("text"))
+        self.assertIn("± is the change in place", reader.notes_label.cget("text"))
+
+    def test_a_page_without_a_table_hides_the_sheet(self):
+        reader, _ = self.open_reader()
+        self.assertFalse(reader.sheet.winfo_ismapped())
+        reader.show(2)
+        self.app.update()
+        self.assertTrue(reader.sheet.winfo_ismapped())
+
+    def test_choosing_a_competition_in_the_contents_jumps_to_its_first_page(self):
+        reader, pages = self.open_reader()
+        labels = list(reader.contents_list.get(0, "end"))
+        self.assertEqual(labels, ["Title page", "FA Cup", "Premier League"])
+        reader.contents_list.selection_clear(0, "end")
+        reader.contents_list.selection_set(2)
+        reader.contents_list.event_generate("<<ListboxSelect>>")
+        self.app.update()
+        self.assertEqual(reader.index, 2)
+        reader.show(1)
+        self.assertEqual(reader.contents_list.curselection(), (1,))          # the list follows the page
+
+    def test_the_marked_club_is_highlighted_in_the_sheet(self):
+        reader, _ = self.open_reader()
+        reader.show(2)
+        self.assertEqual(reader.marked_rows, (1,))
+
+    def test_save_this_edition_calls_the_same_worker_and_closing_writes_nothing(self):
+        saved = []
+        reader, _ = self.open_reader(on_save=lambda: saved.append(True))
+        reader.close_button.invoke()
+        self.assertEqual(saved, [])
+        reader, _ = self.open_reader(on_save=lambda: saved.append(True))
+        reader.save_button.invoke()
+        self.assertEqual(saved, [True])
+
+    def test_the_arrow_keys_and_escape_work_in_the_reader(self):
+        reader, _ = self.open_reader()
+        reader.focus_force()
+        reader.event_generate("<Right>")
+        self.app.update()
+        self.assertEqual(reader.index, 1)
+        reader.event_generate("<Left>")
+        self.app.update()
+        self.assertEqual(reader.index, 0)
+        reader.event_generate("<Escape>")
+        self.app.update()
+        self.assertFalse(reader.winfo_exists())
+
+    def test_a_theme_change_recolours_an_open_reader(self):
+        reader, _ = self.open_reader()
+        reader.show(2)
+        other = palette.THEMES[1]
+        self.app.set_theme(other.name)
+        self.assertEqual(reader.cget("fg_color"), other.window)
+
+    def test_a_second_request_brings_the_open_reader_forward_instead_of_opening_another(self):
+        reader, pages = self.open_reader()
+        self.app.show_yearbook_reader(pages, [("Title page", 0)], "2026/27", lambda: None)
+        self.assertIs(self.app.yearbook_reader, reader)
+
+    def test_reading_builds_off_the_main_thread_then_opens_the_window_and_changes_nothing_on_disk(self):
+        app = self.app
+        self.bank_into_archive()
+        out = Path(self.folder.name) / "exports"
+        with mock.patch.object(fm_review, "export_folder", return_value=out):
+            app.names = {12: "Championship"}
+            app.read_yearbook(2026)
+            self.assertTrue(app._exporting)
+            self.assertTrue(self.wait_until(lambda: app.yearbook_reader is not None and not app._exporting, 15))
+        self.assertIn("Football Yearbook 2026", app.yearbook_reader.heading_label.cget("text"))
+        self.assertFalse(out.exists())
+
+    def test_each_season_in_the_yearbook_menu_offers_save_read_and_its_saved_editions_newest_first(self):
+        app = self.app
+        self.bank_into_archive()
+        out = Path(self.folder.name) / "exports"
+        shelf = yearbook_editions.season_folder(out, "2026")
+        shelf.mkdir(parents=True)
+        for d in (D(2026, 8, 1), D(2026, 9, 1)):
+            (shelf / yearbook_editions.edition_file_name("2026", d)).write_bytes(b"%PDF-")
+        with mock.patch.object(fm_review, "export_folder", return_value=out):
+            app._refresh_yearbook_menu()
+            menu = app.yearbook_menu
+            index = next(i for i in range(menu.index("end") + 1) if menu.type(i) == "cascade" and menu.entrycget(i, "label") == "2026")
+            sub = menu.nametowidget(menu.entrycget(index, "menu"))
+            labels = [sub.entrycget(i, "label") for i in range(sub.index("end") + 1) if sub.type(i) != "separator"]
+        # the 1 Sep edition matches the banked save's in-game date, so it can be built again
+        self.assertEqual(labels[:3], ["Save the latest edition", "Build it again", "Read before saving…"])
+        self.assertEqual(labels[-2:], ["1 Sep 2026 edition", "1 Aug 2026 edition"])
+
+    def test_choosing_a_saved_edition_opens_that_file_and_does_not_rebuild_it(self):
+        app = self.app
+        self.bank_into_archive()
+        out = Path(self.folder.name) / "exports"
+        shelf = yearbook_editions.season_folder(out, "2026")
+        shelf.mkdir(parents=True)
+        path = shelf / yearbook_editions.edition_file_name("2026", D(2026, 8, 1))
+        path.write_bytes(b"%PDF-")
+        with mock.patch.object(fm_review, "export_folder", return_value=out), \
+                mock.patch.object(app, "_open_path") as opened, \
+                mock.patch.object(fm_review.yearbook_pdf, "render") as render:
+            app._refresh_yearbook_menu()
+            menu = app.yearbook_menu
+            index = next(i for i in range(menu.index("end") + 1) if menu.type(i) == "cascade" and menu.entrycget(i, "label") == "2026")
+            sub = menu.nametowidget(menu.entrycget(index, "menu"))
+            last = sub.index("end")
+            sub.invoke(last)
+        opened.assert_called_once_with(path)
+        render.assert_not_called()
+
+    def test_saving_the_same_coverage_twice_says_the_edition_is_already_saved_and_writes_nothing_more(self):
+        app = self.app
+        self.bank_into_archive()
+        out = Path(self.folder.name) / "exports"
+
+        def fake_render(book, path):
+            Path(path).write_bytes(b"%PDF-")
+
+        with mock.patch.object(fm_review, "export_folder", return_value=out), \
+                mock.patch.object(fm_review.yearbook_pdf, "render", side_effect=fake_render) as render, \
+                mock.patch.object(fm_review.messagebox, "askyesno", return_value=False):
+            app.export_yearbook(2026)
+            self.assertTrue(self.wait_until(lambda: not app._exporting, 10))
+            first = self.detail()
+            app.export_yearbook(2026)
+            self.assertTrue(self.wait_until(lambda: not app._exporting, 10))
+        self.assertIn("edition", first)
+        self.assertEqual(self.detail(), "This edition is already saved.")
+        self.assertEqual(render.call_count, 1)
+
+    def test_the_palette_offers_to_save_an_edition_and_to_open_the_latest_one_only_when_one_exists(self):
+        app = self.app
+        app.install_dataset(dataset())
+        titles = lambda: [i.title for i in app._palette_items()]
+        self.assertNotIn("Save Yearbook edition…", titles())
+        self.bank_into_archive()
+        out = Path(self.folder.name) / "exports"
+        with mock.patch.object(fm_review, "export_folder", return_value=out):
+            self.assertIn("Save Yearbook edition…", titles())
+            self.assertNotIn("Open latest Yearbook", titles())
+            shelf = yearbook_editions.season_folder(out, "2027")
+            shelf.mkdir(parents=True)
+            (shelf / yearbook_editions.edition_file_name("2027", D(2027, 5, 1))).write_bytes(b"%PDF-")
+            self.assertIn("Open latest Yearbook", titles())
 
 
 class PathsTests(unittest.TestCase):

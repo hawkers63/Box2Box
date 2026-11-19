@@ -50,7 +50,9 @@ import inspector
 import palette
 import tooltip
 import yearbook
+import yearbook_editions
 import yearbook_pdf
+import yearbook_read
 
 APP_TITLE = "Box2Box"
 VERSION = "2.4.1"
@@ -302,6 +304,155 @@ class AboutWindow(ctk.CTkToplevel):
         y = max(0, master.winfo_rooty() + (master.winfo_height() - round(height * scale)) // 2)
         self.geometry(f"{self.WIDTH}x{height}+{x}+{y}")
         self.minsize(self.WIDTH, height)
+
+    def bring_forward(self) -> None:
+        self.lift()
+        self.focus_force()
+
+
+class YearbookReader(ctk.CTkToplevel):
+    """The Yearbook, read page by page before it is saved: each page's lines and table as the PDF will print them,
+    a list of the competitions to jump to, Previous and Next. It only reads the page model; saving goes through the
+    same worker as the menu, never on this thread."""
+
+    WIDTH, HEIGHT = 1140, 760
+
+    def __init__(self, master: ctk.CTk, pages: Sequence[yearbook_read.ReadPage], contents: Sequence[tuple[str, int]],
+                 season_label: str, on_save: Callable[[], object]) -> None:
+        super().__init__(master)
+        apply_window_icon(self)
+        self.title(f"Read the Yearbook {season_label}")
+        self.pages, self.contents, self.on_save = list(pages), list(contents), on_save
+        self.index = 0
+        self.marked_rows: tuple[int, ...] = ()
+        self.geometry(f"{self.WIDTH}x{self.HEIGHT}")
+        self.minsize(760, 480)
+        self.columnconfigure(1, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        self.contents_list = tk.Listbox(self, width=30, exportselection=False, activestyle="none", borderwidth=0,
+                                        highlightthickness=0, font=(FONT, 11))
+        self.contents_list.grid(row=0, column=0, sticky="ns", padx=(14, 6), pady=(14, 6))
+        for label, _ in self.contents:
+            self.contents_list.insert("end", label)
+        self.contents_list.bind("<<ListboxSelect>>", self._on_contents)
+
+        self.body = ctk.CTkFrame(self, fg_color="transparent")
+        self.body.grid(row=0, column=1, sticky="nsew", padx=(6, 14), pady=(14, 6))
+        self.body.columnconfigure(0, weight=1)
+        self.heading_label = ctk.CTkLabel(self.body, text="", font=ctk.CTkFont(FONT, 18, "bold"), anchor="w",
+                                          justify="left", wraplength=self.WIDTH - 340)
+        self.heading_label.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        self.lines_box = ctk.CTkTextbox(self.body, wrap="word", font=ctk.CTkFont(FONT, 12), height=120)
+        self.lines_box.grid(row=1, column=0, sticky="nsew")
+        self.sheet = Sheet(self.body, theme="dark blue", show_row_index=False, show_top_left=False, table_wrap="",
+                           header_wrap="", allow_cell_overflow=True, font=(FONT, 10, "normal"),
+                           header_font=(FONT, 10, "bold"), outline_thickness=0, default_row_height=24)
+        self.sheet.enable_bindings("single_select", "column_width_resize", "copy", "arrowkeys")
+        self.sheet.grid(row=2, column=0, sticky="nsew", pady=(8, 0))
+        self.notes_label = ctk.CTkLabel(self.body, text="", font=ctk.CTkFont(FONT, 11), anchor="w", justify="left",
+                                        wraplength=self.WIDTH - 340)
+        self.notes_label.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+
+        bar = ctk.CTkFrame(self, fg_color="transparent")
+        bar.grid(row=1, column=0, columnspan=2, sticky="ew", padx=14, pady=(0, 14))
+        self.previous_button = ctk.CTkButton(bar, text="Previous", width=90, command=self.previous)
+        self.previous_button.pack(side="left")
+        self.page_label = ctk.CTkLabel(bar, text="", width=130)
+        self.page_label.pack(side="left", padx=8)
+        self.next_button = ctk.CTkButton(bar, text="Next", width=90, command=self.next)
+        self.next_button.pack(side="left")
+        self.close_button = ctk.CTkButton(bar, text="Close", width=90, command=self.destroy)
+        self.close_button.pack(side="right")
+        self.save_button = ctk.CTkButton(bar, text="Save this edition", width=150, command=self.save)
+        self.save_button.pack(side="right", padx=8)
+
+        for key, step in (("<Right>", 1), ("<Left>", -1), ("<Next>", 1), ("<Prior>", -1)):
+            self.bind(key, lambda _e, s=step: self.step(s))
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.apply_theme(master.theme)
+        self.show(0)
+        self.transient(master)
+        self.after(100, self.bring_forward)
+
+    def apply_theme(self, theme: palette.Theme) -> None:
+        self.configure(fg_color=theme.window)
+        self.contents_list.configure(bg=theme.competition_list[0], fg=theme.competition_list[1],
+                                     selectbackground=theme.list_selected[0], selectforeground=theme.list_selected[1])
+        self.heading_label.configure(text_color=theme.heading[1])
+        for label in (self.notes_label, self.page_label):
+            label.configure(text_color=theme.muted)
+        self.lines_box.configure(fg_color=theme.table[0], text_color=theme.table[1])
+        for button in (self.previous_button, self.next_button, self.save_button, self.close_button):
+            button.configure(fg_color=theme.accent[0], hover_color=theme.accent_hover, text_color=theme.accent[1])
+        self.sheet.set_options(frame_bg=theme.table[0], table_bg=theme.table[0], table_fg=theme.table[1],
+                               table_grid_fg=theme.grid_line, header_bg=theme.sheet_heading[0],
+                               header_fg=theme.sheet_heading[1], table_selected_cells_bg=theme.selection[0],
+                               table_selected_cells_border_fg=theme.selection[1])
+        self._theme = theme
+        self._mark_rows()
+
+    def _mark_rows(self) -> None:
+        self.sheet.dehighlight_all()
+        if self.marked_rows:
+            self.sheet.highlight_rows(list(self.marked_rows), bg=self._theme.focus[0], fg=self._theme.focus[1])
+
+    def show(self, index: int) -> None:
+        self.index = max(0, min(index, len(self.pages) - 1))
+        page = self.pages[self.index]
+        self.heading_label.configure(text=page.heading)
+        self.lines_box.configure(state="normal")
+        self.lines_box.delete("1.0", "end")
+        self.lines_box.insert("1.0", "\n".join(page.lines))
+        self.lines_box.configure(state="disabled")
+        has_table = bool(page.columns)
+        if has_table:
+            self.sheet.set_sheet_data([list(r) for r in page.rows], reset_col_positions=True, reset_row_positions=True)
+            self.sheet.headers(list(page.columns))
+            self.sheet.set_all_column_widths()
+            self.marked_rows = page.marked_rows
+            self._mark_rows()
+            self.sheet.grid()
+            self.body.rowconfigure(1, weight=0)
+            self.body.rowconfigure(2, weight=1)
+            self.lines_box.configure(height=min(max(len(page.lines), 1) * 20 + 16, 230) if page.lines else 0)
+            self.lines_box.grid_configure(sticky="ew")
+            if not page.lines:
+                self.lines_box.grid_remove()
+            else:
+                self.lines_box.grid()
+        else:
+            self.marked_rows = ()
+            self.sheet.grid_remove()
+            self.lines_box.grid()
+            self.lines_box.grid_configure(sticky="nsew")
+            self.body.rowconfigure(1, weight=1)
+            self.body.rowconfigure(2, weight=0)
+        self.notes_label.configure(text="\n".join(page.notes))
+        self.page_label.configure(text=f"Page {self.index + 1} of {len(self.pages)}")
+        self.previous_button.configure(state="normal" if self.index else "disabled")
+        self.next_button.configure(state="normal" if self.index < len(self.pages) - 1 else "disabled")
+        here = max((k for k, (_, start) in enumerate(self.contents) if start <= self.index), default=None)
+        self.contents_list.selection_clear(0, "end")
+        if here is not None:
+            self.contents_list.selection_set(here)
+
+    def step(self, by: int) -> None:
+        self.show(self.index + by)
+
+    def next(self) -> None:
+        self.step(1)
+
+    def previous(self) -> None:
+        self.step(-1)
+
+    def _on_contents(self, _event) -> None:
+        chosen = self.contents_list.curselection()
+        if chosen:
+            self.show(self.contents[chosen[0]][1])
+
+    def save(self) -> None:
+        self.on_save()
 
     def bring_forward(self) -> None:
         self.lift()
@@ -581,6 +732,7 @@ class FMReviewApp(_Root):
         self._reading_xg = False          # the save is open and its expected goals are on their way
         self._exporting = False
         self.about_window: AboutWindow | None = None
+        self.yearbook_reader: YearbookReader | None = None
 
         self.comp_id: int | None = None
         self.season: int | None = None
@@ -942,6 +1094,8 @@ class FMReviewApp(_Root):
         self._fill_competition_list()
         if self.about_window is not None and self.about_window.winfo_exists():
             self.about_window.apply_theme(theme)
+        if self.yearbook_reader is not None and self.yearbook_reader.winfo_exists():
+            self.yearbook_reader.apply_theme(theme)
         shown = self.sheets.get(self._shown) if self._shown else None
         where = (shown.get_xview()[0], shown.get_yview()[0]) if shown is not None else None
         if self._hub_key is not None:
@@ -1119,6 +1273,12 @@ class FMReviewApp(_Root):
             return
         if kind in ("exported", "export_failed"):
             self._finish_export(kind, payload)
+            return
+        if kind == "yearbook_ready":
+            self._exporting = False
+            self.export_button.configure(state="normal" if self.dataset else "disabled", text=EXPORT_LABEL)
+            self.detail_label.configure(text="")
+            self.show_yearbook_reader(*payload)
             return
         if kind == "banked":
             self.detail_label.configure(text=payload.describe())
@@ -1661,8 +1821,16 @@ class FMReviewApp(_Root):
             self.detail_label.configure(text="")
             messagebox.showerror("Could not export", payload, parent=self)
             return
+        if payload[0] == "yearbook":
+            _, plan = payload
+            self.detail_label.configure(text=plan.message)
+            if plan.action != "already" and messagebox.askyesno(
+                    "Yearbook saved", f"{plan.message}\n\n{plan.path.name}\n\nin {plan.path.parent}.\n\nOpen it now?",
+                    parent=self):
+                self._open_path(plan.path)
+            return
         export_kind, path = payload
-        what = "Yearbook" if export_kind == "yearbook" else fx.KINDS[export_kind]
+        what = fx.KINDS[export_kind]
         self.detail_label.configure(text=f"Saved the {what} {path.name} in {path.parent}")
         if messagebox.askyesno("Export saved", f"Saved the {what}\n\n{path.name}\n\nin {path.parent}.\n\nOpen it now?",
                                parent=self):
@@ -1685,27 +1853,48 @@ class FMReviewApp(_Root):
     def _refresh_yearbook_menu(self) -> None:
         menu = self.yearbook_menu
         menu.delete(0, "end")
+        for child in menu.winfo_children():                  # the previous season submenus
+            child.destroy()
         seasons = self._banked_seasons()
         if not seasons or self._exporting:
             menu.add_command(label="Bank a save first" if not seasons else "Another export is under way",
                              state="disabled")
             return
+        last_dates = self._banked_last_dates()
         for season, label in seasons:
-            menu.add_command(label=label, command=lambda sn=season: self.export_yearbook(sn))
+            sub = tk.Menu(menu, tearoff=False)
+            sub.add_command(label="Save the latest edition", command=lambda sn=season: self.export_yearbook(sn))
+            editions = yearbook_editions.list_editions(export_folder(), label)
+            if any(e.date == last_dates.get(season) for e in editions):
+                sub.add_command(label="Build it again", command=lambda sn=season: self.export_yearbook(sn, rebuild=True))
+            sub.add_command(label="Read before saving…", command=lambda sn=season: self.read_yearbook(sn))
+            if editions:
+                sub.add_separator()
+            for edition in editions:
+                sub.add_command(label=f"{edition.date_label} edition", command=lambda p=edition.path: self._open_path(p))
+            menu.add_cascade(label=label, menu=sub)
         if self._followed_club():
             menu.add_separator()
             menu.add_checkbutton(label=f"Mark {self._followed_club()} in bold", variable=self.mark_club_var)
 
-    def export_yearbook(self, season: int) -> None:
-        """Build one season's Yearbook from the archive and write it as a PDF, on a background thread."""
+    @staticmethod
+    def _banked_last_dates() -> dict[int, object]:
+        """Each banked season's last in-game date (what an edition's file is named from)."""
+        try:
+            with archive.Archive.open(ARCHIVE_PATH) as book:
+                return {season: book.coverage(season).last_date for season, _ in book.season_labels()}
+        except (archive.ArchiveError, sqlite3.Error):
+            return {}
+
+    def export_yearbook(self, season: int, rebuild: bool = False) -> None:
+        """Save one season's Yearbook as an edition from the archive, on a background thread."""
         if self._exporting:
             return
         self._exporting = True
         self.export_button.configure(state="disabled", text="Exporting…")
         self.detail_label.configure(text="Building the Yearbook…")
-        marked = self._marked_club_uid()
-        threading.Thread(target=self._yearbook_worker, args=(season, dict(self.names), export_folder(), marked),
-                         daemon=True).start()
+        threading.Thread(target=self._yearbook_worker, args=(season, dict(self.names), export_folder(),
+                                                             self._marked_club_uid(), rebuild), daemon=True).start()
 
     def _marked_club_uid(self) -> int | None:
         """The followed club's uid when the Yearbook menu's tick is on, else None."""
@@ -1713,19 +1902,46 @@ class FMReviewApp(_Root):
             return None
         return fd.team_club_uids(self.fixtures).get(self.focus)
 
-    def _yearbook_worker(self, season: int, names: dict[int, str], folder: Path, marked: int | None = None) -> None:
+    def _yearbook_worker(self, season: int, names: dict[int, str], folder: Path, marked: int | None = None,
+                         rebuild: bool = False) -> None:
         try:
             with archive.Archive.open(ARCHIVE_PATH) as book:
-                built = yearbook.build_yearbook(book, season, names, marked)
-            folder.mkdir(parents=True, exist_ok=True)
-            path = folder / f"Yearbook {built.season_label.replace('/', '-')}.pdf"
-            yearbook_pdf.render(built, path)
-            self.events.put(("exported", ("yearbook", path)))
+                plan = yearbook_editions.save_edition(book, season, names, folder, rebuild, marked)
+            self.events.put(("exported", ("yearbook", plan)))
         except archive.ArchiveError as exc:
             self.events.put(("export_failed", str(exc)))
         except Exception as exc:  # report anything unexpected rather than dying silently
             self._log_error(traceback.format_exc())
             self.events.put(("export_failed", f"Unexpected error while building the Yearbook:\n{type(exc).__name__}: {exc}"))
+
+    def read_yearbook(self, season: int) -> None:
+        """Build one season's Yearbook on a background thread and open it in the reading window. Nothing is saved."""
+        if self._exporting:
+            return
+        self._exporting = True
+        self.export_button.configure(state="disabled", text="Reading…")
+        self.detail_label.configure(text="Building the Yearbook…")
+        threading.Thread(target=self._read_worker, args=(season, dict(self.names), self._marked_club_uid()),
+                         daemon=True).start()
+
+    def _read_worker(self, season: int, names: dict[int, str], marked: int | None) -> None:
+        try:
+            with archive.Archive.open(ARCHIVE_PATH) as book:
+                built = yearbook.build_yearbook(book, season, names, marked)
+            pages, contents = yearbook_read.read_pages(built)
+            self.events.put(("yearbook_ready", (pages, contents, built.season_label, lambda: self.export_yearbook(season))))
+        except archive.ArchiveError as exc:
+            self.events.put(("export_failed", str(exc)))
+        except Exception as exc:
+            self._log_error(traceback.format_exc())
+            self.events.put(("export_failed", f"Unexpected error while building the Yearbook:\n{type(exc).__name__}: {exc}"))
+
+    def show_yearbook_reader(self, pages, contents, season_label: str, on_save: Callable[[], object]) -> None:
+        """Open the reading window, or bring the open one forward."""
+        if self.yearbook_reader is not None and self.yearbook_reader.winfo_exists():
+            self.yearbook_reader.bring_forward()
+            return
+        self.yearbook_reader = YearbookReader(self, pages, contents, season_label, on_save)
 
     def open_export_folder(self) -> None:
         folder = export_folder()
@@ -2468,8 +2684,12 @@ class FMReviewApp(_Root):
         if not self._exporting:
             seasons = self._banked_seasons()
             if seasons:
-                add(cp.ACTION, "Export Yearbook (PDF)…", lambda sn=seasons[0][0]: self.export_yearbook(sn),
+                add(cp.ACTION, "Save Yearbook edition…", lambda sn=seasons[0][0]: self.export_yearbook(sn),
                     f"the {seasons[0][1]} volume, from the archive")
+                latest = yearbook_editions.list_editions(export_folder(), seasons[0][1])
+                if latest:
+                    add(cp.ACTION, "Open latest Yearbook", lambda p=latest[0].path: self._open_path(p),
+                        f"the {seasons[0][1]} volume, {latest[0].date_label} edition")
         add(cp.ACTION, "Open the export folder", self.open_export_folder)
         if self.loading_since is None:
             add(cp.ACTION, "Open save…", self.choose_save)
