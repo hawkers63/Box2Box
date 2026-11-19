@@ -55,7 +55,7 @@ import yearbook_pdf
 import yearbook_read
 
 APP_TITLE = "Box2Box"
-VERSION = "2.6"
+VERSION = "2.7"
 
 
 def _resolve_app_dir(*, frozen: bool, executable: Path, source: Path) -> Path:

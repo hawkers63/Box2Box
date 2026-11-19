@@ -1,8 +1,8 @@
 # Changelog
 
-**Release:** 2.6  
+**Release:** 2.7  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 2.6), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.7), launched with `Box2Box.bat`
 
 All notable changes to this project will be documented in this file.
 
@@ -10,6 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [2.7] - 2026-11-19
+
+UI/UX foundations: schedule view and manager hub data contracts, shared visual primitives.
+
+### Added
+
+- **Schedule data contracts.** `ScheduleItem`, `Schedule`, `ScheduleCompetition` frozen dataclasses; `club_schedule` builds a club's fixture list from any `Dataset`; `match_timing` and `countdown_text` classify and label each fixture; `WHEN_*` constants for the six timing states; conservative pre-kick-off cut-off (same-day unfinished matches are upcoming, not played).
+- **Manager hub data contract.** `ManagerSnapshot` frozen dataclass; `manager_snapshot` bundles followed-club identity, managed flag, manager name, next upcoming fixture, recent form and league rank. Works with no managed club, no followed club, no league table, no player reports.
+- **Schedule view module** (`fm_schedule_view.py`). `ScheduleFilter` (frozen; competition, venue, month, result, free-text search); `apply_filter` pure function (AND combination, case-insensitive search, unplayed matches excluded from result filter). `ScheduleView` Canvas-backed widget: bounded rendering, live filters with a chip and a Clear button, jumps to the next upcoming fixture on load, double-click / right-click hooks for the inspector.
+- **Manager hub view module** (`fm_manager_hub.py`). `hub_rows` pure function; `ManagerHubView` CTkFrame showing club name, role, league position, form string and next fixture with competition and countdown.
+- **Badge contrast.** `WIN_BG` darkened to `#04875e` (was `#059669`); `DRAW_BG` darkened to `#ae5f05` (was `#d97706`). Both meet WCAG AA 4.5:1 with white text across all four themes. Measured ratios: Midnight Emerald W 4.53:1, D 4.73:1, L 4.83:1, ? 8.05:1; High-Contrast W 10.92:1, D 12.58:1, L 7.59:1, ? 11.38:1.
+- **Venue metadata.** `Dataset.teams` (home ground per team), `Dataset.grounds` (stadium records), `Dataset.ground_failure` (coverage state); `FollowedClub` with `SCOPE_SENIOR`/`SCOPE_RESERVE`; `FixtureRef`, `fixture_refs`, `resolve_fixture`; `RankBefore`, `rank_before`; `FormBefore`, `form_before`; `default_followed_club`, `team_identities`, `followed_team_ids`.
+- **Yearbook biggest rise/fall** now names every club that shares the identical move (was only the first alphabetically).
 
 ## [2.6] - 2026-11-19
 
