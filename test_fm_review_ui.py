@@ -14,6 +14,7 @@ import tempfile
 import time
 import tkinter as tk
 import unittest
+from tkinter import font as tkfont
 from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest import mock
@@ -2382,10 +2383,21 @@ class WindowTests(unittest.TestCase):
         reader.show(len(pages) - 1)
         self.assertTrue(self.strip_texts(reader)[0].startswith("‹ "))
 
+    def test_the_heading_face_is_the_first_serif_installed_or_the_plain_face_when_none_is(self):
+        with mock.patch.object(yearbook_reader_ui.tkfont, "families", return_value=("Segoe UI", "Times New Roman")):
+            self.assertEqual(yearbook_reader_ui.serif_family(self.app), "Times New Roman")
+        with mock.patch.object(yearbook_reader_ui.tkfont, "families", return_value=("Cambria", "Georgia")):
+            self.assertEqual(yearbook_reader_ui.serif_family(self.app), "Georgia")
+        with mock.patch.object(yearbook_reader_ui.tkfont, "families", return_value=("Segoe UI",)):
+            self.assertEqual(yearbook_reader_ui.serif_family(self.app), yearbook_reader_ui.FONT)
+
     def test_headings_are_set_in_a_serif_and_tables_keep_their_plain_font_and_colours(self):
+        installed = [f for f in yearbook_reader_ui.SERIF_FAMILIES if f in tkfont.families(self.app)]
+        if not installed:
+            self.skipTest(f"none of {', '.join(yearbook_reader_ui.SERIF_FAMILIES)} is installed on this machine")
         reader, _ = self.open_wide()
         heading = reader.panes[0].heading_label.cget("font")
-        self.assertIn(heading.cget("family"), yearbook_reader_ui.SERIF_FAMILIES)
+        self.assertEqual(heading.cget("family"), installed[0])
         reader.show(2)
         self.app.update()
         self.assertEqual(reader.sheet.ops.table_font[0], "Segoe UI")
