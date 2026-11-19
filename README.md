@@ -8,7 +8,7 @@
 
 A Windows desktop viewer for the fixtures, results, grids and league tables in a Football Manager 27 (or 26) save. Saves are read with [fmsave](https://rhiever.github.io/fmsave/) and are never modified.
 
-[![Release 2.5](https://img.shields.io/badge/Release-2.5-0EA5E9)](https://github.com/hawkers63/Box2Box/releases/latest)
+[![Release 2.6](https://img.shields.io/badge/Release-2.6-0EA5E9)](https://github.com/hawkers63/Box2Box/releases/latest)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)](https://www.microsoft.com/windows)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![GUI](https://img.shields.io/badge/GUI-CustomTkinter%20%2B%20tksheet-10B981)](https://customtkinter.tomschimansky.com/)
@@ -20,9 +20,9 @@ A Windows desktop viewer for the fixtures, results, grids and league tables in a
 
 **Database viewer** · entry point `fm_review.py` · launcher `Box2Box.bat`
 
-**Release:** 2.5  
+**Release:** 2.6  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 2.5), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.6), launched with `Box2Box.bat`
 
 </div>
 
@@ -332,7 +332,7 @@ A save keeps the current season's results but lets the past thin out, early cup 
 - League matchweeks with their dates and results, and the table as it stood after each one: places gained or lost since the previous table (±), points per game (PPG, which leaves out a match with no score and says so) and the last six results. A match postponed and played late prints on the day it was played, marked "Matchweek N, rescheduled", and the table leaves it out until then.
 - Cup rounds and European nights in the same shape, in date order. The aggregate goes on the second leg; a side that went through a level tie is marked `*` after its name, with a footnote, when a later round shows it. A European league phase reads "Matchday N" and gets a table after each matchday, cut to the top 16.
 - League tables with promotion, play-off and relegation places (and estimated European places for a 20-club top division) shaded from the last 11 matches of the season, and always in the final table.
-- The final table of each league once all its matches are played, followed by its home and away records in the same order.
+- The final table of each league once all its matches are played, followed by its home and away records in the same order. Where the saves kept match reports it also shows **xG** and **xGA** (expected goals for and against), and **G-xG** when every match of every club has a report; a partial total says how many matches it covers, and a league with no reports shows no such columns. Expected goals are banked with each save a few seconds after it opens (the archive remembers them; saves from before 2.6 are filled in when you open them again).
 - A landscape **How they stood** page for each league: every club's place after every matchweek, with a blank before it had played and the current place shaded by zone. Weeks that will not fit split into equal parts.
 - Under each final table, **From the results**: most wins, best goal difference, fewest goals against, most draws, the biggest rise and fall in the table, and the longest winning and unbeaten runs, all worked out from the results.
 - Optionally one club in bold with a rule under its row (*Export ▾ → Yearbook (PDF)* → "Mark {club} in bold", offered while a club is followed).
@@ -471,6 +471,7 @@ The tests write only to temporary directories and do not need a real Football Ma
 
 | Release | Date | Highlights |
 | --- | --- | --- |
+| [**2.6**](https://github.com/hawkers63/Box2Box/releases/tag/v2.6) | 19&nbsp;Nov&nbsp;2026 | 📈 The archive remembers expected goals, and the Yearbook's final tables show xG, xGA and goals minus xG where the saves kept them |
 | [**2.5**](https://github.com/hawkers63/Box2Box/releases/tag/v2.5) | 19&nbsp;Nov&nbsp;2026 | 📚 Yearbook editions are kept side by side, the PDF has a contents, and the book can be read in the window before it is saved |
 | [**2.4.1**](https://github.com/hawkers63/Box2Box/releases/tag/v2.4.1) | 18&nbsp;Nov&nbsp;2026 | 🔧 The standalone exe shows its icon and the full licence again; a single-file `Box2Box.exe` build is added |
 | [**2.4**](https://github.com/hawkers63/Box2Box/releases/tag/v2.4) | 18&nbsp;Nov&nbsp;2026 | 🗓️ Yearbook "How they stood" grids of every club's place week by week, and a "From the results" strip under each final table |

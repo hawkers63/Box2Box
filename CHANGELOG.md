@@ -1,8 +1,8 @@
 # Changelog
 
-**Release:** 2.5  
+**Release:** 2.6  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 2.5), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.6), launched with `Box2Box.bat`
 
 All notable changes to this project will be documented in this file.
 
@@ -10,6 +10,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [2.6] - 2026-11-19
+
+Remembers expected goals, so the Yearbook can show them even after the save that held them is gone.
+
+### Added
+
+- **The archive keeps expected goals (schema 3).** Each banked fixture can hold its home and away xG, stored to four decimal places; a fixture whose save kept no match report holds nothing (never 0). A figure is stored only when the save's report joined that fixture and both values are finite numbers of zero or more. Older archives are upgraded in place on first open and nothing is filled in by the upgrade. **A schema 3 archive cannot be opened by Box2Box 2.5 or earlier**, which refuse it and leave it untouched.
+- **Banked when they arrive.** A save opens at once and is banked as before; its match statistics follow a few seconds later, and the figures are then added to the fixtures just banked (the detail bar says "Expected goals banked for N matches."). Opening a save you banked before 2.6 fills in its figures the same way. A save whose statistics could not be read adds nothing and says nothing.
+- **Merging figures:** a missing figure is filled from any save and never replaces a stored one; two different figures for one match are a conflict, recorded beside the score conflicts (the archive's conflicts now say which kind), with the later save kept. Importing saves in any order gives the same archive.
+- **xG on the Yearbook's final tables:** xG and xGA columns appear for a league where at least one club has a figure. A club with reports for only some of its matches shows the total of those, and the note says "Expected goals for N of M played matches."; a league with no reports gets no columns, not a column of blanks. **G-xG** (goals scored minus xG) appears only when every match of every club has a report. Only matches played with a score count, so the totals sit beside the same goals as the table. Weekly tables and cup pages never carry them. The read window shows the same columns and note.
+
+### Changed
+
+- The final table's columns are a little narrower when expected goals are present (the name column is 43 mm).
 
 ## [2.5] - 2026-11-19
 
