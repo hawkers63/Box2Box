@@ -26,8 +26,55 @@ class HubRow(NamedTuple):
     muted: bool = False
 
 
-def hub_rows(snapshot: fd.ManagerSnapshot, competition_names: dict[int, str] | None = None) -> list[HubRow]:
-    """Return ordered display rows from a ManagerSnapshot.
+def _fixture_text(item: fd.ScheduleItem) -> str:
+    """Opponent, venue and date: never the score, so a step before a match cannot give its result away."""
+    venue_word = {"H": "home", "A": "away", "N": "neutral"}.get(item.venue, item.venue)
+    date_text = item.fixture.date.strftime("%d %b %Y").lstrip("0") if item.fixture.date else "date unknown"
+    return f"{item.opponent} ({venue_word}) · {date_text}"
+
+
+def _ordinal(n: int) -> str:
+    return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
+
+
+def step_rows(snapshot: fd.ManagerSnapshot, step: fd.HubStep, competition_names: dict[int, str], *,
+              today: bool = False, league: bool = True) -> list[HubRow]:
+    """The rows for one step of the matchday stepper: what was known just before that match (or at the season's
+    end), and, at the save's own date, the next match in any competition with its countdown."""
+    rows = [HubRow("Snapshot", step.label)]
+    table = step.table
+    if table is None:
+        rows.append(HubRow("Position", "No league rank: no league match this season", muted=True))
+    elif table.played == 0:
+        rows.append(HubRow("Position", "No league match played yet", muted=True))
+    else:
+        text = f"{_ordinal(table.position)} of {table.of} · {table.points} pts from {table.played} played " \
+               "(calculated from the results)"
+        if table.unscored:
+            text += f". {table.unscored} match{'es' if table.unscored != 1 else ''} played with no score left out"
+        rows.append(HubRow("Position", text))
+    letters = step.form.letters
+    rows.append(HubRow("Form", f"{letters} (all competitions)") if letters else HubRow("Form", "—", muted=True))
+    label = "Next league match" if league else "Next match"
+    if step.fixture is None:
+        rows.append(HubRow(label, "Season complete", muted=True))
+    else:
+        rows.append(HubRow(label, _fixture_text(step.fixture)))
+    nxt = snapshot.next_item
+    if today and nxt is not None and (step.fixture is None or nxt.fixture is not step.fixture.fixture):
+        rows.append(HubRow("Next (any competition)", _fixture_text(nxt)))
+        rows.append(HubRow("Competition", competition_names.get(nxt.competition_id or 0, snapshot.next_scope_label),
+                           muted=True))
+    if today and nxt is not None:
+        countdown = fd.countdown_text(nxt.when, nxt.days)
+        if countdown:
+            rows.append(HubRow("", countdown, muted=True))
+    return rows
+
+
+def hub_rows(snapshot: fd.ManagerSnapshot, competition_names: dict[int, str] | None = None, *,
+             step: fd.HubStep | None = None, today: bool = False, league: bool = True) -> list[HubRow]:
+    """Return ordered display rows from a ManagerSnapshot, or, with `step`, from one step of the matchday stepper.
 
     competition_names maps competition_id → display name, may be None.
     """
@@ -44,6 +91,9 @@ def hub_rows(snapshot: fd.ManagerSnapshot, competition_names: dict[int, str] | N
         rows.append(HubRow("Role", f"Manager{' — ' + snapshot.manager_name if snapshot.manager_name else ''}"))
     else:
         rows.append(HubRow("Role", "Observer save", muted=True))
+
+    if step is not None:
+        return rows + step_rows(snapshot, step, competition_names, today=today, league=league)
 
     # League position
     if snapshot.rank_before_next is not None:

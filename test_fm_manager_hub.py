@@ -128,5 +128,86 @@ class HubRowsTests(unittest.TestCase):
         self.assertTrue(all(isinstance(r, HubRow) for r in rows))
 
 
+def _item(opponent="Eastholm Athletic", venue="H", played=False, date=dt.date(2099, 8, 29),
+          when=fd.WHEN_UPCOMING, days=4):
+    f = MagicMock()
+    f.date, f.played = date, played
+    i = MagicMock(spec=fd.ScheduleItem)
+    i.opponent, i.venue, i.fixture, i.played, i.when, i.days = opponent, venue, f, played, when, days
+    i.outcome = "W" if played else None
+    i.score = "2-1" if played else ""
+    i.competition_id = 101
+    return i
+
+
+def _table(position=1, of=4, points=6, played=2, unscored=0):
+    return fd.HubTable(position, of, points, played, unscored, ())
+
+
+def _step(title="Matchday 4", table=None, form="WD", fixture=None, cutoff=True):
+    cut = fd.Cutoff(dt.date(2099, 8, 29), dt.time(15, 0)) if cutoff else None
+    steps = tuple(MagicMock(outcome=c) for c in form)
+    strip = MagicMock(spec=fd.FormStrip)
+    strip.letters = form
+    strip.steps = steps
+    return fd.HubStep(title, dt.date(2099, 8, 29), cut, fixture, table, strip)
+
+
+class StepRowsTests(unittest.TestCase):
+    """The Hub's rows at one step of the matchday stepper (made-up clubs and dates)."""
+
+    def rows(self, step, **kw):
+        return {r.label: r for r in hub_rows(_snapshot(), step=step, **kw)}
+
+    def test_the_position_is_the_calculated_place_at_that_step(self):
+        row = self.rows(_step(table=_table(2, 4, 6, 2)))["Position"]
+        self.assertEqual(row.value, "2nd of 4 · 6 pts from 2 played (calculated from the results)")
+
+    def test_matches_with_no_score_are_said_to_be_left_out(self):
+        row = self.rows(_step(table=_table(2, 4, 6, 3, unscored=1)))["Position"]
+        self.assertIn("1 match played with no score left out", row.value)
+
+    def test_before_any_league_match_there_is_no_place_to_give(self):
+        row = self.rows(_step(table=_table(1, 4, 0, 0)))["Position"]
+        self.assertEqual((row.value, row.muted), ("No league match played yet", True))
+
+    def test_a_club_with_no_league_match_has_no_league_rank(self):
+        row = self.rows(_step(title="Match 1", table=None))["Position"]
+        self.assertEqual((row.value, row.muted), ("No league rank: no league match this season", True))
+
+    def test_form_is_the_steps_own_and_names_its_scope(self):
+        self.assertEqual(self.rows(_step(form="WDW"))["Form"].value, "WDW (all competitions)")
+        empty = self.rows(_step(form=""))["Form"]
+        self.assertEqual((empty.value, empty.muted), ("—", True))
+
+    def test_the_next_match_never_shows_a_result_even_when_it_has_been_played_since(self):
+        played = _item(played=True, when=fd.WHEN_PLAYED, days=None)
+        row = self.rows(_step(fixture=played))["Next league match"]
+        self.assertEqual(row.value, "Eastholm Athletic (home) · 29 Aug 2099")
+        self.assertNotIn("2-1", " ".join(r.value for r in hub_rows(_snapshot(), step=_step(fixture=played))))
+
+    def test_a_club_with_no_league_steps_to_its_next_match(self):
+        self.assertIn("Next match", self.rows(_step(title="Match 2", fixture=_item()), league=False))
+
+    def test_the_end_of_the_season_has_no_next_match(self):
+        row = self.rows(_step(title=fd.END_OF_SEASON, fixture=None, cutoff=False))["Next league match"]
+        self.assertEqual((row.value, row.muted), ("Season complete", True))
+
+    def test_the_snapshot_row_names_the_matchday_and_its_date(self):
+        self.assertEqual(self.rows(_step())["Snapshot"].value, "Matchday 4 · Before kick-off, Sat 29 Aug 15:00")
+
+    def test_today_also_gives_the_next_match_in_any_competition_with_its_countdown(self):
+        cup = _item(opponent="Kingsbay City", venue="A", date=dt.date(2099, 8, 27), days=2)
+        rows = hub_rows(_snapshot(next_item=cup), step=_step(fixture=_item()), today=True)
+        labels = [r.label for r in rows]
+        self.assertIn("Next (any competition)", labels)
+        self.assertIn("In 2 days", [r.value for r in rows])
+
+    def test_away_from_today_there_is_no_countdown(self):
+        rows = hub_rows(_snapshot(next_item=_item()), step=_step(fixture=_item()), today=False)
+        self.assertNotIn("Next (any competition)", [r.label for r in rows])
+        self.assertFalse(any(r.value.startswith("In ") for r in rows))
+
+
 if __name__ == "__main__":
     unittest.main()
