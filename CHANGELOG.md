@@ -17,13 +17,13 @@ A club's whole season in one place: the Schedule and the Hub.
 
 ### Added
 
-- **Schedule view** (Ctrl+Shift+S, the view switch or the palette). Every fixture of the club you follow, across all its competitions, with the scope named at the top. Filter by competition, home or away, month, result or a search; a chip shows active filters and Clear removes them. It opens at the next match to play, and a same-day match not yet finished counts as still to play.
-- **Hub view** (Ctrl+Shift+H, the view switch or the palette). The followed club at a glance: its role, league position, recent form and next match with a countdown. It works on observer saves and when no club is followed.
-- **The followed club stays followed.** Follow a club from the right-click menu, the palette or Theme ▾ → Follow club…, and it stays followed while you browse other competitions; opening a new save clears it. The palette also offers "Clear followed club".
+- **Schedule view** (Ctrl+Shift+S, the Schedule button beside Inspector, or the palette). Every fixture of the club you follow, across all its competitions, with the club, scope and season named above it. Schedule and Hub cover a club rather than one competition, so they sit beside the competition view switch, not on it. Filter by competition, home or away, month, result or a search; a chip shows active filters and Clear removes them. It opens at the next match to play, and a same-day match not yet finished counts as still to play.
+- **Hub view** (Ctrl+Shift+H, the Hub button or the palette). The followed club at a glance: its role, league position, recent form and next match with a countdown. It works on observer saves and when no club is followed.
+- **The followed club stays followed.** Follow a club from the right-click menu, the palette or Theme ▾ → Follow club…, and it stays followed while you browse other competitions; opening a new save clears it. The palette also offers "Clear followed club", which empties the Schedule and Hub at once.
 
 ### Changed
 
-- **Result pills read better.** The win and draw colours are a little darker, so white text on them meets the WCAG AA 4.5:1 contrast ratio in every theme.
+- **Result pills read better.** The win and draw colours are a little darker, so white text on them meets the WCAG AA 4.5:1 contrast ratio in every theme. The new colours also reach the Excel and web-page exports: wins and home wins `#04875e` (was `#059669`), draws `#ae5f05` (was `#d97706`).
 
 ### Fixed
 

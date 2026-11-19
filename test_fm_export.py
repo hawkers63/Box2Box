@@ -214,7 +214,9 @@ class ThemedExportTests(unittest.TestCase):
         page = fx.web_page(fx.snapshot(request()))
         for value in ("--bg: #1b1b1b;", "--text: #e3e3e3;", "--muted: #a3a3a3;", "--section: #d8b44a;",
                       "--link: #60a5fa;", "--grid: #2b2b2b;", "--head: #151515;", "--field: #262626;",
-                      "--field-border: #3f3f3f;", ".k-W { background: #059669; color: #ffffff; }",
+                      "--field-border: #3f3f3f;", ".k-W { background: #04875e; color: #ffffff; }",
+                      ".k-D { background: #ae5f05; color: #ffffff; }",
+                      ".k-home_win { background: #04875e; color: #ffffff; }",
                       "tr.heading td { background: #111e2e; color: #38bdf8;"):
             self.assertIn(value, page)
 
