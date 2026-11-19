@@ -54,6 +54,12 @@ class WorldMismatch(ArchiveError):
 
 
 FixtureKey = tuple[int, int, int, int, int]   # competition key, season, home club uid, away club uid, meeting
+ARCHIVE_KEY = "archive_key"     # where a fixture from Archive.dataset() carries its FixtureKey, in its `unknown`
+
+
+def archived_key(fixture) -> FixtureKey | None:
+    """The archive's key of a fixture from Archive.dataset(); None for a fixture read from a save."""
+    return (getattr(fixture, "unknown", None) or {}).get(ARCHIVE_KEY)
 
 
 def competition_key(competition_id: int, database_id: int | None) -> int:
@@ -537,7 +543,7 @@ class Archive:
                 home_team_slot=0, away_team_id=key[3], away_club_uid=key[3], away_club_name=f.away_name,
                 away_club_short_name=short.get(key[3], f.away_name), away_team_slot=0, home_goals=f.home_goals, away_goals=f.away_goals,
                 played=f.played, is_neutral_venue=False, stadium_uid=None, stadium_name=None, referee_id=None,
-                match_rules_template=(), unknown={}))
+                match_rules_template=(), unknown={ARCHIVE_KEY: key}))
         known = self.competitions()
         clubs = [NS(uid=r[0], reputation=None, teams=(), nation_id=r[1])
                  for r in self._db.execute("SELECT uid, nation_id FROM clubs")]

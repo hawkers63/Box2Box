@@ -5,6 +5,7 @@
 Run:  .venv\\Scripts\\python -m unittest test_yearbook_read -v
 """
 
+import dataclasses
 import datetime as dt
 import unittest
 
@@ -113,6 +114,41 @@ class PageTests(unittest.TestCase):
         marked = (yb.TableLine(1, "Hull City", 3, 2, 1, 0, 5, 2, 3, 7, "WWD", marked=True),)
         page = yr.read_pages(book(yb.LeaguePage("L", 1, "Matchweek 1", (), marked, D(2026, 8, 8))))[0][1]
         self.assertEqual(page.marked_rows, (0,))
+
+
+class PageKeyTests(unittest.TestCase):
+    """Each page's key names what it shows by archive identity: never its place in the book, a score or a club."""
+
+    def keys(self, *pages):
+        return [p.page_key for p in yr.read_pages(book(*pages))[0]]
+
+    def test_each_kind_of_page_has_a_key_from_its_competition_key(self):
+        league = dataclasses.replace(week(3), competition_key=12)
+        late = dataclasses.replace(week(3), competition_key=12, rescheduled=True, when=D(2026, 9, 2))
+        cup = dataclasses.replace(CUP, competition_key=14)
+        places = dataclasses.replace(PLACES, competition_key=12)
+        final = dataclasses.replace(FINAL, keys=(("Premier League", 12),))
+        self.assertEqual(self.keys(league, late, cup, places, final),
+                         ["title", "league/12/3", "league/12/3/rescheduled/2026-09-02",
+                          "cup/14/2026-03-18/Quarter-final/2nd leg", "places/12", "final/12", "home/12", "away/12"])
+
+    def test_a_renamed_competition_keeps_its_keys(self):
+        league = dataclasses.replace(week(1), competition_key=12)
+        renamed = dataclasses.replace(league, competition="English Premier Division")
+        self.assertEqual(self.keys(league), self.keys(renamed))
+
+    def test_the_key_does_not_move_when_pages_are_added_before_it(self):
+        target = dataclasses.replace(week(2), competition_key=12)
+        alone = self.keys(target)[1]
+        later = self.keys(dataclasses.replace(week(1), competition_key=12), target)[2]
+        self.assertEqual(alone, later)
+
+    def test_keys_are_unique_across_a_book(self):
+        pages = (dataclasses.replace(week(1), competition_key=12), dataclasses.replace(CUP, competition_key=14),
+                 dataclasses.replace(week(2), competition_key=12), dataclasses.replace(PLACES, competition_key=12),
+                 dataclasses.replace(FINAL, keys=(("Premier League", 12),)))
+        keys = self.keys(*pages)
+        self.assertEqual(len(keys), len(set(keys)))
 
 
 class ContentsTests(unittest.TestCase):

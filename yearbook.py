@@ -44,6 +44,7 @@ class BookMatch:
     score: str
     note: str = ""
     advanced: str = ""             # "home" or "away": the side that went through a level tie, marked with "*"
+    fixture: arch.FixtureKey | None = None     # the archive's key for this match
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +81,7 @@ class LeaguePage:
     when: dt.date
     rescheduled: bool = False
     table_note: str = ""           # "Top 16 of 36 shown" when a league phase's table is cut
+    competition_key: int = 0       # the archive's key for the competition
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +97,7 @@ class CupBlock:
     when: dt.date
     table: tuple[TableLine, ...] = ()      # a league phase: the table after the last day of a matchday
     table_note: str = ""                   # "Top 16 of 36 shown" when the table is cut
+    competition_key: int = 0
 
     @property
     def heading(self) -> str:
@@ -124,6 +127,7 @@ class FinalTablesPage:
     splits: tuple[tuple[str, tuple[TableLine, ...], tuple[TableLine, ...], tuple[TableLine, ...]], ...] = ()
     strips: tuple[tuple[str, tuple[str, ...]], ...] = ()      # (competition, the "From the results" lines)
     xg_notes: tuple[tuple[str, str], ...] = ()                # (competition, what the xG columns are and how far they reach)
+    keys: tuple[tuple[str, int], ...] = ()                    # (competition, its archive key)
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +150,7 @@ class PlacesPage:
     matchweeks: tuple[int, ...]
     rows: tuple[PlacesRow, ...]
     when: dt.date = dt.date.max
+    competition_key: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -356,7 +361,7 @@ def places_page(name: str, pages: Sequence[LeaguePage]) -> PlacesPage | None:
     by_week = [{t.team: t.pos for t in p.table if t.played} for p in weeks]
     rows = tuple(PlacesRow(t.team, tuple(w.get(t.team) for w in by_week), t.zone, t.marked, t.pos)
                  for t in weeks[-1].table)
-    return PlacesPage(name, tuple(p.matchweek for p in weeks), rows)
+    return PlacesPage(name, tuple(p.matchweek for p in weeks), rows, competition_key=weeks[0].competition_key)
 
 
 def biggest_moves(page: PlacesPage) -> tuple[tuple[Move, ...], tuple[Move, ...], int]:
@@ -463,7 +468,7 @@ def _split_lines(overall: Sequence[TableLine], rows: Sequence, order: Sequence) 
 
 def _league_pages(name: str, league: Sequence, labels: Mapping[int, str], tie_breaks: Sequence[int],
                   rules: fd.ZoneRules | None = None, unit: str = "Matchweek",
-                  shown: int | None = None, marked: int | None = None) -> list[LeaguePage]:
+                  shown: int | None = None, marked: int | None = None, competition_key: int = 0) -> list[LeaguePage]:
     """The matchweek pages of one league, and a block for each day a postponed match was played. Zones are shown
     from zones_from_matchweek on. `unit` is "Matchday" for a continental league phase, whose table is cut to
     the top `shown` places."""
@@ -484,7 +489,7 @@ def _league_pages(name: str, league: Sequence, labels: Mapping[int, str], tie_br
 
     def line(f, month_of: dt.date) -> BookMatch:
         return BookMatch(_day_in(f.date, month_of), labels.get(f.home_team_id, ""), labels.get(f.away_team_id, ""),
-                         _score(f))
+                         _score(f), fixture=arch.archived_key(f))
 
     pages: list[LeaguePage] = []
     previous: dict[int, tuple[int, int]] = {}            # place and games played at the previous printed table
@@ -501,11 +506,13 @@ def _league_pages(name: str, league: Sequence, labels: Mapping[int, str], tie_br
             cut = lines[:shown] if shown else lines
             pages.append(LeaguePage(name, ri + 1, f"{unit} {ri + 1} · {_span(first, last)}",
                                     tuple(line(f, first) for f in on_time), cut, first,
-                                    table_note=f"Top {len(cut)} of {len(lines)} shown" if len(cut) < len(lines) else ""))
+                                    table_note=f"Top {len(cut)} of {len(lines)} shown" if len(cut) < len(lines) else "",
+                                    competition_key=competition_key))
         for day in sorted({f.date for f in played if rescheduled(f)}):
             moved = [f for f in played if rescheduled(f) and f.date == day]
             pages.append(LeaguePage(name, ri + 1, f"{unit} {ri + 1}, rescheduled · {_span(day, day)}",
-                                    tuple(line(f, day) for f in moved), (), day, rescheduled=True))
+                                    tuple(line(f, day) for f in moved), (), day, rescheduled=True,
+                                    competition_key=competition_key))
     return pages
 
 
@@ -629,7 +636,7 @@ def _with_legs_together(fixtures: Sequence, runs: list[list[int]]) -> list:
 
 
 def _cup_blocks(name: str, cup_fixtures: Sequence, labels: Mapping[int, str],
-                tie_breaks: Sequence[int] = (), one_match: bool = False) -> list[CupBlock]:
+                tie_breaks: Sequence[int] = (), one_match: bool = False, competition_key: int = 0) -> list[CupBlock]:
     """The blocks of a cup or continental competition: a block for each round, leg and day with a played match.
     A league phase (one pool of clubs playing matchday after matchday) also gets its table, cut to the top places,
     after the last day of each matchday."""
@@ -668,7 +675,7 @@ def _cup_blocks(name: str, cup_fixtures: Sequence, labels: Mapping[int, str],
                 names[key] = round_name
                 grouped.setdefault(key, []).append(
                     BookMatch("", labels.get(f.home_team_id, ""), labels.get(f.away_team_id, ""), _score(f), note,
-                              advanced))
+                              advanced, arch.archived_key(f)))
     last_day = {key[1]: max(k[0] for k in grouped if k[1] == key[1]) for key in grouped if key[1] in league_phase}
     pooled = bool(league_fixtures) and _one_pool(league_fixtures)
     blocks = []
@@ -679,7 +686,8 @@ def _cup_blocks(name: str, cup_fixtures: Sequence, labels: Mapping[int, str],
             table = _table(rows[:LEAGUE_PHASE_SHOWN])
             note = f"Top {len(table)} of {len(rows)} shown" if len(rows) > len(table) else ""
         blocks.append(CupBlock(name, names[key], key[2], f"{_day(key[0])} {key[0]:%b}",
-                               tuple(sorted(matches, key=lambda m: (m.home, m.away))), key[0], table, note))
+                               tuple(sorted(matches, key=lambda m: (m.home, m.away))), key[0], table, note,
+                               competition_key))
     return blocks
 
 
@@ -730,6 +738,7 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
     order: dict[str, int] = {}
     included: list[str] = []
     finals: list[tuple[str, tuple[TableLine, ...]]] = []
+    final_keys: list[tuple[str, int]] = []
     splits: list[tuple] = []
     strips: list[tuple[str, tuple[str, ...]]] = []
     xg_notes: list[tuple[str, str]] = []
@@ -750,8 +759,8 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
         # Cup rounds inside a league are its play-offs.
         cup_name = f"{name} play-offs" if league and cup and not comp.continental else name
         built = (_league_pages(name, league, labels, comp.tie_breaks, rules, "Matchday" if comp.continental else "Matchweek",
-                       LEAGUE_PHASE_SHOWN if comp.continental else None, marked_club) if league else []) + \
-            (_cup_blocks(cup_name, cup, labels, comp.tie_breaks, one_match) if cup else [])
+                       LEAGUE_PHASE_SHOWN if comp.continental else None, marked_club, comp.key) if league else []) + \
+            (_cup_blocks(cup_name, cup, labels, comp.tie_breaks, one_match, comp.key) if cup else [])
         if not built:
             continue
         order[name] = order[cup_name] = len(included)                           # a play-offs block sorts with its league
@@ -769,6 +778,7 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
             if xg_note:
                 xg_notes.append((name, xg_note))
             finals.append((name, overall))
+            final_keys.append((name, comp.key))
             splits.append((name, overall,
                            _split_lines(overall, fd.calculate_standings(league, labels, home_only=True), rows),
                            _split_lines(overall, fd.calculate_standings(league, labels, away_only=True), rows)))
@@ -778,5 +788,5 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
     coverage = dataclasses.replace(coverage, in_progress=unplayed)         # judged on the competitions in the book
     head = [TitlePage(label, _title_lines(coverage, included, home))]
     tail = grids + ([FinalTablesPage(tuple(finals), splits=tuple(splits), strips=tuple(strips),
-                                                    xg_notes=tuple(xg_notes))] if finals else [])
+                                                    xg_notes=tuple(xg_notes), keys=tuple(final_keys))] if finals else [])
     return Yearbook(label, coverage, tuple(head + pages + tail))

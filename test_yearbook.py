@@ -337,6 +337,22 @@ class WholeBookTests(unittest.TestCase):
         extra = [fx(D(2026, 8, 22), 2, 3, comp=103, md=1)]            # an unnamed competition: not in the book
         self.assertIn("Season complete", " ".join(self.make(self.SEASON + extra).pages[0].coverage_lines))
 
+    def test_every_match_carries_the_archives_own_fixture_key(self):
+        book, folder = banked(self.SEASON, competitions=self.COMPS, game=D(2026, 8, 20))
+        self.addCleanup(folder.cleanup)
+        self.addCleanup(book.close)
+        built = yearbook.yearbook_from(book.dataset(), book.competitions(), book.coverage(2026), 2026, self.NAMES)
+        stored = set(book._db.execute("SELECT competition_key, season, home_uid, away_uid, meeting FROM fixtures"))
+        matches = [m for p in built.pages for m in getattr(p, "matches", ())]
+        self.assertEqual(len(matches), 5)
+        self.assertEqual({m.fixture for m in matches}, stored)
+
+    def test_pages_carry_their_competitions_archive_key(self):
+        built = self.make(self.SEASON)
+        keys = {type(p).__name__: getattr(p, "competition_key", None) for p in built.pages}
+        self.assertEqual((keys["LeaguePage"], keys["CupBlock"], keys["PlacesPage"]), (12, 14, 12))
+        self.assertEqual(built.pages[-1].keys, (("Premier League", 12),))
+
     def test_final_tables_appear_only_when_every_league_match_is_played(self):
         done = self.make(self.SEASON)
         self.assertEqual([t[0] for t in done.pages[-1].tables], ["Premier League"])
