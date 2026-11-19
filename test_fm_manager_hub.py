@@ -157,7 +157,7 @@ class StepRowsTests(unittest.TestCase):
     """The Hub's rows at one step of the matchday stepper (made-up clubs and dates)."""
 
     def rows(self, step, **kw):
-        return {r.label: r for r in hub_rows(_snapshot(), step=step, **kw)}
+        return {r.label: r for r in hub_rows(_snapshot(followed=_followed("Northbridge Rovers"), next_scope_label="Invented League"), step=step, **kw)}
 
     def test_the_position_is_the_calculated_place_at_that_step(self):
         row = self.rows(_step(table=_table(2, 4, 6, 2)))["Position"]
@@ -184,7 +184,7 @@ class StepRowsTests(unittest.TestCase):
         played = _item(played=True, when=fd.WHEN_PLAYED, days=None)
         row = self.rows(_step(fixture=played))["Next league match"]
         self.assertEqual(row.value, "Eastholm Athletic (home) · 29 Aug 2099")
-        self.assertNotIn("2-1", " ".join(r.value for r in hub_rows(_snapshot(), step=_step(fixture=played))))
+        self.assertNotIn("2-1", " ".join(r.value for r in hub_rows(_snapshot(followed=_followed("Northbridge Rovers")), step=_step(fixture=played))))
 
     def test_a_club_with_no_league_steps_to_its_next_match(self):
         self.assertIn("Next match", self.rows(_step(title="Match 2", fixture=_item()), league=False))
@@ -198,13 +198,13 @@ class StepRowsTests(unittest.TestCase):
 
     def test_today_also_gives_the_next_match_in_any_competition_with_its_countdown(self):
         cup = _item(opponent="Kingsbay City", venue="A", date=dt.date(2099, 8, 27), days=2)
-        rows = hub_rows(_snapshot(next_item=cup), step=_step(fixture=_item()), today=True)
+        rows = hub_rows(_snapshot(followed=_followed("Northbridge Rovers"), next_item=cup, next_scope_label="Invented Cup"), step=_step(fixture=_item()), today=True)
         labels = [r.label for r in rows]
         self.assertIn("Next (any competition)", labels)
         self.assertIn("In 2 days", [r.value for r in rows])
 
     def test_away_from_today_there_is_no_countdown(self):
-        rows = hub_rows(_snapshot(next_item=_item()), step=_step(fixture=_item()), today=False)
+        rows = hub_rows(_snapshot(followed=_followed("Northbridge Rovers"), next_item=_item(), next_scope_label="Invented League"), step=_step(fixture=_item()), today=False)
         self.assertNotIn("Next (any competition)", [r.label for r in rows])
         self.assertFalse(any(r.value.startswith("In ") for r in rows))
 

@@ -446,10 +446,11 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(away_loss.opponent, "Sheffield United")
 
     def test_each_item_names_the_opponents_club_for_its_roundel_and_none_when_unresolved(self):
-        self.assertEqual(self.schedule.items[1].opponent_club, "Sheffield United")
-        ds = hull_ds([unresolved_away(fx(D(2026, 8, 26), 1, 4, 1, 0, md=7))])
-        item = next(i for i in fd.club_schedule(ds, HULL).items if i.fixture.date == D(2026, 8, 26))
-        self.assertIsNone(item.opponent_club)
+        ds = invented(lambda: stepper_season() + [unresolved_away(fx(D(2099, 8, 26), 1, 4, 1, 0, comp=102,
+                                                                     rnd=CUP_ROUND))])
+        items = fd.club_schedule(ds, NORTHBRIDGE).items
+        self.assertEqual(items[1].opponent_club, "Westford Town")
+        self.assertIsNone(next(i for i in items if i.fixture.date == D(2099, 8, 26)).opponent_club)
 
     def test_an_unplayed_match_has_no_result(self):
         upcoming = self.schedule.items[5]
