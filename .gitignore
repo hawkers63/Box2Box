@@ -50,3 +50,10 @@ AGENTS.md
 games/
 
 box2box_archive.sqlite*
+
+# Private session handoff, archives, backups and local access notes
+docs/SESSION_HANDOFF.md
+docs/SESSION_HANDOFF_ARCHIVE.md
+*_ARCHIVE.md
+*.backup-*
+GROK_ACCESS.txt
