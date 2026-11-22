@@ -8,7 +8,7 @@
 
 A Windows desktop viewer for the fixtures, results, grids and league tables in a Football Manager 27 (or 26) save. Saves are read with [fmsave](https://rhiever.github.io/fmsave/) and are never modified.
 
-[![Release 2.12](https://img.shields.io/badge/Release-2.12-0EA5E9)](https://github.com/hawkers63/Box2Box/releases/latest)
+[![Release 2.13](https://img.shields.io/badge/Release-2.13-0EA5E9)](https://github.com/hawkers63/Box2Box/releases/latest)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)](https://www.microsoft.com/windows)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![GUI](https://img.shields.io/badge/GUI-CustomTkinter%20%2B%20tksheet-10B981)](https://customtkinter.tomschimansky.com/)
@@ -20,9 +20,9 @@ A Windows desktop viewer for the fixtures, results, grids and league tables in a
 
 **Database viewer** · entry point `fm_review.py` · launcher `Box2Box.bat`
 
-**Release:** 2.12  
+**Release:** 2.13  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 2.12), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.13), launched with `Box2Box.bat`
 
 </div>
 
@@ -230,7 +230,7 @@ Open a feature for the full details.
 <details>
 <summary><b>🔢 Counts on the view switch</b></summary>
 
-**Counts on the view switch.** In a window wide enough for them (about 1540 pixels), the switch shows how many matches are still to play in the competition and season (`Results (254)`), how many competitions the save holds (`Competitions (500)`), and the followed team's current run once it is three or longer (`Table (N11)`): **W** won in a row, **U** unbeaten, **N** without a win, **L** lost in a row, with a **+** when a match with no recoverable score could make the run longer. In a narrower window the switch shows plain names, so the counts never squeeze the controls beside it. The window itself cannot be made narrower than its controls need (about 1,410 pixels, or your screen's width if that is less).
+**Counts on the view switch.** In a window wide enough for them (about 1540 pixels), the switch shows how many matches are still to play in the competition and season (`Results (254)`), how many competitions the save holds (`Competitions (500)`), and the followed team's current run once it is three or longer (`Table (N11)`): **W** won in a row, **U** unbeaten, **N** without a win, **L** lost in a row, with a **+** when a match with no recoverable score could make the run longer. In a narrower window the switch shows plain names, so the counts never squeeze the controls beside it. When the controls do not fit on one line, the view's own switch (Group by, Standings or Show) drops to a second line under Season. The window cannot be made narrower than 1,050 pixels (or your screen's width if that is less).
 
 </details>
 
@@ -480,6 +480,7 @@ The tests write only to temporary directories and do not need a real Football Ma
 
 | Release | Date | Highlights |
 | --- | --- | --- |
+| [**2.13**](https://github.com/hawkers63/Box2Box/releases/tag/v2.13) | 22&nbsp;Nov&nbsp;2026 | 📐 The view's own switch wraps to a second line, so the window can be narrower |
 | [**2.12**](https://github.com/hawkers63/Box2Box/releases/tag/v2.12) | 22&nbsp;Nov&nbsp;2026 | 🌍 A Country menu filters the competition list and the Competitions view by nation |
 | [**2.11**](https://github.com/hawkers63/Box2Box/releases/tag/v2.11) | 22&nbsp;Nov&nbsp;2026 | 📅 Schedule shows the gap between fixtures, and the Hub shows the previous meeting with the next opponent |
 | [**2.10**](https://github.com/hawkers63/Box2Box/releases/tag/v2.10) | 22&nbsp;Nov&nbsp;2026 | 📈 Yearbook season trajectory chart, evidence-qualified honours and a club season retrospective; Open save stays locked until all background work has finished |

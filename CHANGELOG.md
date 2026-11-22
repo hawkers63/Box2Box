@@ -1,8 +1,8 @@
 # Changelog
 
-**Release:** 2.12  
+**Release:** 2.13  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 2.12), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.13), launched with `Box2Box.bat`
 
 All notable changes to this project will be documented in this file.
 
@@ -10,6 +10,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [2.13] - 2026-11-22
+
+The controls row wraps instead of cutting off, so the window can be narrower.
+
+### Changed
+
+- **The view's own switch wraps.** When Season, Team, the view switch and the view's own switch (Group by on Results, Standings on Table, Show on Analysis, plus the Positions mode switch) do not fit on one line, the view's own switch drops to a second line under Season. In a wide window nothing changes. The check uses the controls' real widths and is repeated when the window is resized or the view changes, with a small margin so it does not flicker. Views with no switch of their own never show a second line.
+- **A narrower window.** The minimum width drops from about 1,410 to 1,050 pixels (or your screen's width if that is less). The counts on the view switch still appear only from about 1,540 pixels.
 
 ## [2.12] - 2026-11-22
 
