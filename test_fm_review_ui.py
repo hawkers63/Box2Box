@@ -11,6 +11,7 @@ import json
 import sys
 import sqlite3
 import tempfile
+import threading
 import time
 import tkinter as tk
 import unittest
@@ -3303,6 +3304,156 @@ class AboutTextTests(unittest.TestCase):
             text = fm_review.licence_text(Path(folder) / "LICENSE")
         self.assertIn("not found", text)
         self.assertIn("https://github.com/hawkers63/Box2Box", text)
+
+
+class HistoryBlockTests(unittest.TestCase):
+    """The club inspector's History block (v2.14): the archive's league finishes, read off the UI thread."""
+
+    BANKED = NS(describe=lambda: "Banked: invented")
+
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        folder = Path(self.folder.name)
+        patches = [
+            mock.patch.object(fm_review, "SETTINGS_PATH", folder / "settings.json"),
+            mock.patch.object(fm_review, "NAMES_PATH", folder / "names.csv"),
+            mock.patch.object(fm_review, "ERROR_LOG", folder / "errors.log"),
+            mock.patch.object(fm_review, "ARCHIVE_PATH", folder / "archive.sqlite"),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        ctk.set_appearance_mode("dark")
+        self.app = fm_review.FMReviewApp()
+        self.app.geometry("1300x800+-4000+0")
+        self.app.report_callback_exception = lambda *exc: (_ for _ in ()).throw(exc[1])
+        self.app.update()
+        self.app.install_dataset(dataset())
+        self.app.names = {12: "Invented League"}
+
+    def tearDown(self):
+        stop = time.monotonic() + 0.3
+        while time.monotonic() < stop:
+            self.app.update()
+            time.sleep(0.02)
+        self.app.destroy()
+        self.folder.cleanup()
+
+    def wait_for(self, condition, seconds=10.0):
+        stop = time.monotonic() + seconds
+        while time.monotonic() < stop:
+            self.app.update()
+            if condition():
+                return True
+            time.sleep(0.02)
+        return False
+
+    def bank(self, seasons=(2097, 2098, 2099)):
+        fixtures = [f for s in seasons for f in test_fm_data.history_league(s)]
+        data = fd.build_dataset(info(), fixtures, clubs=[club(n) for n in range(1, 6)],
+                                competitions=[NS(id=101, database_id=12)])
+        with archive.Archive.open(fm_review.ARCHIVE_PATH) as book:
+            book.bank(data)
+
+    def history(self):
+        """The text under the History heading of Hull City's inspector, or None when there is no such heading."""
+        blocks = self.app._club_model(team(1)).blocks
+        marks = [i for i, b in enumerate(blocks) if isinstance(b, inspector.Heading) and b.text == "History"]
+        if not marks:
+            return None
+        return [b.text for b in blocks[marks[0] + 1:] if isinstance(b, inspector.Line)]
+
+    def loaded_history(self):
+        self.assertTrue(self.wait_for(lambda: self.history() not in (None, ["Loading history..."])))
+        return self.history()
+
+    def test_without_an_archive_file_the_empty_state_shows_and_nothing_is_created(self):
+        self.app.handle_event(("banked", self.BANKED))
+        self.assertEqual(self.history(), ["No archive yet: seasons appear here once saves are banked."])
+        self.assertFalse(fm_review.ARCHIVE_PATH.exists())
+
+    def test_nothing_shows_under_history_until_the_save_has_banked(self):
+        self.bank()
+        self.assertIsNone(self.history())
+
+    def test_after_banking_a_club_lists_its_seasons_and_a_second_look_does_not_reload(self):
+        self.bank()
+        loads = []
+        real = archive.Archive.dataset
+
+        def counted(book):
+            loads.append(1)
+            return real(book)
+
+        with mock.patch.object(archive.Archive, "dataset", counted):
+            self.app.handle_event(("banked", self.BANKED))
+            lines = self.loaded_history()
+            self.assertEqual(lines[0], "2099 · Invented League · 3rd of 4 · P3 W1 D0 L2 · 3 pts")
+            self.assertEqual(len(lines), 3)
+            self.assertEqual(self.history(), lines)
+            self.assertEqual(len(loads), 1)
+
+    def test_a_failed_banking_shows_the_unavailable_line_and_never_loads_the_archive(self):
+        self.bank()
+        with mock.patch.object(archive.Archive, "dataset", side_effect=AssertionError("loaded")):
+            self.app.handle_event(("bank_failed", "A different playthrough."))
+            self.assertEqual(self.history(), ["History is unavailable: this save was not banked."])
+            self.app.update()
+
+    def test_a_new_banked_event_drops_the_cache_and_the_next_look_reloads(self):
+        self.bank()
+        loads = []
+        real = archive.Archive.dataset
+
+        def counted(book):
+            loads.append(1)
+            return real(book)
+
+        with mock.patch.object(archive.Archive, "dataset", counted):
+            self.app.handle_event(("banked", self.BANKED))
+            self.loaded_history()
+            self.app.handle_event(("banked", self.BANKED))
+            self.assertEqual(self.history(), ["Loading history..."])
+            self.loaded_history()
+            self.assertEqual(len(loads), 2)
+
+    def test_while_the_archive_loads_the_loading_line_shows_and_the_window_stays_responsive(self):
+        self.bank()
+        release = threading.Event()
+        real = archive.Archive.dataset
+
+        def slow(book):
+            release.wait(10)
+            return real(book)
+
+        with mock.patch.object(archive.Archive, "dataset", slow):
+            self.app.handle_event(("banked", self.BANKED))
+            began = time.monotonic()
+            self.assertEqual(self.history(), ["Loading history..."])
+            self.app.update()
+            self.assertLess(time.monotonic() - began, 1.0)         # the UI thread did not wait for the load
+            release.set()
+            self.assertEqual(len(self.loaded_history()), 3)
+
+    def test_more_than_ten_seasons_show_ten_lines_and_count_the_rest(self):
+        self.bank(seasons=range(2080, 2093))
+        self.app.handle_event(("banked", self.BANKED))
+        lines = self.loaded_history()
+        self.assertEqual(len(lines), 11)
+        self.assertTrue(lines[0].startswith("2092"))
+        self.assertEqual(lines[-1], "and 3 earlier seasons")
+
+    def test_a_missing_score_adds_the_minimums_remark_once(self):
+        fixtures = [dataclasses.replace(f, home_goals=None, away_goals=None) if i == 0 else f
+                    for i, f in enumerate(test_fm_data.history_league(2098) + test_fm_data.history_league(2099))]
+        data = fd.build_dataset(info(), fixtures, clubs=[club(n) for n in range(1, 6)],
+                                competitions=[NS(id=101, database_id=12)])
+        with archive.Archive.open(fm_review.ARCHIVE_PATH) as book:
+            book.bank(data)
+        self.app.handle_event(("banked", self.BANKED))
+        lines = self.loaded_history()
+        remarks = [t for t in lines if "minimums" in t]
+        self.assertEqual(len(remarks), 1)
 
 
 if __name__ == "__main__":

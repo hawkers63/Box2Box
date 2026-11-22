@@ -93,6 +93,7 @@ SETTINGS_PATH = APP_DIR / "box2box_settings.json"
 LEGACY_SETTINGS_PATH = APP_DIR / "fm_review_settings.json"
 ERROR_LOG = APP_DIR / "box2box_errors.log"
 ARCHIVE_PATH = APP_DIR / "box2box_archive.sqlite"
+HISTORY_LINES = 10          # seasons listed in the club inspector's History block
 BOOKMARKS = "yearbook_bookmarks"          # the settings key for the reading window's bookmarks
 READER_MODE = "yearbook_reader_mode"      # single pages or reader spreads        # every opened save is banked here (archive.py)
 SCHEDULE_GAPS = "schedule_fixture_gap"       # the settings key for the Schedule's Fixture gap option
@@ -599,6 +600,8 @@ class FMReviewApp(_Root):
         self._exporting = False
         self.about_window: AboutWindow | None = None
         self.yearbook_reader: YearbookReader | None = None
+
+        self._reset_history()                  # the club inspector's History block (archive read lazily, off the UI thread)
 
         self.comp_id: int | None = None
         self.season: int | None = None
@@ -1153,6 +1156,62 @@ class FMReviewApp(_Root):
             self.events.put(("bank_failed", f"This save could not be banked into the archive "
                                             f"({type(exc).__name__}: {exc}). It is still open."))
 
+    def _reset_history(self, banked: bool = False) -> None:
+        """Forget the archive read for the History block. `banked` is true once this save has been banked."""
+        self._history_serial = getattr(self, "_history_serial", 0) + 1    # a read still in flight is then ignored
+        self._history_banked = banked
+        self._history_failed = False
+        self._history_loading = False
+        self._history_unreadable = False
+        self._history_cache: fd.Dataset | None = None
+        self._history_rows: dict[tuple, tuple[fd.HistoryRow, ...]] = {}
+
+    def _history_worker(self, serial: int) -> None:
+        """Read the archive into a Dataset, away from the UI thread."""
+        try:
+            with archive.Archive.open(ARCHIVE_PATH) as book:
+                data = book.dataset()
+            self.events.put(("history_loaded", (serial, data)))
+        except Exception:
+            self._log_error(traceback.format_exc())
+            self.events.put(("history_loaded", (serial, None)))
+
+    def _history_blocks(self, team_id: int) -> list:
+        """The History heading and lines for a club, or nothing until this save has banked. The archive is only
+        ever opened to read, and only when its file exists."""
+        if self._history_failed:
+            return [inspector.Heading("History"),
+                    inspector.Line("History is unavailable: this save was not banked.", muted=True)]
+        if not self._history_banked:
+            return []
+        heading = inspector.Heading("History")
+        if not ARCHIVE_PATH.exists():
+            return [heading, inspector.Line("No archive yet: seasons appear here once saves are banked.", muted=True)]
+        if self._history_unreadable:
+            return [heading, inspector.Line("History is unavailable: the archive could not be read.", muted=True)]
+        identity = self.dataset.teams.get(team_id) if self.dataset else None
+        if identity is None or identity.club_uid is None:
+            return []
+        if self._history_cache is None:
+            if not self._history_loading:
+                self._history_loading = True
+                threading.Thread(target=self._history_worker, args=(self._history_serial,), daemon=True).start()
+            return [heading, inspector.Line("Loading history...", muted=True)]
+        exclude = self.season if self.comp_id in self.dataset.by_id else None
+        key = (identity.club_uid, exclude)
+        if key not in self._history_rows:
+            self._history_rows[key] = fd.club_history(self._history_cache, identity.club_uid, self.names, exclude)
+        rows = self._history_rows[key]
+        if not rows:
+            return [heading, inspector.Line("No earlier seasons in the archive.", muted=True)]
+        blocks: list = [heading] + [inspector.Line(r.text()) for r in rows[:HISTORY_LINES]]
+        if len(rows) > HISTORY_LINES:
+            blocks.append(inspector.Line(f"and {len(rows) - HISTORY_LINES} earlier seasons", muted=True))
+        if any(r.incomplete for r in rows[:HISTORY_LINES]):
+            blocks.append(inspector.Line("A match with no recoverable score counts as played only, so these "
+                                         "totals are minimums.", muted=True))
+        return blocks
+
     def _start_xg_banking(self, dataset: fd.Dataset) -> None:
         """Bank the expected goals that arrive a few seconds after the save, once the save itself has been banked.
         Nothing happens for a save whose match reports could not be read."""
@@ -1234,9 +1293,22 @@ class FMReviewApp(_Root):
             return
         if kind == "banked":
             self.detail_label.configure(text=payload.describe())
+            self._reset_history(banked=True)             # the archive just changed: read it afresh when next needed
+            self._refresh_inspector()
             return
         if kind == "bank_failed":
             self.detail_label.configure(text=payload)
+            if not self._history_banked:                 # a later failure (the expected goals) does not unbank the save
+                self._history_failed = True
+                self._refresh_inspector()
+            return
+        if kind == "history_loaded":
+            serial, data = payload
+            if serial == self._history_serial:
+                self._history_loading = False
+                self._history_cache = data
+                self._history_unreadable = data is None
+                self._refresh_inspector()
             return
         if kind == "loaded":
             # The save is in and can be browsed; its expected goals follow from the same worker,
@@ -1267,6 +1339,7 @@ class FMReviewApp(_Root):
     def install_dataset(self, dataset: fd.Dataset) -> None:
         self.close_palette()                       # its items describe the save that was open
         self.close_inspector()
+        self._reset_history()                      # banking of this save has not been reported yet
         self._selection = None
         self.dataset = dataset
         self._dataset_serial += 1
@@ -3237,6 +3310,7 @@ class FMReviewApp(_Root):
         if row is not None and row.covered:
             blocks.append(inspector.Line(f"Expected goals: {row.xg_for:.1f} for, {row.xg_against:.1f} against, over "
                                          f"{row.covered} match{'es' if row.covered != 1 else ''} with a report"))
+        blocks += self._history_blocks(team_id)
         subtitle = fd.competition_title(ds.by_id[self.comp_id], self.names) if self.comp_id in ds.by_id else ""
         return inspector.InspectorModel(name, subtitle, tuple(blocks))
 
