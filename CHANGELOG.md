@@ -1,8 +1,8 @@
 # Changelog
 
-**Release:** 2.9  
+**Release:** 2.10  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 2.9), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.10), launched with `Box2Box.bat`
 
 All notable changes to this project will be documented in this file.
 
@@ -10,6 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [2.10] - 2026-11-22
+
+The Yearbook gains a season trajectory, honours that say how sure they are, and a retrospective of the club you follow.
+
+### Added
+
+- **Season trajectory.** When the Yearbook marks a club, a chart plots its place on the calculated table after each matchweek, on the date that table is calculated to. A matchweek the club had not played, or with no printed table, is a gap: the line stops and nothing is drawn across it. Shaded bands are the latest table's zones and are labelled as estimated. In the reader, moving over a point lists the club's results printed on that matchweek's page, and nothing more. A club in no league gets a short note instead of a chart. Matchweek numbers are never called calendar weeks. The PDF draws the same places on the same dates.
+- **Honours, with their evidence.** A finished league names its calculated leader, never an official champion (points deductions are not in the results), and says when a tie on points rests on a tie-break the calculation cannot follow. Clubs in the promotion and play-off places are listed as places, not as promotion or a play-off win. A cup winner is named only from a decisive final score or an aggregate; a level final stays unresolved. Each reason is a numbered footnote, worded identically in the reader and the PDF.
+- **Club season retrospective.** For the marked club: its place and record in each league, its longest unbeaten run and longest run without a win (league matches, with their dates), its biggest win by margin, how far it went in each cup, and a pointer to the trajectory. It uses results only: no venue, attendance, scorer or manager detail. With no marked club the chapter is left out.
+
+### Fixed
+
+- **Open save and the progress bar** could switch back on while a save's expected goals were still being read, if the Schedule and Hub finished building first. They now stay locked until all background work for the save has finished, and a schedule from an older save or selection is ignored.
 
 ## [2.9] - 2026-11-19
 
