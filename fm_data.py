@@ -2723,6 +2723,16 @@ class HistoryRow:
     so_far: bool
     incomplete: bool
 
+    def text(self) -> str:
+        """'2099/00 · League · 3rd of 20 · P38 W20 D10 L8 · 70 pts'; 'so far' after the place of an unfinished
+        season, and 'position unknown' when the table cannot be worked out."""
+        if self.position is None:
+            place = "position unknown"
+        else:
+            place = f"{_ordinal(self.position)} of {self.size}" + (" so far" if self.so_far else "")
+        return (f"{self.season_label} · {self.league} · {place} · "
+                f"P{self.played} W{self.won} D{self.drawn} L{self.lost} · {self.points} pts")
+
 
 def club_history(archive_dataset: Dataset, club_uid: int, names: Mapping[int, str],
                  exclude_season: int | None) -> tuple[HistoryRow, ...]:

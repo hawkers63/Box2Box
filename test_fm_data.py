@@ -1782,3 +1782,13 @@ class ClubHistoryTests(unittest.TestCase):
         reserve = history_league(2098, home_slot=1)
         self.assertEqual(self.history(reserve + history_league(2099)), self.history(history_league(2099)))
         self.assertEqual([r.season for r in self.history(reserve)], [])
+
+    def test_a_row_reads_as_one_line_with_the_place_and_record(self):
+        row = self.history(history_league(2099))[0]
+        self.assertEqual(row.text(), "2099 · Invented League · 3rd of 4 · P3 W1 D0 L2 · 3 pts")
+
+    def test_an_unfinished_season_reads_so_far_and_an_unknown_place_says_so(self):
+        unfinished = history_league(2099) + [fx(D(2099, 12, 1), 4, 1, comp=101, season=2099, md=7)]
+        self.assertIn("3rd of 4 so far", self.history(unfinished)[0].text())
+        with mock.patch.object(fd, "standings", side_effect=ValueError("no table")):
+            self.assertIn("position unknown", self.history(history_league(2099))[0].text())
