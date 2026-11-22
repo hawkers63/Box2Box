@@ -733,6 +733,67 @@ def competition_nations(dataset: Dataset) -> dict[int, tuple[int | None, bool]]:
     return result
 
 
+COUNTRY_ALL, COUNTRY_CONTINENTAL, COUNTRY_NONE = "All countries", "Continental", "No country"
+
+
+@dataclass(frozen=True, slots=True)
+class CountryOption:
+    """One entry of the Country menu. `key` is None (everything), a nation database id, or one of the two
+    strings "continental" and "none"."""
+
+    label: str
+    key: int | str | None
+
+
+def country_label(database_id: int, names: Mapping[int, str]) -> str:
+    return names.get(database_id) or f"Country {database_id}"
+
+
+def country_names_from_settings(raw) -> dict[int, str]:
+    """The user's country names from the settings file ({database id as text: name}); anything odd is dropped."""
+    if not isinstance(raw, dict):
+        return {}
+    names: dict[int, str] = {}
+    for key, value in raw.items():
+        if isinstance(key, str) and isinstance(value, str) and value.strip():
+            try:
+                names[int(key)] = value.strip()
+            except ValueError:
+                continue
+    return names
+
+
+def country_names_for_settings(names: Mapping[int, str]) -> dict[str, str]:
+    return {str(key): value for key, value in names.items()}
+
+
+def country_options(dataset: Dataset, names: Mapping[int, str]) -> tuple[CountryOption, ...]:
+    """The Country menu: everything, each nation that owns a competition (by label), then Continental and
+    No country when some competition is of that kind. With no nation table there is only "All countries"."""
+    options = [CountryOption(COUNTRY_ALL, None)]
+    if not dataset.nation_database_ids:
+        return tuple(options)
+    found = competition_nations(dataset).values()
+    nations = sorted({nation for nation, _ in found if nation is not None},
+                     key=lambda n: (country_label(n, names).casefold(), n))
+    options.extend(CountryOption(country_label(n, names), n) for n in nations)
+    if any(continental for _, continental in found):
+        options.append(CountryOption(COUNTRY_CONTINENTAL, "continental"))
+    if any(nation is None and not continental for nation, continental in found):
+        options.append(CountryOption(COUNTRY_NONE, "none"))
+    return tuple(options)
+
+
+def competitions_in_country(dataset: Dataset, key: int | str | None) -> frozenset[int] | None:
+    """The ids of the competitions a Country menu entry keeps; None keeps them all."""
+    if key is None:
+        return None
+    wanted = {cid for cid, (nation, continental) in competition_nations(dataset).items()
+              if (continental if key == "continental"
+                  else (nation is None and not continental) if key == "none" else nation == key)}
+    return frozenset(wanted)
+
+
 def link_tie_breaks(rules: Iterable) -> dict[int, tuple[int, ...]]:
     """The tie-break codes each competition's rules list, in order, for the competitions whose
     linked rules blocks all list the same ones."""

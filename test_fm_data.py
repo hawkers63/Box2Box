@@ -673,6 +673,65 @@ class CompetitionNationTests(unittest.TestCase):
         self.assertEqual(fd.competition_nations(ds), {101: (900, False)})
 
 
+class CountryMenuTests(unittest.TestCase):
+    """The Country menu's entries and filter, on invented nations 900 (A) and 901 (B) and one continental cup."""
+
+    def setUp(self):
+        clubs = [NS(uid=uid, reputation=10, teams=(), nation_id=n) for uid, n in {1: 0, 2: 0, 3: 1, 4: 1}.items()]
+        games = [fx(D(2099, 8, 1), 1, 2, 1, 0, comp=101), fx(D(2099, 8, 1), 3, 4, 0, 0, comp=102),
+                 fx(D(2099, 8, 2), 1, 3, 2, 2, comp=103), fx(D(2099, 8, 2), 5, 4, 1, 0, comp=104)]
+        # club 5 has no nation, so competition 104 has one known club (4, nation B) and belongs to B
+        self.nations = [NS(nation_id=0, database_id=900), NS(nation_id=1, database_id=901)]
+        self.ds = fd.build_dataset(info(), games, clubs=clubs, nations=self.nations)
+
+    def test_without_names_the_entries_read_country_and_database_id(self):
+        labels = [o.label for o in fd.country_options(self.ds, {})]
+        self.assertEqual(labels, ["All countries", "Country 900", "Country 901", "Continental"])
+
+    def test_a_given_name_replaces_the_label_and_entries_sort_by_label(self):
+        labels = [o.label for o in fd.country_options(self.ds, {901: "Ruritania", 900: "Zembla"})]
+        self.assertEqual(labels, ["All countries", "Ruritania", "Zembla", "Continental"])
+
+    def test_no_country_is_offered_only_when_a_competition_has_none(self):
+        clubs = [NS(uid=1, reputation=10, teams=(), nation_id=0), NS(uid=2, reputation=10, teams=(), nation_id=0)]
+        ds = fd.build_dataset(info(), [fx(D(2099, 8, 1), 1, 2, 1, 0, comp=101), fx(D(2099, 8, 1), 4, 5, 0, 0, comp=102)],
+                              clubs=clubs, nations=self.nations)
+        self.assertEqual([o.label for o in fd.country_options(ds, {})], ["All countries", "Country 900", "No country"])
+
+    def test_an_empty_nation_map_offers_only_all_countries(self):
+        ds = fd.build_dataset(info(), [fx(D(2099, 8, 1), 1, 2, 1, 0)], clubs=[NS(uid=1, reputation=10, teams=(), nation_id=0)])
+        self.assertEqual([o.label for o in fd.country_options(ds, {})], ["All countries"])
+
+    def option(self, label, names=None):
+        return next(o for o in fd.country_options(self.ds, names or {}) if o.label == label)
+
+    def test_a_nation_keeps_only_its_own_competitions(self):
+        self.assertEqual(fd.competitions_in_country(self.ds, self.option("Country 900").key), {101})
+        self.assertEqual(fd.competitions_in_country(self.ds, self.option("Country 901").key), {102, 104})
+
+    def test_continental_keeps_only_the_cup(self):
+        self.assertEqual(fd.competitions_in_country(self.ds, self.option("Continental").key), {103})
+
+    def test_all_countries_filters_nothing(self):
+        self.assertIsNone(fd.competitions_in_country(self.ds, self.option("All countries").key))
+
+    def test_no_country_keeps_the_competitions_with_none(self):
+        clubs = [NS(uid=1, reputation=10, teams=(), nation_id=0), NS(uid=2, reputation=10, teams=(), nation_id=0)]
+        ds = fd.build_dataset(info(), [fx(D(2099, 8, 1), 1, 2, 1, 0, comp=101), fx(D(2099, 8, 1), 4, 5, 0, 0, comp=102)],
+                              clubs=clubs, nations=self.nations)
+        option = next(o for o in fd.country_options(ds, {}) if o.label == "No country")
+        self.assertEqual(fd.competitions_in_country(ds, option.key), {102})
+
+    def test_names_from_settings_ignore_anything_odd(self):
+        self.assertEqual(fd.country_names_from_settings({"900": " Ruritania ", "x": "n", "901": 5, "902": ""}),
+                         {900: "Ruritania"})
+        for odd in (None, [], "text", 7):
+            self.assertEqual(fd.country_names_from_settings(odd), {})
+
+    def test_names_for_settings_are_keyed_on_the_id_as_text(self):
+        self.assertEqual(fd.country_names_for_settings({900: "Ruritania"}), {"900": "Ruritania"})
+
+
 class StandingsAsOfTests(unittest.TestCase):
     SEASON = [fx(D(2026, 8, 8), 1, 2, 2, 1, md=1), fx(D(2026, 8, 8), 3, 4, 0, 0, md=1),
               fx(D(2026, 8, 15), 1, 3, 1, 0, md=2), fx(D(2026, 8, 20), 4, 2, 3, 3, md=2)]    # the last one is moved
