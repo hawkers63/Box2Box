@@ -1,8 +1,8 @@
 # Changelog
 
-**Release:** 2.11  
+**Release:** 2.12  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 2.11), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.12), launched with `Box2Box.bat`
 
 All notable changes to this project will be documented in this file.
 
@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [2.12] - 2026-11-22
+
+A Country menu narrows the competition list and the Competitions view to one nation.
+
+### Added
+
+- **Country menu.** A "Country" menu above the competition list: "All countries" (the default), each nation that owns a competition in the open save, then "Continental" and "No country" when some competition is of that kind. Choosing one filters both the left-hand list and the Competitions view; the open competition stays open even when it is filtered out. A competition's nation is inferred from its clubs (a nation owning at least 60 percent of the clubs whose nation is known; a mix with no such majority is continental; none known stays unknown). The save holds no nation names, so entries read "Country <database id>" until you name them with "Name this country..." in the command palette (enabled when a nation is selected); names are kept in the settings file and apply to every save. The choice is not remembered: opening a save resets it to "All countries". A save with no readable nation table shows only "All countries", disabled.
 
 ## [2.11] - 2026-11-22
 
