@@ -33,6 +33,18 @@ def _fixture_text(item: fd.ScheduleItem) -> str:
     return f"{item.opponent} ({venue_word}) · {date_text}"
 
 
+def previous_meeting_row(snapshot: fd.ManagerSnapshot, step: fd.HubStep, competition_names: dict[int, str]) -> HubRow:
+    """The latest earlier meeting with the step's opponent: date, competition and score, or why there is none."""
+    previous = step.previous
+    if previous is None:
+        return HubRow("Previous meeting", "No earlier meeting found in this save", muted=True)
+    f = previous.fixture
+    competition = competition_names.get(f.competition_id or 0, f"Competition {f.competition_id}")
+    result = (f"{snapshot.followed.name} {previous.score} {step.fixture.opponent}" if previous.score is not None
+              else "Score unavailable")
+    return HubRow("Previous meeting", f"{f.date.strftime('%d %b %Y').lstrip('0')} ┬À {competition} ┬À {result}")
+
+
 def _ordinal(n: int) -> str:
     return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
 
@@ -60,6 +72,7 @@ def step_rows(snapshot: fd.ManagerSnapshot, step: fd.HubStep, competition_names:
         rows.append(HubRow(label, "Season complete", muted=True))
     else:
         rows.append(HubRow(label, _fixture_text(step.fixture)))
+        rows.append(previous_meeting_row(snapshot, step, competition_names))
     nxt = snapshot.next_item
     if today and nxt is not None and (step.fixture is None or nxt.fixture is not step.fixture.fixture):
         rows.append(HubRow("Next (any competition)", _fixture_text(nxt)))

@@ -144,13 +144,13 @@ def _table(position=1, of=4, points=6, played=2, unscored=0):
     return fd.HubTable(position, of, points, played, unscored, ())
 
 
-def _step(title="Matchday 4", table=None, form="WD", fixture=None, cutoff=True):
+def _step(title="Matchday 4", table=None, form="WD", fixture=None, cutoff=True, previous=None):
     cut = fd.Cutoff(dt.date(2099, 8, 29), dt.time(15, 0)) if cutoff else None
     steps = tuple(MagicMock(outcome=c) for c in form)
     strip = MagicMock(spec=fd.FormStrip)
     strip.letters = form
     strip.steps = steps
-    return fd.HubStep(title, dt.date(2099, 8, 29), cut, fixture, table, strip)
+    return fd.HubStep(title, dt.date(2099, 8, 29), cut, fixture, table, strip, previous)
 
 
 class StepRowsTests(unittest.TestCase):
@@ -207,6 +207,44 @@ class StepRowsTests(unittest.TestCase):
         rows = hub_rows(_snapshot(followed=_followed("Northbridge Rovers"), next_item=_item(), next_scope_label="Invented League"), step=_step(fixture=_item()), today=False)
         self.assertNotIn("Next (any competition)", [r.label for r in rows])
         self.assertFalse(any(r.value.startswith("In ") for r in rows))
+
+
+def _meeting(score="2-1", date=dt.date(2099, 8, 8), competition_id=101):
+    f = MagicMock()
+    f.date, f.competition_id = date, competition_id
+    return fd.PreviousMeeting(f, score)
+
+
+class PreviousMeetingRowTests(unittest.TestCase):
+    """The Hub's "Previous meeting" row under the upcoming opponent (made-up clubs and dates)."""
+
+    NAMES = {101: "Invented League", 102: "Invented Cup"}
+
+    def rows(self, step):
+        snapshot = _snapshot(followed=_followed("Northbridge Rovers"), next_scope_label="Invented League")
+        return hub_rows(snapshot, self.NAMES, step=step)
+
+    def test_it_gives_the_date_competition_and_score_of_the_earlier_meeting(self):
+        rows = self.rows(_step(fixture=_item(), previous=_meeting("2-1", competition_id=102)))
+        row = next(r for r in rows if r.label == "Previous meeting")
+        self.assertEqual(row.value, "8 Aug 2099 ┬À Invented Cup ┬À Northbridge Rovers 2-1 Eastholm Athletic")
+
+    def test_it_sits_directly_beneath_the_upcoming_opponent(self):
+        labels = [r.label for r in self.rows(_step(fixture=_item(), previous=_meeting()))]
+        self.assertEqual(labels.index("Previous meeting"), labels.index("Next league match") + 1)
+
+    def test_a_meeting_with_no_recoverable_score_says_so_never_a_zero(self):
+        row = next(r for r in self.rows(_step(fixture=_item(), previous=_meeting(score=None)))
+                   if r.label == "Previous meeting")
+        self.assertEqual(row.value, "8 Aug 2099 ┬À Invented League ┬À Score unavailable")
+
+    def test_with_no_earlier_meeting_the_row_says_so(self):
+        row = next(r for r in self.rows(_step(fixture=_item(), previous=None)) if r.label == "Previous meeting")
+        self.assertEqual((row.value, row.muted), ("No earlier meeting found in this save", True))
+
+    def test_the_end_of_the_season_has_no_previous_meeting_row(self):
+        step = _step(title=fd.END_OF_SEASON, fixture=None, cutoff=False)
+        self.assertNotIn("Previous meeting", [r.label for r in self.rows(step)])
 
 
 if __name__ == "__main__":

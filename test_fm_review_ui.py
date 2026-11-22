@@ -2860,6 +2860,29 @@ class ScheduleHubWiringTests(unittest.TestCase):
     def hub_values(self, hub):
         return {row.label: row.value for row in hub._rows}
 
+    def meeting_season(self, played=True):
+        return self.invented_dataset([
+            lambda fx: fx(D(2099, 8, 8), 1, 4, 2 if played else None, 1 if played else None, md=1),
+            lambda fx: fx(D(2099, 8, 8), 3, 2, 0 if played else None, 0 if played else None, md=1),
+            lambda fx: fx(D(2099, 8, 15), 4, 1, md=2), lambda fx: fx(D(2099, 8, 15), 2, 3, md=2),
+        ], game_date=D(2099, 8, 10))
+
+    def test_the_hub_shows_the_previous_meeting_and_never_the_last_clubs_or_saves(self):
+        app = self.app
+        hub = self.open_hub(self.meeting_season())
+        self.assertEqual(self.hub_values(hub)["Previous meeting"],
+                         "8 Aug 2099 ┬À Competition 101 ┬À Northbridge Rovers 2-1 Southmere United")
+        app.set_focus(test_fm_data.team(3))                              # another club: nothing of the first one's
+        self.assertNotIn("Previous meeting", self.hub_values(hub))       # while it builds
+        self.assertTrue(self.wait_for(lambda: "Previous meeting" in self.hub_values(hub)), "no hub for the new club")
+        self.assertEqual(self.hub_values(hub)["Previous meeting"],
+                         "8 Aug 2099 ┬À Competition 101 ┬À Westford Town 0-0 Eastholm Athletic")
+        app.install_dataset(self.meeting_season(played=False))           # another save: the old result is gone
+        self.assertNotIn("Previous meeting", self.hub_values(hub))
+        app.set_focus(test_fm_data.team(1))
+        self.assertTrue(self.wait_for(lambda: "Previous meeting" in self.hub_values(hub)), "no hub for the new save")
+        self.assertEqual(self.hub_values(hub)["Previous meeting"], "No earlier meeting found in this save")
+
     def test_the_stepper_opens_at_the_saves_date_and_names_the_matchday_and_its_snapshot_date(self):
         hub = self.open_hub()
         self.assertEqual(hub.index, 2)                                      # 20 Aug: before matchday 3
