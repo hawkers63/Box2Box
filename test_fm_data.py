@@ -619,6 +619,60 @@ class ClubNationTests(unittest.TestCase):
         self.assertEqual(dict(ds.club_nations), {1: 5})
 
 
+class CompetitionNationTests(unittest.TestCase):
+    """Invented nations: save-local ids 0 (database id 900) and 1 (database id 901)."""
+
+    NATIONS = [NS(nation_id=0, database_id=900), NS(nation_id=1, database_id=901)]
+
+    def dataset(self, club_nation, fixtures, nations=None):
+        clubs = [NS(uid=uid, reputation=10, teams=(), nation_id=n) for uid, n in club_nation.items()]
+        return fd.build_dataset(info(), fixtures, clubs=clubs,
+                                nations=self.NATIONS if nations is None else nations)
+
+    def test_two_of_three_clubs_from_one_nation_is_that_nation(self):
+        ds = self.dataset({1: 0, 2: 0, 3: 1}, [fx(D(2099, 8, 1), 1, 2, 1, 0), fx(D(2099, 8, 8), 2, 3, 0, 0)])
+        self.assertEqual(fd.competition_nations(ds), {101: (900, False)})
+
+    def test_an_even_split_is_continental(self):
+        ds = self.dataset({1: 0, 2: 1}, [fx(D(2099, 8, 1), 1, 2, 1, 0)])
+        self.assertEqual(fd.competition_nations(ds), {101: (None, True)})
+
+    def test_clubs_with_no_known_nation_leave_the_competition_unknown(self):
+        ds = self.dataset({1: None, 2: None}, [fx(D(2099, 8, 1), 1, 2, 1, 0)])
+        self.assertEqual(fd.competition_nations(ds), {101: (None, False)})
+
+    def test_a_save_with_no_nation_table_gives_unknown_everywhere(self):
+        ds = self.dataset({1: 0, 2: 0}, [fx(D(2099, 8, 1), 1, 2, 1, 0)], nations=[])
+        self.assertEqual(fd.competition_nations(ds), {101: (None, False)})
+
+    def test_it_agrees_with_the_archives_rule(self):
+        import archive
+        known = {1: 0, 2: 0, 3: 1}
+        ds = self.dataset(known, [fx(D(2099, 8, 1), 1, 2, 1, 0), fx(D(2099, 8, 8), 2, 3, 0, 0)])
+        nation, continental = archive.infer_nation({1, 2, 3}, known)
+        self.assertEqual(fd.competition_nations(ds)[101], (ds.nation_database_ids[nation], continental))
+
+    def test_a_failing_nation_reader_never_fails_the_load(self):
+        class Broken(FakeSave):
+            def nations(self):
+                raise RuntimeError("no nation table")
+        with mock.patch.object(fd.fmsave, "open", return_value=Broken(XG_SEASON)):
+            final = fd.load_dataset("career.fm")
+        self.assertEqual(dict(final.nation_database_ids), {})
+
+    def test_load_dataset_keeps_the_nation_table(self):
+        class WithNations(FakeSave):
+            def nations(self):
+                return [NS(nation_id=0, database_id=900)]
+        with mock.patch.object(fd.fmsave, "open", return_value=WithNations(XG_SEASON)):
+            final = fd.load_dataset("career.fm")
+        self.assertEqual(dict(final.nation_database_ids), {0: 900})
+
+    def test_a_league_of_one_nation_belongs_to_its_database_id(self):
+        ds = self.dataset({1: 0, 2: 0, 3: 0}, [fx(D(2099, 8, 1), 1, 2, 1, 0), fx(D(2099, 8, 8), 2, 3, 0, 0)])
+        self.assertEqual(fd.competition_nations(ds), {101: (900, False)})
+
+
 class StandingsAsOfTests(unittest.TestCase):
     SEASON = [fx(D(2026, 8, 8), 1, 2, 2, 1, md=1), fx(D(2026, 8, 8), 3, 4, 0, 0, md=1),
               fx(D(2026, 8, 15), 1, 3, 1, 0, md=2), fx(D(2026, 8, 20), 4, 2, 3, 3, md=2)]    # the last one is moved

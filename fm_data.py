@@ -184,6 +184,7 @@ class Dataset:
     zone_rules: Mapping[int, ZoneRules] = field(default_factory=dict)
     tie_breaks: Mapping[int, tuple[int, ...]] = field(default_factory=dict)
     club_nations: Mapping[int, int] = field(default_factory=dict)      # club uid -> nation id, where the save says
+    nation_database_ids: Mapping[int, int] = field(default_factory=dict)   # save-local nation id -> game database id
     expected_goals: Mapping[tuple, ExpectedGoals] = field(default_factory=dict)   # keyed on fixture_key
     match_reports: Mapping[tuple, MatchStats] = field(default_factory=dict)        # keyed on fixture_key
     xg_report: XgReport | None = None    # None until the match statistics have been read
@@ -544,8 +545,9 @@ def load_dataset(
                 rules = _optional(notes, "Competition rules", save.competition_rules)
                 progress("Organising fixtures")
                 info = _import_info(path, save_info, managed, caught, notes, started)
+                nations = _optional(notes, "Nations", lambda: save.nations())
                 dataset = build_dataset(info, fixtures, clubs=clubs, competitions=competitions, tables=tables,
-                                        rules=rules)
+                                        rules=rules, nations=nations)
                 if ready is not None:
                     try:
                         ready(dataset)
@@ -640,6 +642,7 @@ def build_dataset(
     competitions: Iterable = (),
     tables: Iterable[LeagueTable] = (),
     rules: Iterable = (),
+    nations: Iterable = (),
     match_stats: Iterable | None = None,
 ) -> Dataset:
     """Organise fmsave records into a Dataset. Pure: no file access. Without `match_stats` the
@@ -706,9 +709,28 @@ def build_dataset(
         zone_rules=link_zone_rules(rules, ordered),
         tie_breaks=link_tie_breaks(rules),
         club_nations=club_nations,
+        nation_database_ids={n.nation_id: n.database_id for n in nations
+                             if getattr(n, "nation_id", None) is not None
+                             and getattr(n, "database_id", None) is not None},
         teams=team_identities(fixtures),
     )
     return dataset if match_stats is None else with_expected_goals(dataset, match_stats)
+
+
+def competition_nations(dataset: Dataset) -> dict[int, tuple[int | None, bool]]:
+    """Each competition's (nation database id, continental), inferred from its clubs by archive.infer_nation.
+    A competition whose clubs have no known nation, or a save with no nation table, is (None, False)."""
+    from archive import infer_nation
+    known = {uid: nation for uid, nation in dataset.club_nations.items() if nation in dataset.nation_database_ids}
+    clubs_in: dict[int, set[int]] = defaultdict(set)
+    for cid, items in dataset.fixtures.items():
+        for f in items:
+            clubs_in[cid].update(uid for uid in (f.home_club_uid, f.away_club_uid) if uid is not None)
+    result: dict[int, tuple[int | None, bool]] = {}
+    for comp in dataset.competitions:
+        nation, continental = infer_nation(clubs_in.get(comp.id, set()), known)
+        result[comp.id] = (None if nation is None else dataset.nation_database_ids[nation], continental)
+    return result
 
 
 def link_tie_breaks(rules: Iterable) -> dict[int, tuple[int, ...]]:
