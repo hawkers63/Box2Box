@@ -101,16 +101,20 @@ def read_pages(book: yb.Yearbook) -> tuple[list[ReadPage], list[tuple[str, int]]
             pages.append(ReadPage("honours", "", "Honours",
                                   tuple(f"{e.competition}: {line}" for e in page.entries for line in e.lines), (), (),
                                   page.notes, page_key="honours"))
+        elif isinstance(page, yb.RetrospectivePage):
+            enter(f"{page.club}: Season retrospective")
+            pages.append(ReadPage("retrospective", "", f"{page.club} \u00b7 Season retrospective", page.lines, (), (),
+                                  page.notes, page_key="retrospective"))
         elif isinstance(page, yb.TrajectoryPage):
             enter(f"{page.club}: Season trajectory")
             if not page.charts:
-                pages.append(ReadPage("trajectory", "", f"{page.club} ┬À Season trajectory", (page.note,),
+                pages.append(ReadPage("trajectory", "", f"{page.club} · Season trajectory", (page.note,),
                                       page_key="trajectory/note"))
             for n, chart in enumerate(page.charts):
                 rows = tuple((str(p.matchweek), f"{yb._day(p.through)} {p.through:%b}", "" if p.place is None else str(p.place))
                              for p in chart.points)
                 pages.append(ReadPage("trajectory", chart.competition,
-                                      f"{page.club} ┬À Season trajectory ┬À {chart.competition}", (), ("Matchweek", "To", "Place"),
+                                      f"{page.club} · Season trajectory · {chart.competition}", (), ("Matchweek", "To", "Place"),
                                       rows, (yb.TRAJECTORY_NOTE,), page_key=f"trajectory/{chart.competition_key or n}", chart=chart))
         elif isinstance(page, yb.FinalTablesPage):
             keys = dict(page.keys)

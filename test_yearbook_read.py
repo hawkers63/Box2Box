@@ -286,7 +286,7 @@ class TrajectoryReadTests(unittest.TestCase):
         pages, contents = yr.read_pages(book(TRAJECTORY))
         page = pages[1]
         self.assertEqual((page.kind, page.heading, page.chart is TRAJECTORY.charts[0], page.notes),
-                         ("trajectory", "Leeds United ┬À Season trajectory ┬À Premier League", True, (yb.TRAJECTORY_NOTE,)))
+                         ("trajectory", "Leeds United · Season trajectory · Premier League", True, (yb.TRAJECTORY_NOTE,)))
         self.assertEqual(page.page_key, "trajectory/0")
         self.assertIn(("Leeds United: Season trajectory", 1), contents)
 
@@ -314,3 +314,17 @@ class HonoursReadTests(unittest.TestCase):
                                       "FA Cup: Winner: unresolved. Hull City 1-1 Leeds United in the final [2]"))
         self.assertEqual(page.notes, HONOURS.notes)
         self.assertIn(("Honours", 1), contents)
+
+
+RETRO = yb.RetrospectivePage("Leeds United", ("Premier League: 4th on the calculated table after 3 matches (0 won, 1 drawn, 2 lost; 0 scored, 5 conceded; 1 point)",
+                                              "FA Cup: the Final against Hull City is unresolved [1]"),
+                             (yb.RETRO_NOTE, f"[1] {yb.RETRO_UNRESOLVED_NOTE}"))
+
+
+class RetrospectiveReadTests(unittest.TestCase):
+    def test_the_page_reads_the_lines_and_notes_the_pdf_prints(self):
+        pages, contents = yr.read_pages(book(RETRO))
+        page = pages[1]
+        self.assertEqual((page.kind, page.heading, page.lines, page.notes, page.page_key),
+                         ("retrospective", "Leeds United · Season retrospective", RETRO.lines, RETRO.notes, "retrospective"))
+        self.assertIn(("Leeds United: Season retrospective", 1), contents)

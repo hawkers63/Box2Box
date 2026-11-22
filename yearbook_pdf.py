@@ -300,12 +300,19 @@ def _honours_parts(page: yb.HonoursPage, styles) -> list:
     return parts + [Spacer(1, 2 * mm)] + [Paragraph(escape(note), styles["small"]) for note in page.notes]
 
 
+def _retrospective_parts(page: yb.RetrospectivePage, styles) -> list:
+    """The parts of the club's season retrospective: its lines, then the notes (the reader's wording)."""
+    return ([Paragraph(f"{escape(page.club)} \u00b7 Season retrospective", styles["heading"])] +
+            [Paragraph(escape(line), styles["cell"]) for line in page.lines] + [Spacer(1, 3 * mm)] +
+            [Paragraph(escape(note), styles["small"]) for note in page.notes])
+
+
 def _trajectory_parts(page: yb.TrajectoryPage, chart: yb.Trajectory | None, styles) -> list:
     """The parts of a trajectory page: heading, then the chart and the shared note, or just the club's note."""
     if chart is None:
-        return [Paragraph(f"{escape(page.club)} ┬À Season trajectory", styles["heading"]),
+        return [Paragraph(f"{escape(page.club)} · Season trajectory", styles["heading"]),
                 Paragraph(escape(page.note), styles["cell"]), Spacer(1, 8 * mm)]
-    return [Paragraph(f"{escape(page.club)} ┬À Season trajectory ┬À {escape(chart.competition)}", styles["heading"]),
+    return [Paragraph(f"{escape(page.club)} · Season trajectory · {escape(chart.competition)}", styles["heading"]),
             TrajectoryChart(chart, FRAME_WIDTH, 85 * mm), Spacer(1, 2 * mm),
             Paragraph(escape(yb.TRAJECTORY_NOTE), styles["small"]), Spacer(1, 8 * mm)]
 
@@ -419,6 +426,9 @@ def _flow(book: yb.Yearbook) -> list:
         elif isinstance(page, yb.HonoursPage):
             new_page()
             flow.append(outlined(KeepTogether(_honours_parts(page, styles)), 1, "Honours"))
+        elif isinstance(page, yb.RetrospectivePage):
+            new_page()
+            flow.append(outlined(KeepTogether(_retrospective_parts(page, styles)), 1, f"{page.club}: Season retrospective"))
         elif isinstance(page, yb.TrajectoryPage):
             new_page()
             for number, chart in enumerate(page.charts or (None,)):

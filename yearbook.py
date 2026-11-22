@@ -209,6 +209,18 @@ class HonoursPage:
 
 
 @dataclass(frozen=True, slots=True)
+class RetrospectivePage:
+    """The marked club's season from the results alone: its league record and runs, how far it went in each cup, its
+    biggest win and a pointer to the trajectory. No venue, attendance, scorer or manager detail: the archive holds
+    none of it."""
+
+    club: str
+    lines: tuple[str, ...]
+    notes: tuple[str, ...] = ()
+    when: dt.date = dt.date.max
+
+
+@dataclass(frozen=True, slots=True)
 class Move:
     """A club's climb or drop between two matchweeks."""
 
@@ -555,6 +567,87 @@ def honours_page(entries: Sequence[HonoursEntry]) -> HonoursPage | None:
                       for line in entry.lines)
         out.append(HonoursEntry(entry.competition, lines, ()))
     return HonoursPage(tuple(out), tuple(f"[{n}] {text}" for text, n in numbered.items()))
+
+
+RETRO_NOTE = ("Worked out from the scored results in this book. Runs use league matches only: the save has no "
+              "extra-time or penalty data, so a cup match's score alone cannot say who won it. A match with no score "
+              "is not part of a run, and a run marked \"at least\" may be longer.")
+RETRO_UNRESOLVED_NOTE = "A level tie with no aggregate, replay or later round to settle it has no named winner here."
+
+
+def _prepared_cup(cup_fixtures: Sequence) -> list:
+    separated = _separate_rounds(cup_fixtures)
+    return _with_legs_together(separated, _field_runs(separated))
+
+
+def cup_progress(name: str, cup_fixtures: Sequence, labels: Mapping[int, str], team: int, one_match: bool = False) -> str | None:
+    """How far a club went in a knockout competition, from its last tie: won the final (only on a decisive score or
+    aggregate), went out (to the side the save shows went through), or unresolved. None when it never played in one."""
+    rounds = fd.cup_rounds(_prepared_cup(cup_fixtures), labels)
+    mine = [(r, t) for r in rounds if r.knockout for t in r.ties if team in (t.team_a, t.team_b)]
+    if not mine:
+        return None
+    rnd, tie = mine[-1]
+    opponent = labels.get(tie.team_b if tie.team_a == team else tie.team_a, "")
+    where = "the match" if one_match else f"the {rnd.name}"
+    if not all(f.played for f in tie.fixtures):
+        return f"{name}: in {where} against {opponent}, not yet played"
+    if tie.winner is None:
+        return f"{name}: {where} against {opponent} is unresolved [1]"
+    if tie.winner != team:
+        return f"{name}: out in {where}, to {opponent}"
+    is_final = ((one_match or rnd.name == fd.ROUND_NAMES[fd.CompetitionRound.FINAL]) and rnd is rounds[-1]
+                and len(rnd.ties) == 1 and tie.how in ("score", "aggregate"))
+    if is_final:
+        return f"{name}: won the final against {opponent}"
+    return f"{name}: won in {where} against {opponent}; no later round is in the book"
+
+
+def club_retrospective(club: str, team: int, leagues: Sequence[tuple], cups: Sequence[tuple],
+                       with_trajectory: bool) -> RetrospectivePage | None:
+    """The marked club's season. `leagues` is (name, fixtures, labels, tie_breaks) per league it played in, `cups`
+    is (name, fixtures, labels, one_match) per knockout competition. None when it has nothing to report."""
+    lines: list[str] = []
+    notes: list[str] = []
+    wins: list[tuple[int, dt.date, str]] = []
+    for name, fixtures, labels, tie_breaks in leagues:
+        played = [f for f in fixtures if f.played and f.date]
+        if not played:
+            continue
+        rows = fd.standings_as_of(fixtures, labels, through=max(f.date for f in played), tie_breaks=tie_breaks)
+        row = next((r for r in rows if r.team_id == team), None)
+        if row is not None and row.played:
+            plural = "point" if row.points == 1 else "points"
+            lines.append(f"{name}: {ordinal(row.position)} on the calculated table after {row.played} matches "
+                         f"({row.won} won, {row.drawn} drawn, {row.lost} lost; {row.goals_for} scored, "
+                         f"{row.goals_against} conceded; {row.points} {plural})"
+                         + ("; season in progress" if any(not f.played for f in fixtures) else ""))
+        runs = fd.streaks(fd.team_steps(fixtures, team, labels))
+        for kind in (fd.STREAK_UNBEATEN, fd.STREAK_WINLESS):
+            run = runs.longest[kind]
+            if run.length or run.incomplete:
+                lines.append(f"{name}: {run.describe()}" + (f" ({_span(run.first, run.last)})" if run.length else ""))
+    for name, fixtures, labels in [(n, f, l) for n, f, l, _ in leagues] + [(n, f, l) for n, f, l, _ in cups]:
+        for f in fixtures:
+            if f.played and f.date and fd.has_score(f) and team in (f.home_team_id, f.away_team_id):
+                margin = (f.home_goals - f.away_goals) * (1 if f.home_team_id == team else -1)
+                if margin > 0:
+                    wins.append((margin, f.date, f"{labels.get(f.home_team_id, '')} {_score(f)} {labels.get(f.away_team_id, '')} "
+                                                 f"({name}, {_day(f.date)} {f.date:%b})"))
+    if wins:
+        best = max(m for m, _, _ in wins)
+        lines.append(f"Biggest win (by {best}): " + "; ".join(text for _, text in sorted((d, t) for m, d, t in wins if m == best)))
+    for name, fixtures, labels, one_match in cups:
+        text = cup_progress(name, fixtures, labels, team, one_match)
+        if text:
+            lines.append(text)
+            if text.endswith("[1]") and RETRO_UNRESOLVED_NOTE not in notes:
+                notes.append(RETRO_UNRESOLVED_NOTE)
+    if not lines:
+        return None
+    if with_trajectory:
+        lines.append(f"The season trajectory page charts {club}'s place after each matchweek.")
+    return RetrospectivePage(club, tuple(lines), (RETRO_NOTE, *(f"[{i}] {n}" for i, n in enumerate(notes, start=1))))
 
 
 def trajectory_segments(chart: Trajectory) -> tuple[tuple[TrajectoryPoint, ...], ...]:
@@ -953,6 +1046,8 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
     xg_notes: list[tuple[str, str]] = []
     grids: list[PlacesPage] = []
     honours: list[HonoursEntry | None] = []
+    my_leagues: list[tuple] = []
+    my_cups: list[tuple] = []
     charts: list[Trajectory] = []
     thin: list[str] = []                       # leagues the marked club is in that printed too few tables for a chart
     club_name = ""
@@ -982,6 +1077,11 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
         pages += built
         if cup:
             honours.append(cup_honour(cup_name, cup, labels, one_match))
+        if marked_club is not None:
+            if league:
+                my_leagues.append((name, league, labels, comp.tie_breaks))
+            if cup:
+                my_cups.append((cup_name, cup, labels, one_match))
         grid = None if comp.continental or not league else places_page(name, [p for p in built if isinstance(p, LeaguePage)])
         if grid:
             grids.append(grid)
@@ -1012,6 +1112,8 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
     head = [TitlePage(label, _title_lines(coverage, included, home))]
     trajectory = [trajectory_page(club_name, charts, thin)] if marked_club is not None and club_name else []
     honour_page = honours_page(honours)
+    retrospective = club_retrospective(club_name, marked_club, my_leagues, my_cups, bool(charts)) \
+        if marked_club is not None and club_name else None
     tail = ([honour_page] if honour_page else []) + grids + trajectory + ([FinalTablesPage(tuple(finals), splits=tuple(splits), strips=tuple(strips),
-                                                    xg_notes=tuple(xg_notes), keys=tuple(final_keys))] if finals else [])
+                                                    xg_notes=tuple(xg_notes), keys=tuple(final_keys))] if finals else []) + ([retrospective] if retrospective else [])
     return Yearbook(label, coverage, tuple(head + pages + tail))

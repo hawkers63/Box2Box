@@ -424,7 +424,7 @@ class TrajectoryDrawingTests(unittest.TestCase):
 
     def test_the_page_carries_the_same_heading_and_the_same_note_as_the_reader(self):
         texts = _texts(yearbook_pdf._trajectory_parts(self.PAGE, self.CHART, yearbook_pdf._styles()))
-        self.assertIn("Leeds United ┬À Season trajectory ┬À Premier League", texts)
+        self.assertIn("Leeds United · Season trajectory · Premier League", texts)
         self.assertIn(yb.TRAJECTORY_NOTE, texts)
 
     def test_a_club_with_no_chart_prints_its_note_and_no_chart(self):
@@ -463,3 +463,23 @@ class HonoursDrawingTests(unittest.TestCase):
         path = Path(folder.name) / "a.pdf"
         yearbook_pdf.render(book(week(1), self.PAGE), path)
         self.assertIn(b"Honours", path.read_bytes())
+
+
+class RetrospectiveDrawingTests(unittest.TestCase):
+    PAGE = yb.RetrospectivePage("Leeds United", ("Premier League: 4th on the calculated table after 3 matches",
+                                                 "FA Cup: the Final against Hull City is unresolved [1]"),
+                                (yb.RETRO_NOTE, f"[1] {yb.RETRO_UNRESOLVED_NOTE}"))
+
+    def test_the_pdf_prints_the_same_lines_and_notes_as_the_reader(self):
+        yearbook_pdf._register_fonts()
+        texts = _texts(yearbook_pdf._retrospective_parts(self.PAGE, yearbook_pdf._styles()))
+        for text in (*self.PAGE.lines, *self.PAGE.notes):
+            self.assertIn(text, texts)
+        self.assertIn("Leeds United · Season retrospective", texts)
+
+    def test_the_book_renders_with_the_retrospective_last(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        path = Path(folder.name) / "a.pdf"
+        yearbook_pdf.render(book(week(1), self.PAGE), path)
+        self.assertIn(b"Season retrospective", path.read_bytes())

@@ -75,7 +75,7 @@ def layout(chart: yb.Trajectory, width: float, height: float, margin_left: float
                   for zone, a, b in chart.zones)
     step = max(1, round(places / 5))
     ticks = tuple((n, y_of(n)) for n in sorted({1, *range(step, places + 1, step), places}))
-    x_ticks = tuple((f"{p.matchweek} ┬À {p.through.day} {p.through:%b}", x_of(p.through)) for p in chart.points)
+    x_ticks = tuple((f"{p.matchweek} · {p.through.day} {p.through:%b}", x_of(p.through)) for p in chart.points)
     return ChartLayout(width, height, left, right, top, bottom, plotted, segments,
                        tuple(x_of(p.through) for p in chart.points if p.place is None), zones, ticks, x_ticks)
 

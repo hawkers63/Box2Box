@@ -968,3 +968,89 @@ class HonoursPageTests(unittest.TestCase):
     def test_no_entries_means_no_page(self):
         self.assertIsNone(yearbook.honours_page([None, None]))
         self.assertIsNone(yearbook.honours_page([]))
+
+
+class RetrospectiveTests(BookBuilder, unittest.TestCase):
+    """Stage 3 (2.10): the followed club's season, from results only: no venue, attendance, scorer or manager claim."""
+
+    def built(self, fixtures, marked=2, comps=None, names=None):
+        book, folder = banked(fixtures, competitions=comps, game=D(2026, 5, 30))
+        self.addCleanup(folder.cleanup)
+        self.addCleanup(book.close)
+        return yearbook.build_yearbook(book, 2026, names or self.NAMES, marked_club=marked)
+
+    def retro(self, built):
+        pages = [p for p in built.pages if isinstance(p, yearbook.RetrospectivePage)]
+        return pages[0] if pages else None
+
+    def test_the_league_record_is_the_calculated_place_and_the_scored_results(self):
+        page = self.retro(self.built(self.FINISHED, marked=2))
+        self.assertEqual(page.club, "Leeds United")
+        self.assertIn("Premier League: 4th on the calculated table after 3 matches (0 won, 1 drawn, 2 lost; 0 scored, "
+                      "5 conceded; 1 point)", page.lines)
+
+    def test_the_biggest_win_is_by_margin_and_every_win_level_on_it_is_named(self):
+        page = self.retro(self.built(self.FINISHED, marked=1))
+        self.assertIn("Biggest win (by 2): Hull City 2-0 Leeds United (Premier League, Sat 8 Aug); "
+                      "Hull City 3-1 Derby County (Premier League, Sat 22 Aug)", page.lines)
+
+    def test_a_club_that_never_won_has_no_biggest_win_line(self):
+        page = self.retro(self.built(self.FINISHED, marked=2))
+        self.assertFalse(any(line.startswith("Biggest win") for line in page.lines))
+
+    def test_the_longest_unbeaten_and_winless_runs_are_league_runs_with_their_dates(self):
+        lines = self.retro(self.built(self.FINISHED, marked=2)).lines
+        self.assertIn("Premier League: Unbeaten in 1 (Sat 22 Aug)", lines)
+        self.assertIn("Premier League: Without a win in 3 (Sat 8 – Sat 22 Aug)", lines)
+        hull = self.retro(self.built(self.FINISHED, marked=1)).lines
+        self.assertIn("Premier League: Unbeaten in 3 (Sat 8 – Sat 22 Aug)", hull)
+        self.assertFalse(any("Without a win" in line for line in hull))             # no such run: nothing is invented
+
+    def test_the_page_points_to_the_trajectory_and_never_claims_venues_or_people(self):
+        page = self.retro(self.built(self.FINISHED, marked=2))
+        self.assertIn("The season trajectory page charts Leeds United's place after each matchweek.", page.lines)
+        text = " ".join(page.lines + page.notes).lower()
+        for word in ("attendance", "scorer", "manager", "at home", "away from home", "derby", "comeback"):
+            self.assertNotIn(word, text.replace("derby county", ""))
+
+    def test_no_followed_club_leaves_the_chapter_out(self):
+        self.assertIsNone(self.retro(self.built(self.FINISHED, marked=None)))
+
+    def test_the_book_closes_with_the_retrospective_after_the_final_tables_and_honours(self):
+        kinds = [type(p).__name__ for p in self.built(self.FINISHED, marked=2).pages]
+        self.assertEqual(kinds[-1], "RetrospectivePage")
+        self.assertLess(kinds.index("TrajectoryPage"), kinds.index("FinalTablesPage"))
+
+
+class RetrospectiveCupTests(unittest.TestCase):
+    NAMES = {14: "FA Cup"}
+    COMPS = [NS(id=102, database_id=14)]
+
+    def retro(self, fixtures, marked=1):
+        book, folder = banked(fixtures, competitions=self.COMPS, game=D(2026, 5, 30))
+        self.addCleanup(folder.cleanup)
+        self.addCleanup(book.close)
+        built = yearbook.build_yearbook(book, 2026, self.NAMES, marked_club=marked)
+        return next((p for p in built.pages if isinstance(p, yearbook.RetrospectivePage)), None), built
+
+    def test_a_cup_only_club_has_cup_progress_and_no_league_lines_and_no_trajectory_pointer(self):
+        fixtures = [fx(D(2026, 3, 4), 1, 2, 2, 0, comp=102, md=1, rnd=QF), fx(D(2026, 4, 8), 1, 3, 0, 1, comp=102, md=2, rnd=SF)]
+        page, built = self.retro(fixtures)
+        self.assertIn("FA Cup: out in the Semi-final, to Sheffield United", page.lines)
+        self.assertIn("Biggest win (by 2): Hull City 2-0 Leeds United (FA Cup, Wed 4 Mar)", page.lines)
+        self.assertFalse(any("trajectory" in line for line in page.lines))
+        trajectory = [p for p in built.pages if isinstance(p, yearbook.TrajectoryPage)]
+        self.assertEqual(trajectory[0].charts, ())                       # a short note, not a chart
+        self.assertIn("is in no league of this book", trajectory[0].note)
+
+    def test_winning_the_final_on_a_decisive_score_is_the_only_way_to_be_called_the_winner(self):
+        page, _ = self.retro([fx(D(2026, 5, 16), 1, 2, 2, 1, comp=102, md=1, rnd=FINAL)])
+        self.assertIn("FA Cup: won the final against Leeds United", page.lines)
+        level, _ = self.retro([fx(D(2026, 5, 16), 1, 2, 1, 1, comp=102, md=1, rnd=FINAL)])
+        self.assertIn("FA Cup: the Final against Leeds United is unresolved [1]", level.lines)
+        self.assertEqual(level.notes[-1], f"[1] {yearbook.RETRO_UNRESOLVED_NOTE}")
+        self.assertFalse(any("won the final" in line for line in level.lines))
+
+    def test_a_tie_not_yet_played_is_not_a_result(self):
+        page, _ = self.retro([fx(D(2026, 3, 4), 1, 2, 2, 0, comp=102, md=1, rnd=QF), fx(D(2026, 4, 8), 1, 3, comp=102, md=2, rnd=SF)])
+        self.assertIn("FA Cup: in the Semi-final against Sheffield United, not yet played", page.lines)
