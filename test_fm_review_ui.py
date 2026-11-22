@@ -65,6 +65,17 @@ def dataset(match_stats=None, extra=()) -> fd.Dataset:
                             match_stats=match_stats)
 
 
+def country_dataset(with_nations=True) -> fd.Dataset:
+    """Invented nations 900 (A: clubs 1-3) and 901 (B: clubs 4-5): competition 101 and 70 are A's, 201 is B's, and
+    the friendly 131 and youth league 60 mix both, so they are continental."""
+    base = dataset(extra=[fx(D(2099, 8, 1), 4, 5, 1, 0, comp=201, md=1)])
+    clubs = [NS(uid=uid, reputation=10, teams=(), nation_id=0 if uid <= 3 else 1) for uid in range(1, 6)]
+    return fd.build_dataset(info(), [f for fs in base.fixtures.values() for f in fs], clubs=clubs,
+                            competitions=[NS(id=101, database_id=12)],
+                            nations=[NS(nation_id=0, database_id=900), NS(nation_id=1, database_id=901)]
+                            if with_nations else [])
+
+
 class WindowTests(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
@@ -322,6 +333,96 @@ class WindowTests(unittest.TestCase):
         self.assertEqual([c for c in app.list_rows if c is not None], [131])
         app.show_details()
         app.update()
+
+    def listed(self):
+        return sorted(c for c in self.app.list_rows if c is not None)
+
+    def test_the_country_menu_lists_the_nations_then_continental(self):
+        app = self.app
+        app.install_dataset(country_dataset())
+        self.assertEqual(app.country_menu.cget("values"),
+                         ["All countries", "Country 900", "Country 901", "Continental"])
+        self.assertEqual(app.country_menu.get(), "All countries")
+
+    def test_choosing_a_nation_filters_the_list_and_the_competitions_view(self):
+        app = self.app
+        app.install_dataset(country_dataset())
+        app.set_view(fm_review.HUB)
+        app._on_country("Country 900")
+        self.assertEqual(self.listed(), [70, 101])
+        self.assertEqual(sorted(app.comp_row_ids), [70, 101])
+        app._on_country("Continental")
+        self.assertEqual(self.listed(), [60, 131])
+        self.assertEqual(sorted(app.comp_row_ids), [60, 131])
+        app._on_country("All countries")
+        self.assertGreater(len(self.listed()), 4)
+
+    def test_the_open_competition_stays_open_when_filtered_out(self):
+        app = self.app
+        app.install_dataset(country_dataset())
+        app.select_competition(101)
+        app._on_country("Country 901")
+        self.assertEqual(app.comp_id, 101)
+        self.assertEqual(self.listed(), [201])
+        self.assertEqual(app.comp_list.curselection(), ())
+
+    def test_naming_a_country_relabels_it_and_is_kept_in_the_settings(self):
+        app = self.app
+        app.install_dataset(country_dataset())
+        with mock.patch.object(fm_review.ctk, "CTkInputDialog") as dialog:
+            app.name_country()                                     # nothing is selected: nothing to name
+            dialog.assert_not_called()
+            app._on_country("Country 900")
+            dialog.return_value.get_input.return_value = "  Ruritania "
+            app.name_country()
+        self.assertEqual(app.country_menu.cget("values")[1:3], ["Country 901", "Ruritania"])    # sorted by label
+        self.assertEqual(app.country_menu.get(), "Ruritania")
+        self.assertEqual(app.settings["country_names"], {"900": "Ruritania"})
+        app.install_dataset(country_dataset())                    # reopening a save keeps the name
+        self.assertIn("Ruritania", app.country_menu.cget("values"))
+        with mock.patch.object(fm_review.ctk, "CTkInputDialog") as dialog:
+            app._on_country("Ruritania")
+            dialog.return_value.get_input.return_value = ""         # empty removes the name
+            app.name_country()
+        self.assertEqual(app.country_menu.cget("values")[1], "Country 900")
+        self.assertEqual(app.settings["country_names"], {})
+
+    def test_odd_country_names_in_the_settings_are_ignored(self):
+        app = self.app
+        app.settings["country_names"] = ["not", "a", "mapping"]
+        app.install_dataset(country_dataset())
+        self.assertEqual(app.country_menu.cget("values")[1], "Country 900")
+
+    def test_opening_another_save_resets_the_country_to_all(self):
+        app = self.app
+        app.install_dataset(country_dataset())
+        app._on_country("Country 900")
+        app.install_dataset(country_dataset())
+        self.assertEqual(app.country_menu.get(), "All countries")
+        self.assertGreater(len(self.listed()), 2)
+
+    def test_without_a_nation_table_the_menu_is_all_countries_and_disabled(self):
+        app = self.app
+        app.install_dataset(country_dataset(with_nations=False))
+        self.assertEqual(app.country_menu.cget("values"), ["All countries"])
+        self.assertEqual(app.country_menu.cget("state"), "disabled")
+
+    def test_the_palette_offers_to_name_a_country_only_when_one_is_selected(self):
+        app = self.app
+        app.install_dataset(country_dataset())
+        names = lambda: [i.title for i in app._palette_items()]
+        self.assertNotIn("Name this country…", names())
+        app._on_country("Country 900")
+        self.assertIn("Name this country…", names())
+
+    def test_the_country_menu_is_fully_visible_at_the_minimum_width(self):
+        app = self.app
+        app.geometry("1050x700+-4000+0")
+        app.install_dataset(country_dataset())
+        app.update()
+        side = app.country_menu.master
+        self.assertGreater(app.country_menu.winfo_width(), 1)
+        self.assertLessEqual(app.country_menu.winfo_x() + app.country_menu.winfo_width(), side.winfo_width())
 
     def test_naming_a_competition_is_kept_in_the_names_file(self):
         app = self.app

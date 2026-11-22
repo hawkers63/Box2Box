@@ -106,6 +106,7 @@ REPOSITORY = "https://github.com/hawkers63/Box2Box"
 
 ALL_TEAMS = "All teams"
 EXPORT_LABEL = "Export ▾"
+COUNTRY_NAMES = "country_names"       # settings key: {nation database id as text: the user's name for it}
 HUB = "Competitions"
 ANALYSIS = "Analysis"
 SCHEDULE = "Schedule"
@@ -580,6 +581,8 @@ class FMReviewApp(_Root):
         self.dataset: fd.Dataset | None = None
         self.names: dict[int, str] = {}
         self.settings = self._read_settings()
+        self.country_key: int | str | None = None        # the Country menu's choice; None is every country
+        self._country_options: tuple[fd.CountryOption, ...] = ()
         self.theme = palette.theme_by_name(self.settings.get("theme"))
         self.view_theme = self.theme              # the colours the views paint with: theme and club
         self.club_tint: palette.ClubTint | None = None
@@ -718,18 +721,21 @@ class FMReviewApp(_Root):
         side = role("panel", ctk.CTkFrame(self, width=340, corner_radius=0))
         side.grid(row=1, column=0, sticky="nsw")
         side.grid_propagate(False)
-        side.grid_rowconfigure(2, weight=1)
+        side.grid_rowconfigure(3, weight=1)
         side.grid_columnconfigure(0, weight=1)
         role("text", ctk.CTkLabel(side, text="Competitions", font=ctk.CTkFont(FONT, 14, "bold"))).grid(
             row=0, column=0, padx=12, pady=(10, 4), sticky="w")
         self.search_entry = role("entry", ctk.CTkEntry(side, placeholder_text="Search competitions or clubs"))
         self.search_entry.grid(row=1, column=0, columnspan=2, padx=12, pady=(0, 8), sticky="ew")
         self.search_entry.bind("<KeyRelease>", lambda _e: self._schedule_search())
+        self.country_menu = role("option", ctk.CTkOptionMenu(side, values=[fd.COUNTRY_ALL], dynamic_resizing=False,
+                                                             command=self._on_country))
+        self.country_menu.grid(row=2, column=0, columnspan=2, padx=12, pady=(0, 8), sticky="ew")
         self.comp_list = role("list", tk.Listbox(side, activestyle="none", exportselection=False,
                                                  highlightthickness=0, borderwidth=0, font=(FONT, 10)))
-        self.comp_list.grid(row=2, column=0, padx=(12, 0), pady=(0, 12), sticky="nsew")
+        self.comp_list.grid(row=3, column=0, padx=(12, 0), pady=(0, 12), sticky="nsew")
         list_scroll = ctk.CTkScrollbar(side, command=self.comp_list.yview)     # its greys suit every theme
-        list_scroll.grid(row=2, column=1, padx=(0, 6), pady=(0, 12), sticky="ns")
+        list_scroll.grid(row=3, column=1, padx=(0, 6), pady=(0, 12), sticky="ns")
         self.comp_list.configure(yscrollcommand=list_scroll.set)
         self.comp_list.bind("<<ListboxSelect>>", lambda _e: self._schedule_list_select())
 
@@ -1255,6 +1261,8 @@ class FMReviewApp(_Root):
         self._selection = None
         self.dataset = dataset
         self._dataset_serial += 1
+        self.country_key = None                    # the choice is not kept from one save to the next
+        self._refresh_country_menu()
         self._followed_uid = None
         self._schedule_serial += 1
         self._schedule_view.clear()                # the install below renders, so no render here
@@ -1400,8 +1408,10 @@ class FMReviewApp(_Root):
         if not ds:
             return
         text = self.search_entry.get()
-        yours = [c for c in ds.competitions if c.is_yours and fd.matches_search(c, self.names, text)]
-        others = [c for c in ds.competitions if not c.is_yours and fd.matches_search(c, self.names, text)]
+        kept = fd.competitions_in_country(ds, self.country_key)
+        shown = [c for c in ds.competitions if (kept is None or c.id in kept) and fd.matches_search(c, self.names, text)]
+        yours = [c for c in shown if c.is_yours]
+        others = [c for c in shown if not c.is_yours]
         box = self.comp_list
         box.delete(0, "end")
         self.list_rows = []
@@ -1425,7 +1435,8 @@ class FMReviewApp(_Root):
             for comp in others:
                 entry(comp)
         if not yours and not others:
-            heading("No competition or club matches the search")
+            heading("No competition or club matches the search" if self.country_key is None
+                    else "No competition in this country matches the search")
         self._mark_current_in_list()
 
     def _mark_current_in_list(self) -> None:
@@ -1498,6 +1509,56 @@ class FMReviewApp(_Root):
         self.title_label.configure(text=fd.competition_title(comp, self.names))
         ids = f"competition id {comp.id}" + (f" · database id {comp.database_id}" if comp.database_id is not None else "")
         self.hint_label.configure(text=f"{fd.competition_hint(comp)}  ·  {ids}")
+
+    def _country_names(self) -> dict[int, str]:
+        return fd.country_names_from_settings(self.settings.get(COUNTRY_NAMES))
+
+    def _refresh_country_menu(self) -> None:
+        """Rebuild the Country menu's entries for the open save and the names given, keeping the choice if it
+        is still on offer."""
+        ds = self.dataset
+        options = fd.country_options(ds, self._country_names()) if ds else ()
+        self._country_options = options
+        if self.country_key not in {o.key for o in options}:
+            self.country_key = None
+        labels = [o.label for o in options] or [fd.COUNTRY_ALL]
+        self.country_menu.configure(values=labels, state="normal" if len(options) > 1 else "disabled")
+        self.country_menu.set(next((o.label for o in options if o.key == self.country_key), fd.COUNTRY_ALL))
+
+    def _on_country(self, label: str) -> None:
+        option = next((o for o in self._country_options if o.label == label), None)
+        if option is None or not self.dataset:
+            return
+        self.country_key = option.key
+        self._fill_competition_list()
+        if self.view == HUB:
+            self.render()
+
+    def name_country(self) -> None:
+        """Give the selected nation a name, kept in the settings and used for every save."""
+        if not self.dataset or not isinstance(self.country_key, int):
+            return
+        names = self._country_names()
+        current = names.get(self.country_key, "")
+        prompt = (f"Name for country {self.country_key}\n\n"
+                  + (f"Currently: {current}\n" if current else "")
+                  + "Leave empty to remove the name. Names apply to every save.")
+        dialog = ctk.CTkInputDialog(title="Name this country", text=prompt)
+        apply_window_icon(dialog)
+        answer = dialog.get_input()
+        if answer is None:
+            return
+        answer = answer.strip()
+        if answer:
+            names[self.country_key] = answer
+        else:
+            names.pop(self.country_key, None)
+        self.settings[COUNTRY_NAMES] = fd.country_names_for_settings(names)
+        self._write_settings()
+        self._refresh_country_menu()
+        self._hub_key = None                       # the hub filters by the menu, so refill it
+        if self.view == HUB:
+            self.render()
 
     def rename_competition(self) -> None:
         if not self.dataset or self.comp_id is None:
@@ -1766,6 +1827,8 @@ class FMReviewApp(_Root):
                        self.inspector_button, self.schedule_button, self.hub_button):
             widget.configure(state=state)
         self.export_button.configure(state="disabled" if self._exporting else state)
+        if state == "normal" and len(self._country_options) < 2:
+            self.country_menu.configure(state="disabled")       # no nations to choose between
 
     # ----------------------------------------------------------------- exports
 
@@ -2679,9 +2742,11 @@ class FMReviewApp(_Root):
         if not ds:
             return
         sheet = self._show_sheet(HUB)
-        key = (self._dataset_serial, tuple(sorted(self.names.items())))
+        key = (self._dataset_serial, tuple(sorted(self.names.items())), self.country_key)
         if key != self._hub_key:
-            self._fill_hub(sheet, fd.competitions_summary(ds, self.names))
+            kept = fd.competitions_in_country(ds, self.country_key)
+            summaries = fd.competitions_summary(ds, self.names)
+            self._fill_hub(sheet, summaries if kept is None else tuple(s for s in summaries if s.id in kept))
             self._hub_key = key
         self.coverage_label.configure(text=self._hub_summary)
         self.note_label.configure(
@@ -2836,6 +2901,8 @@ class FMReviewApp(_Root):
                 for kind, label in ((fx.EXCEL, "Excel workbook"), (fx.HTML, "web page"), (fx.CSV, "CSV files")):
                     add(cp.ACTION, f"Export as {label}", lambda k=kind: self.export(k))
             add(cp.ACTION, "Name this competition…", self.rename_competition)
+            if isinstance(self.country_key, int):
+                add(cp.ACTION, "Name this country…", self.name_country)
             for kind, label in (("table", "Table"), ("team", "My club's results"), ("recent", "Recent results")):
                 if self._post_applies(kind):
                     add(cp.ACTION, f"Copy for a post: {label}", lambda k=kind: self.copy_for_post(k))
