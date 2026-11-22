@@ -310,7 +310,7 @@ class WholeBookTests(unittest.TestCase):
         built = self.make(self.SEASON)
         kinds = [(type(p).__name__, getattr(p, "matchweek", None)) for p in built.pages]
         self.assertEqual(kinds, [("TitlePage", None), ("LeaguePage", 1), ("CupBlock", None), ("LeaguePage", 2),
-                                 ("PlacesPage", None), ("FinalTablesPage", None)])
+                                 ("HonoursPage", None), ("PlacesPage", None), ("FinalTablesPage", None)])
 
     def test_the_title_page_states_the_saves_the_span_the_gaps_and_whether_the_season_is_in_progress(self):
         cover = archive.BookCoverage(2, D(2026, 9, 1), D(2026, 10, 1), ((D(2026, 9, 1), D(2026, 10, 1)),), True)
@@ -852,3 +852,119 @@ class TrajectoryTests(BookBuilder, unittest.TestCase):
         self.assertEqual(chart.zones, ())                          # these made-up rules name no zone
         self.assertIn("estimated", yearbook.TRAJECTORY_NOTE)
         self.assertIn("not calendar weeks", yearbook.TRAJECTORY_NOTE)
+
+
+def line(pos, team, points, gd=0, zone="", played=3):
+    return yearbook.TableLine(pos, team, played, 0, 0, 0, max(gd, 0), max(-gd, 0), gd, points, "", zone)
+
+
+class LeagueHonourTests(unittest.TestCase):
+    """Stage 2 (2.10): a league's honour is a calculated leader, with the reason it is not an official champion."""
+
+    def test_the_leader_is_called_calculated_and_the_missing_deductions_are_the_footnoted_reason(self):
+        honour = yearbook.league_honour("Premier League", (line(1, "Hull City", 9), line(2, "Leeds United", 6)), (0, 1))
+        self.assertEqual(honour.lines[0], "Calculated leader: Hull City, 9 points from 3 matches [1]")
+        self.assertEqual(honour.notes[0], yearbook.DEDUCTIONS_NOTE)
+        self.assertNotIn("champion", honour.lines[0].lower())
+        self.assertEqual(len(honour.lines), 1)
+
+    def test_a_tie_on_points_is_named_with_the_tie_break_it_rests_on_or_cannot_follow(self):
+        table = (line(1, "Hull City", 9, gd=4), line(2, "Leeds United", 9, gd=2))
+        resolved = yearbook.league_honour("Premier League", table, (0, 1))
+        self.assertIn("Level on points with Leeds United [2]", resolved.lines[1])
+        self.assertIn("goal difference", resolved.notes[1])
+        later_rule = yearbook.league_honour("Premier League", table, (0, 1, 99))      # a rule this cannot follow comes after
+        self.assertIn("separated by goal difference", later_rule.notes[1])
+        unresolved = yearbook.league_honour("Premier League", table, (99, 0))        # one it cannot follow comes first
+        self.assertIn("may differ", unresolved.notes[1])
+        self.assertIn("unresolved", unresolved.notes[1])
+        nothing_listed = yearbook.league_honour("Premier League", table, ())
+        self.assertIn("unresolved", nothing_listed.notes[1])
+
+    def test_a_dead_level_leader_is_unresolved_even_when_the_rules_list_tie_breaks(self):
+        table = (line(1, "Hull City", 9, gd=2), line(2, "Leeds United", 9, gd=2))
+        honour = yearbook.league_honour("Premier League", table, (0,))
+        self.assertIn("unresolved", honour.notes[1])
+
+    def test_promotion_and_play_off_places_are_places_not_outcomes(self):
+        table = (line(1, "Hull City", 9, zone="promotion"), line(2, "Leeds United", 7, zone="promotion"),
+                 line(3, "Derby County", 6, zone="playoff"), line(4, "Wrexham", 3))
+        honour = yearbook.league_honour("Championship", table, (0, 1))
+        text = "\n".join(honour.lines)
+        self.assertIn("In the promotion places on the calculated table: Hull City, Leeds United [", text)
+        self.assertIn("In the play-off places on the calculated table: Derby County [", text)
+        notes = "\n".join(honour.notes)
+        self.assertIn(yearbook.PROMOTION_NOTE, notes)
+        self.assertIn(yearbook.PLAYOFF_NOTE, notes)
+        self.assertNotIn("promoted", text.lower())
+        self.assertNotIn("won the play-off", text.lower())
+
+    def test_a_table_with_no_scored_leader_makes_no_claim(self):
+        self.assertIsNone(yearbook.league_honour("Premier League", (), (0,)))
+
+
+FINAL = CodedValue(CompetitionRound.FINAL, 18)
+
+
+class CupHonourTests(unittest.TestCase):
+    """Stage 2 (2.10): a cup winner needs a decisive score, an aggregate or later-round evidence."""
+    NAMES = {14: "FA Cup"}
+    COMPS = [NS(id=102, database_id=14)]
+
+    def honour(self, fixtures, names=None):
+        book, folder = banked(fixtures, competitions=self.COMPS, game=D(2026, 5, 30))
+        self.addCleanup(folder.cleanup)
+        self.addCleanup(book.close)
+        built = yearbook.build_yearbook(book, 2026, self.NAMES if names is None else names)
+        pages = [p for p in built.pages if isinstance(p, yearbook.HonoursPage)]
+        return pages[0] if pages else None
+
+    def final(self, hg, ag, **kw):
+        return [fx(D(2026, 5, 16), 1, 2, hg, ag, comp=102, md=1, rnd=FINAL, **kw)]
+
+    def test_a_decisive_final_score_names_the_winner_with_no_footnote(self):
+        page = self.honour(self.final(2, 1))
+        (entry,) = page.entries
+        self.assertEqual((entry.competition, entry.lines), ("FA Cup", ("Winner: Hull City, 2-1 against Leeds United, won on the final's score",)))
+        self.assertEqual((entry.notes, page.notes), ((), ()))
+
+    def test_an_away_winner_is_named_as_the_winner(self):
+        (entry,) = self.honour(self.final(0, 1)).entries
+        self.assertTrue(entry.lines[0].startswith("Winner: Leeds United"))
+
+    def test_a_level_final_with_no_resolved_winner_stays_unresolved_and_says_why(self):
+        page = self.honour(self.final(1, 1))
+        (entry,) = page.entries
+        self.assertEqual(entry.lines, ("Winner: unresolved. Hull City 1-1 Leeds United in the final [1]",))
+        self.assertEqual(page.notes, (f"[1] {yearbook.CUP_LEVEL_NOTE}",))
+        self.assertNotIn("Winner: Hull", entry.lines[0])
+
+    def test_two_legs_are_decided_on_aggregate_and_a_level_aggregate_is_unresolved(self):
+        legs = lambda g1, g2: [fx(D(2026, 5, 9), 1, 2, g1[0], g1[1], comp=102, md=1, rnd=FINAL),
+                               fx(D(2026, 5, 16), 2, 1, g2[0], g2[1], comp=102, md=1, rnd=FINAL)]
+        (won,) = self.honour(legs((1, 0), (1, 1))).entries              # Hull 2-1 on aggregate
+        self.assertEqual(won.lines, ("Winner: Hull City, won on aggregate (2-1 against Leeds United)",))
+        level = self.honour(legs((1, 0), (1, 0)))                         # 1-1 on aggregate... Leeds 1-0 second leg
+        self.assertEqual(level.entries[0].lines[0][:19], "Winner: unresolved.")
+
+    def test_a_final_not_yet_played_or_a_round_that_is_not_a_final_gives_no_honour(self):
+        self.assertIsNone(self.honour([fx(D(2026, 5, 16), 1, 2, comp=102, md=1, rnd=FINAL)]))
+        self.assertIsNone(self.honour([fx(D(2026, 5, 16), 1, 2, 2, 1, comp=102, md=1, rnd=SF)]))
+
+
+class HonoursPageTests(unittest.TestCase):
+    def test_footnotes_are_numbered_across_the_page_and_the_same_reason_keeps_one_number(self):
+        one = yearbook.HonoursEntry("Premier League", ("Calculated leader: A, 9 points from 3 matches [1]", "Level on points with B [2]"),
+                                    (yearbook.DEDUCTIONS_NOTE, "Tie-break unresolved: x"))
+        two = yearbook.HonoursEntry("Championship", ("Calculated leader: C, 7 points from 3 matches [1]",), (yearbook.DEDUCTIONS_NOTE,))
+        cup = yearbook.HonoursEntry("FA Cup", ("Winner: unresolved. [1]",), (yearbook.CUP_LEVEL_NOTE,))
+        page = yearbook.honours_page([one, None, two, cup])
+        self.assertEqual([e.lines for e in page.entries],
+                         [("Calculated leader: A, 9 points from 3 matches [1]", "Level on points with B [2]"),
+                          ("Calculated leader: C, 7 points from 3 matches [1]",), ("Winner: unresolved. [3]",)])
+        self.assertEqual(page.notes, (f"[1] {yearbook.DEDUCTIONS_NOTE}", "[2] Tie-break unresolved: x",
+                                      f"[3] {yearbook.CUP_LEVEL_NOTE}"))
+
+    def test_no_entries_means_no_page(self):
+        self.assertIsNone(yearbook.honours_page([None, None]))
+        self.assertIsNone(yearbook.honours_page([]))

@@ -290,6 +290,16 @@ class TrajectoryChart(Flowable):
             c.circle(x, y(v), 2, stroke=0, fill=1)
 
 
+def _honours_parts(page: yb.HonoursPage, styles) -> list:
+    """The parts of the honours page: each competition, its lines, then the numbered footnotes (the reader's wording)."""
+    parts: list = [Paragraph("Honours", styles["heading"])]
+    for entry in page.entries:
+        parts.append(Paragraph(f"<b>{escape(entry.competition)}</b>", styles["cell"]))
+        parts += [Paragraph(escape(line), styles["cell"]) for line in entry.lines]
+        parts.append(Spacer(1, 3 * mm))
+    return parts + [Spacer(1, 2 * mm)] + [Paragraph(escape(note), styles["small"]) for note in page.notes]
+
+
 def _trajectory_parts(page: yb.TrajectoryPage, chart: yb.Trajectory | None, styles) -> list:
     """The parts of a trajectory page: heading, then the chart and the shared note, or just the club's note."""
     if chart is None:
@@ -406,6 +416,9 @@ def _flow(book: yb.Yearbook) -> list:
                 keep = KeepTogether(parts)
                 flow.append(outlined(keep, 1, f"{page.competition}: How they stood") if not number else keep)
             switch_to("portrait")
+        elif isinstance(page, yb.HonoursPage):
+            new_page()
+            flow.append(outlined(KeepTogether(_honours_parts(page, styles)), 1, "Honours"))
         elif isinstance(page, yb.TrajectoryPage):
             new_page()
             for number, chart in enumerate(page.charts or (None,)):

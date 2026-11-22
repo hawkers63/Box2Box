@@ -440,3 +440,26 @@ class TrajectoryDrawingTests(unittest.TestCase):
         data = self.path.read_bytes()
         self.assertTrue(data.startswith(b"%PDF-"))
         self.assertIn(b"Season trajectory", data)
+
+
+class HonoursDrawingTests(unittest.TestCase):
+    PAGE = yb.honours_page([
+        yb.HonoursEntry("Premier League", ("Calculated leader: Hull City, 9 points from 3 matches [1]",), (yb.DEDUCTIONS_NOTE,)),
+        yb.HonoursEntry("FA Cup", ("Winner: unresolved. Hull City 1-1 Leeds United in the final [1]",), (yb.CUP_LEVEL_NOTE,))])
+
+    def test_the_pdf_prints_the_same_lines_and_the_same_numbered_notes_as_the_reader(self):
+        import yearbook_read
+        yearbook_pdf._register_fonts()
+        texts = _texts(yearbook_pdf._honours_parts(self.PAGE, yearbook_pdf._styles()))
+        reader, _ = yearbook_read.read_pages(book(self.PAGE))
+        for line in reader[1].lines:
+            self.assertTrue(any(line.split(": ", 1)[1] in t for t in texts), line)
+        for note in self.PAGE.notes:
+            self.assertIn(note, texts)
+
+    def test_the_book_renders_with_an_honours_page(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        path = Path(folder.name) / "a.pdf"
+        yearbook_pdf.render(book(week(1), self.PAGE), path)
+        self.assertIn(b"Honours", path.read_bytes())

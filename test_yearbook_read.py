@@ -298,3 +298,19 @@ class TrajectoryReadTests(unittest.TestCase):
     def test_a_club_with_no_chart_has_a_note_page_and_no_chart(self):
         (_, page), _ = yr.read_pages(book(NO_CHART))
         self.assertEqual((page.kind, page.chart, page.lines), ("trajectory", None, (NO_CHART.note,)))
+
+
+HONOURS = yb.honours_page([
+    yb.HonoursEntry("Premier League", ("Calculated leader: Hull City, 9 points from 3 matches [1]",), (yb.DEDUCTIONS_NOTE,)),
+    yb.HonoursEntry("FA Cup", ("Winner: unresolved. Hull City 1-1 Leeds United in the final [1]",), (yb.CUP_LEVEL_NOTE,))])
+
+
+class HonoursReadTests(unittest.TestCase):
+    def test_the_page_reads_every_entry_and_the_same_numbered_footnotes_the_pdf_prints(self):
+        pages, contents = yr.read_pages(book(HONOURS))
+        page = pages[1]
+        self.assertEqual((page.kind, page.heading, page.page_key), ("honours", "Honours", "honours"))
+        self.assertEqual(page.lines, ("Premier League: Calculated leader: Hull City, 9 points from 3 matches [1]",
+                                      "FA Cup: Winner: unresolved. Hull City 1-1 Leeds United in the final [2]"))
+        self.assertEqual(page.notes, HONOURS.notes)
+        self.assertIn(("Honours", 1), contents)

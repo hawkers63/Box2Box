@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import re
 import statistics
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
@@ -185,6 +186,25 @@ class TrajectoryPage:
     club: str
     charts: tuple[Trajectory, ...]
     note: str = ""
+    when: dt.date = dt.date.max
+
+
+@dataclass(frozen=True, slots=True)
+class HonoursEntry:
+    """What the book can say about one competition's top honour. A line may end in "[n]": the n-th of `notes`, the
+    reason the claim is unresolved or estimated. Numbers are per entry until honours_page numbers the whole page."""
+
+    competition: str
+    lines: tuple[str, ...]
+    notes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class HonoursPage:
+    """Honours, evidence-qualified: each entry's lines with their footnotes numbered across the page."""
+
+    entries: tuple[HonoursEntry, ...]
+    notes: tuple[str, ...]
     when: dt.date = dt.date.max
 
 
@@ -436,6 +456,105 @@ def trajectory_page(club: str, charts: Sequence[Trajectory], thin: Sequence[str]
     if thin:
         return TrajectoryPage(club, (), THIN_TRAJECTORY_NOTE.format(leagues=_names(thin), club=club))
     return TrajectoryPage(club, (), NO_TRAJECTORY_NOTE.format(club=club))
+
+
+DEDUCTIONS_NOTE = ("Calculated from the results only: any points deductions the game applied are not in them, so this is "
+                   "not an official champion.")
+PROMOTION_NOTE = ("A place in the promotion zone of the calculated table is not confirmed promotion; the save's rules "
+                  "set the zone, and deductions or play-offs may change who goes up.")
+PLAYOFF_NOTE = "A play-off place is not a play-off win: the play-offs are shown only where their results are in the book."
+CUP_LEVEL_NOTE = ("The final is level and the save shows no aggregate, replay or later round that decides it, so no "
+                  "winner is named.")
+CUP_WON_BY = {"score": "won on the final's score", "aggregate": "won on aggregate", "next round": "went on to a later round"}
+
+
+def league_honour(name: str, table: Sequence[TableLine], tie_breaks: Sequence[int]) -> HonoursEntry | None:
+    """The honour of a league whose every match is played: a calculated leader (never an official champion, since
+    deductions are not in the results), the tie-break behind a tie on points, and the clubs in the promotion and
+    play-off places (places, not outcomes). None when the table has no scored leader."""
+    if not table or not table[0].played:
+        return None
+    leader = table[0]
+    lines = [f"Calculated leader: {leader.team}, {leader.points} points from {leader.played} matches [1]"]
+    notes = [DEDUCTIONS_NOTE]
+    second = table[1] if len(table) > 1 else None
+    if second is not None and second.points == leader.points:
+        order, _ = fd.tie_break_order(tie_breaks)
+        listed = bool(tie_breaks) and all(code in fd.TIE_BREAK_NAMES for code in tie_breaks[:1])
+        names = ", then ".join(fd.TIE_BREAK_NAMES[code] for code in order)
+        rank = lambda t: fd._ranking(t.points, t.won, t.goals_for, t.goals_against, order)
+        if listed and rank(leader) != rank(second):
+            notes.append(f"Level on points: separated by {names}, as the competition's rules list them.")
+        else:
+            notes.append(f"Tie-break unresolved: the calculated order ({names}) may differ from the game's, so the "
+                         "leader is not confirmed.")
+        lines.append(f"Level on points with {second.team} [2]")
+    for zone, noun, note in ((fd.ZONE_PROMOTION, "promotion", PROMOTION_NOTE), (fd.ZONE_PLAYOFF, "play-off", PLAYOFF_NOTE)):
+        clubs = [t.team for t in table if t.zone == zone]
+        if clubs:
+            notes.append(note)
+            lines.append(f"In the {noun} places on the calculated table: {', '.join(clubs)} [{len(notes)}]")
+    return HonoursEntry(name, tuple(lines), tuple(notes))
+
+
+def cup_honour(name: str, cup_fixtures: Sequence, labels: Mapping[int, str], one_match: bool = False) -> HonoursEntry | None:
+    """The winner of a knockout competition whose final has been played, only on evidence: the final's decisive score,
+    or the aggregate of its two legs. A level final with nothing to settle it stays "unresolved". None when the
+    competition has no single final (or it is not yet played): no claim is made."""
+    prepared = _separate_rounds(cup_fixtures)
+    prepared = _with_legs_together(prepared, _field_runs(prepared))
+    rounds = fd.cup_rounds(prepared, labels)
+    if not rounds or not rounds[-1].knockout or len(rounds[-1].ties) != 1:
+        return None
+    last = rounds[-1]
+    if not one_match and last.name != fd.ROUND_NAMES[fd.CompetitionRound.FINAL]:
+        return None
+    tie = last.ties[0]
+    legs = tie.fixtures
+    if not all(f.played for f in legs):
+        return None
+    name_of = lambda team: labels.get(team, "")
+    first = legs[0]
+    two_legged = len(legs) == 2 and not fd.is_replay(*legs)
+    if tie.winner is not None and tie.how in ("score", "aggregate"):
+        winner, loser = (tie.winner, tie.team_b if tie.winner == tie.team_a else tie.team_a)
+        if two_legged:
+            goals = fd.Tie(tie.round_index, first.home_team_id, first.away_team_id, first, legs[-1]).aggregate
+            won, lost = goals if winner == first.home_team_id else (goals[1], goals[0])
+            line = f"Winner: {name_of(winner)}, {CUP_WON_BY['aggregate']} ({won}-{lost} against {name_of(loser)})"
+        else:
+            decider = legs[-1]
+            won, lost = ((decider.home_goals, decider.away_goals) if winner == decider.home_team_id
+                         else (decider.away_goals, decider.home_goals))
+            line = f"Winner: {name_of(winner)}, {won}-{lost} against {name_of(loser)}, {CUP_WON_BY['score']}"
+        return HonoursEntry(name, (line,))
+    if two_legged:
+        goals = fd.Tie(tie.round_index, first.home_team_id, first.away_team_id, first, legs[-1]).aggregate
+        level = f"level on aggregate ({goals[0]}-{goals[1]})" if goals else "with no aggregate to read"
+        line = f"Winner: unresolved. {name_of(tie.team_a)} and {name_of(tie.team_b)} {level} in the final [1]"
+    else:
+        decider = legs[-1]
+        line = (f"Winner: unresolved. {name_of(decider.home_team_id)} {_score(decider)} "
+                f"{name_of(decider.away_team_id)} in the final [1]")
+    return HonoursEntry(name, (line,), (CUP_LEVEL_NOTE,))
+
+
+def honours_page(entries: Sequence[HonoursEntry]) -> HonoursPage | None:
+    """The entries as one page, their footnotes numbered across it (one number per distinct text, so the same
+    reason is worded identically wherever it applies). None when there is nothing to say."""
+    entries = [e for e in entries if e]
+    if not entries:
+        return None
+    numbered: dict[str, int] = {}
+    out = []
+    for entry in entries:
+        local = {}
+        for i, text in enumerate(entry.notes, start=1):
+            local[i] = numbered.setdefault(text, len(numbered) + 1)
+        lines = tuple(re.sub(r"\[(\d+)\]", lambda m: f"[{local.get(int(m.group(1)), int(m.group(1)))}]", line)
+                      for line in entry.lines)
+        out.append(HonoursEntry(entry.competition, lines, ()))
+    return HonoursPage(tuple(out), tuple(f"[{n}] {text}" for text, n in numbered.items()))
 
 
 def trajectory_segments(chart: Trajectory) -> tuple[tuple[TrajectoryPoint, ...], ...]:
@@ -833,6 +952,7 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
     strips: list[tuple[str, tuple[str, ...]]] = []
     xg_notes: list[tuple[str, str]] = []
     grids: list[PlacesPage] = []
+    honours: list[HonoursEntry | None] = []
     charts: list[Trajectory] = []
     thin: list[str] = []                       # leagues the marked club is in that printed too few tables for a chart
     club_name = ""
@@ -860,6 +980,8 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
         included.append(name)
         unplayed = unplayed or any(not f.played for f in league + cup)
         pages += built
+        if cup:
+            honours.append(cup_honour(cup_name, cup, labels, one_match))
         grid = None if comp.continental or not league else places_page(name, [p for p in built if isinstance(p, LeaguePage)])
         if grid:
             grids.append(grid)
@@ -877,6 +999,7 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
             overall, xg_note = with_expected_goals(overall, rows, league, expected_goals or {})
             if xg_note:
                 xg_notes.append((name, xg_note))
+            honours.append(league_honour(name, overall, comp.tie_breaks))
             finals.append((name, overall))
             final_keys.append((name, comp.key))
             splits.append((name, overall,
@@ -888,6 +1011,7 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
     coverage = dataclasses.replace(coverage, in_progress=unplayed)         # judged on the competitions in the book
     head = [TitlePage(label, _title_lines(coverage, included, home))]
     trajectory = [trajectory_page(club_name, charts, thin)] if marked_club is not None and club_name else []
-    tail = grids + trajectory + ([FinalTablesPage(tuple(finals), splits=tuple(splits), strips=tuple(strips),
+    honour_page = honours_page(honours)
+    tail = ([honour_page] if honour_page else []) + grids + trajectory + ([FinalTablesPage(tuple(finals), splits=tuple(splits), strips=tuple(strips),
                                                     xg_notes=tuple(xg_notes), keys=tuple(final_keys))] if finals else [])
     return Yearbook(label, coverage, tuple(head + pages + tail))

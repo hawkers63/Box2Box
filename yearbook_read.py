@@ -96,6 +96,11 @@ def read_pages(book: yb.Yearbook) -> tuple[list[ReadPage], list[tuple[str, int]]
                                   f"{page.competition} · How they stood, matchweeks {page.matchweeks[0]}–{page.matchweeks[-1]}",
                                   (), ("Team", *(str(w) for w in page.matchweeks), "Now"), rows, (yb.places_note(page),),
                                   tuple(i for i, r in enumerate(page.rows) if r.marked), f"places/{page.competition_key}"))
+        elif isinstance(page, yb.HonoursPage):
+            enter("Honours")
+            pages.append(ReadPage("honours", "", "Honours",
+                                  tuple(f"{e.competition}: {line}" for e in page.entries for line in e.lines), (), (),
+                                  page.notes, page_key="honours"))
         elif isinstance(page, yb.TrajectoryPage):
             enter(f"{page.club}: Season trajectory")
             if not page.charts:
