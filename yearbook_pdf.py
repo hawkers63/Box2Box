@@ -23,8 +23,10 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (BaseDocTemplate, Frame, KeepTogether, NextPageTemplate, PageBreak, PageTemplate,
                                 Paragraph, Spacer, Table, TableStyle)
+from reportlab.platypus.flowables import Flowable
 
 import yearbook as yb
+import yearbook_chart
 
 FONT, BOLD = "DejaVuSans", "DejaVuSans-Bold"
 INK, MUTED, RULE = "#1a1a1a", "#555555", "#bbbbbb"
@@ -240,6 +242,64 @@ def _places_parts(page, styles) -> list[list]:
     return parts
 
 
+class TrajectoryChart(Flowable):
+    """The season trajectory, drawn from yearbook_chart's layout: the same places on the same dates as the reader's
+    canvas. A gap is a gap: the line stops and a dotted rule marks the table with no place."""
+
+    def __init__(self, chart: yb.Trajectory, width: float, height: float) -> None:
+        super().__init__()
+        self.chart, self.width, self.height = chart, width, height
+
+    def wrap(self, avail_width: float, avail_height: float) -> tuple[float, float]:
+        return self.width, self.height
+
+    def draw(self) -> None:
+        lay = yearbook_chart.layout(self.chart, self.width, self.height, margin_top=10)
+        c, ink, muted = self.canv, colors.HexColor(INK), colors.HexColor(MUTED)
+
+        def y(v: float) -> float:
+            return self.height - v
+
+        for band in lay.zones:
+            c.setFillColor(colors.HexColor(ZONE_TINT.get(band.zone, "#eeeeee")))
+            c.rect(lay.left, y(band.bottom), lay.right - lay.left, band.bottom - band.top, stroke=0, fill=1)
+            c.setFillColor(muted)
+            c.setFont(FONT, 6.5)
+            c.drawRightString(lay.right - 3, y(band.top) - 8, band.label)
+        c.setFont(FONT, 7)
+        for place, v in lay.y_ticks:
+            c.setStrokeColor(colors.HexColor("#dddddd"))
+            c.setLineWidth(0.4)
+            c.line(lay.left, y(v), lay.right, y(v))
+            c.setFillColor(muted)
+            c.drawRightString(lay.left - 4, y(v) - 2.5, str(place))
+        for label, x in lay.x_ticks[::max(1, len(lay.x_ticks) // 7)]:
+            c.drawCentredString(x, y(lay.bottom) - 12, label)
+        c.setStrokeColor(muted)
+        c.setDash(1, 3)
+        for x in lay.gap_xs:
+            c.line(x, y(lay.top), x, y(lay.bottom))
+        c.setDash()
+        c.setStrokeColor(ink)
+        c.setLineWidth(1.2)
+        for run in lay.segments:
+            for (x1, y1), (x2, y2) in zip(run, run[1:]):
+                c.line(x1, y(y1), x2, y(y2))
+        c.setFillColor(ink)
+        for _, x, v in lay.points:
+            c.circle(x, y(v), 2, stroke=0, fill=1)
+
+
+def _trajectory_parts(page: yb.TrajectoryPage, chart: yb.Trajectory | None, styles) -> list:
+    """The parts of a trajectory page: heading, then the chart and the shared note, or just the club's note."""
+    if chart is None:
+        return [Paragraph(f"{escape(page.club)} ┬À Season trajectory", styles["heading"]),
+                Paragraph(escape(page.note), styles["cell"]), Spacer(1, 8 * mm)]
+    return [Paragraph(f"{escape(page.club)} ┬À Season trajectory ┬À {escape(chart.competition)}", styles["heading"]),
+            TrajectoryChart(chart, FRAME_WIDTH, 85 * mm), Spacer(1, 2 * mm),
+            Paragraph(escape(yb.TRAJECTORY_NOTE), styles["small"]), Spacer(1, 8 * mm)]
+
+
 MOVE_WITHIN_DAYS = 3        # only a block this close before a matchweek may follow it
 FRAME_WIDTH, FRAME_HEIGHT = A4[0] - 36 * mm, A4[1] - 34 * mm      # the text area of a page
 
@@ -346,6 +406,11 @@ def _flow(book: yb.Yearbook) -> list:
                 keep = KeepTogether(parts)
                 flow.append(outlined(keep, 1, f"{page.competition}: How they stood") if not number else keep)
             switch_to("portrait")
+        elif isinstance(page, yb.TrajectoryPage):
+            new_page()
+            for number, chart in enumerate(page.charts or (None,)):
+                keep = KeepTogether(_trajectory_parts(page, chart, styles))
+                flow.append(outlined(keep, 1, f"{page.club}: Season trajectory") if not number else keep)
         elif isinstance(page, yb.FinalTablesPage):
             new_page()
             splits = {entry[0]: entry for entry in page.splits}

@@ -31,6 +31,7 @@ class ReadPage:
     notes: tuple[str, ...] = ()
     marked_rows: tuple[int, ...] = ()          # rows to show in bold
     page_key: str = ""                         # what the page shows, by archive identity; never its place in the book
+    chart: yb.Trajectory | None = None         # a trajectory page's chart, drawn by the window from yearbook_chart
 
 
 def league_key(page: yb.LeaguePage) -> str:
@@ -95,6 +96,17 @@ def read_pages(book: yb.Yearbook) -> tuple[list[ReadPage], list[tuple[str, int]]
                                   f"{page.competition} · How they stood, matchweeks {page.matchweeks[0]}–{page.matchweeks[-1]}",
                                   (), ("Team", *(str(w) for w in page.matchweeks), "Now"), rows, (yb.places_note(page),),
                                   tuple(i for i, r in enumerate(page.rows) if r.marked), f"places/{page.competition_key}"))
+        elif isinstance(page, yb.TrajectoryPage):
+            enter(f"{page.club}: Season trajectory")
+            if not page.charts:
+                pages.append(ReadPage("trajectory", "", f"{page.club} ┬À Season trajectory", (page.note,),
+                                      page_key="trajectory/note"))
+            for n, chart in enumerate(page.charts):
+                rows = tuple((str(p.matchweek), f"{yb._day(p.through)} {p.through:%b}", "" if p.place is None else str(p.place))
+                             for p in chart.points)
+                pages.append(ReadPage("trajectory", chart.competition,
+                                      f"{page.club} ┬À Season trajectory ┬À {chart.competition}", (), ("Matchweek", "To", "Place"),
+                                      rows, (yb.TRAJECTORY_NOTE,), page_key=f"trajectory/{chart.competition_key or n}", chart=chart))
         elif isinstance(page, yb.FinalTablesPage):
             keys = dict(page.keys)
             strips = dict(page.strips)

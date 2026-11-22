@@ -273,3 +273,28 @@ class ContentsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+TRAJECTORY = yb.TrajectoryPage("Leeds United", (yb.Trajectory(
+    "Premier League", 4, (yb.TrajectoryPoint(1, D(2026, 8, 8), 3), yb.TrajectoryPoint(2, D(2026, 8, 15), None),
+                          yb.TrajectoryPoint(3, D(2026, 8, 22), 1))),))
+NO_CHART = yb.TrajectoryPage("Wigan Rovers", (), yb.NO_TRAJECTORY_NOTE.format(club="Wigan Rovers"))
+
+
+class TrajectoryReadTests(unittest.TestCase):
+    def test_each_chart_is_a_page_that_carries_the_chart_and_the_shared_note(self):
+        pages, contents = yr.read_pages(book(TRAJECTORY))
+        page = pages[1]
+        self.assertEqual((page.kind, page.heading, page.chart is TRAJECTORY.charts[0], page.notes),
+                         ("trajectory", "Leeds United ┬À Season trajectory ┬À Premier League", True, (yb.TRAJECTORY_NOTE,)))
+        self.assertEqual(page.page_key, "trajectory/0")
+        self.assertIn(("Leeds United: Season trajectory", 1), contents)
+
+    def test_the_lines_list_the_same_places_the_chart_plots_and_a_blank_stays_blank(self):
+        (_, page), _ = yr.read_pages(book(TRAJECTORY))
+        self.assertEqual(page.columns, ("Matchweek", "To", "Place"))
+        self.assertEqual(page.rows, (("1", "Sat 8 Aug", "3"), ("2", "Sat 15 Aug", ""), ("3", "Sat 22 Aug", "1")))
+
+    def test_a_club_with_no_chart_has_a_note_page_and_no_chart(self):
+        (_, page), _ = yr.read_pages(book(NO_CHART))
+        self.assertEqual((page.kind, page.chart, page.lines), ("trajectory", None, (NO_CHART.note,)))

@@ -15,6 +15,8 @@ import customtkinter as ctk
 from tksheet import Sheet
 
 import palette
+import yearbook
+import yearbook_chart
 import yearbook_read
 from yearbook_read import SINGLE, SPREAD
 
@@ -28,6 +30,73 @@ MODES = {"Single page": SINGLE, "Reader spread": SPREAD}
 def serif_family(root: tk.Misc) -> str:
     available = set(tkfont.families(root))
     return next((f for f in SERIF_FAMILIES if f in available), FONT)
+
+
+class ChartCanvas(tk.Canvas):
+    """The season trajectory, drawn from yearbook_chart's layout (the PDF draws the same numbers). A Tk Canvas, so no
+    plotting package. Moving over a point says that matchweek's place and the club's printed results; nothing else."""
+
+    TOP = 34                       # room above the plot for the hover line
+
+    def __init__(self, master: tk.Misc) -> None:
+        super().__init__(master, height=300, highlightthickness=0, borderwidth=0)
+        self.chart: yearbook.Trajectory | None = None
+        self.current_layout: yearbook_chart.ChartLayout | None = None
+        self.hover_text = ""
+        self._theme: palette.Theme | None = None
+        self.bind("<Configure>", lambda _e: self.redraw())
+        self.bind("<Motion>", lambda e: self.hover_at(e.x, e.y))
+        self.bind("<Leave>", lambda _e: self.hover_at(-10 ** 6, -10 ** 6))
+
+    def apply_theme(self, theme: palette.Theme) -> None:
+        self._theme = theme
+        self.configure(background=theme.table[0])
+        self.redraw()
+
+    def set_chart(self, chart: yearbook.Trajectory | None) -> None:
+        self.chart = chart
+        self.hover_text = ""
+        self.redraw()
+
+    def redraw(self) -> None:
+        self.delete("all")
+        self.current_layout = None
+        theme = self._theme
+        width, height = self.winfo_width(), self.winfo_height()
+        if self.chart is None or theme is None or width < 120 or height < 120:
+            return
+        lay = self.current_layout = yearbook_chart.layout(self.chart, width, height, margin_top=self.TOP)
+        ink, muted, accent = theme.table[1], theme.muted, theme.accent[0]
+        for band in lay.zones:
+            colour = theme.zones.get(band.zone, (muted, muted))[0]
+            self.create_rectangle(lay.left, band.top, lay.right, band.bottom, fill=colour, stipple="gray25", outline="")
+            self.create_text(lay.right - 4, band.top + 2, text=band.label, anchor="ne", fill=muted, font=(FONT, 8))
+        for place, y in lay.y_ticks:
+            self.create_line(lay.left, y, lay.right, y, fill=theme.grid_line)
+            self.create_text(lay.left - 6, y, text=str(place), anchor="e", fill=muted, font=(FONT, 9))
+        shown = lay.x_ticks[::max(1, len(lay.x_ticks) // 8)]
+        for label, x in shown:
+            self.create_text(x, lay.bottom + 8, text=label, anchor="n", fill=muted, font=(FONT, 8))
+        for x in lay.gap_xs:
+            self.create_line(x, lay.top, x, lay.bottom, fill=muted, dash=(2, 4))
+        for run in lay.segments:
+            if len(run) > 1:
+                self.create_line(*[c for xy in run for c in xy], fill=accent, width=2)
+        for _, x, y in lay.points:
+            self.create_oval(x - 3.5, y - 3.5, x + 3.5, y + 3.5, fill=accent, outline=ink)
+        self._say(self.hover_text)
+
+    def _say(self, text: str) -> None:
+        self.delete("hover")
+        if text and self._theme is not None:
+            self.create_text(8, 4, text=text, anchor="nw", width=max(self.winfo_width() - 16, 100), tags="hover",
+                             fill=self._theme.table[1], font=(FONT, 10))
+
+    def hover_at(self, x: float, y: float) -> None:
+        lay = self.current_layout
+        found = lay.nearest(x, y) if lay else None
+        self.hover_text = yearbook_chart.point_text(found) if found else ""
+        self._say(self.hover_text)
 
 
 class PagePane(ctk.CTkFrame):
@@ -48,6 +117,9 @@ class PagePane(ctk.CTkFrame):
                            header_font=(FONT, 10, "bold"), outline_thickness=0, default_row_height=24)
         self.sheet.enable_bindings("single_select", "column_width_resize", "copy", "arrowkeys")
         self.sheet.grid(row=2, column=0, sticky="nsew", padx=10, pady=(8, 0))
+        self.chart = ChartCanvas(self)                  # a trajectory page's chart; in the lines' place while it shows
+        self.chart.grid(row=1, column=0, sticky="nsew", padx=10)
+        self.chart.grid_remove()
         self.notes_label = ctk.CTkLabel(self, text="", font=ctk.CTkFont(FONT, 11), anchor="w", justify="left")
         self.notes_label.grid(row=3, column=0, sticky="ew", padx=10, pady=(8, 8))
         self._theme: palette.Theme | None = None
@@ -58,6 +130,7 @@ class PagePane(ctk.CTkFrame):
         self.heading_label.configure(text_color=theme.heading[1])
         self.notes_label.configure(text_color=theme.muted)
         self.lines_box.configure(fg_color=theme.table[0], text_color=theme.table[1])
+        self.chart.apply_theme(theme)
         self.sheet.set_options(frame_bg=theme.table[0], table_bg=theme.table[0], table_fg=theme.table[1],
                                table_grid_fg=theme.grid_line, header_bg=theme.sheet_heading[0],
                                header_fg=theme.sheet_heading[1], table_selected_cells_bg=theme.selection[0],
@@ -114,6 +187,14 @@ class PagePane(ctk.CTkFrame):
             self.rowconfigure(1, weight=1)
             self.rowconfigure(2, weight=0)
         self.notes_label.configure(text="\n".join(page.notes))
+        if page.chart is not None:                      # the chart takes the lines' place, above the page's table
+            self.lines_box.grid_remove()
+            self.chart.grid()
+            self.chart.set_chart(page.chart)
+            self.rowconfigure(1, weight=2)
+        else:
+            self.chart.grid_remove()
+            self.chart.set_chart(None)
 
 
 class YearbookReader(ctk.CTkToplevel):

@@ -82,6 +82,7 @@ class LeaguePage:
     rescheduled: bool = False
     table_note: str = ""           # "Top 16 of 36 shown" when a league phase's table is cut
     competition_key: int = 0       # the archive's key for the competition
+    through: dt.date | None = None  # the day the table is calculated to: the last on-time match of the matchweek
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,6 +152,40 @@ class PlacesPage:
     rows: tuple[PlacesRow, ...]
     when: dt.date = dt.date.max
     competition_key: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class TrajectoryPoint:
+    """One printed table in a club's season: where it stood on the day the table is calculated to. `place` is None
+    where the club had not yet played (a gap, never a guess); `results` are the club's matches printed on that
+    matchweek's page, for a reader's hover, and say nothing about why the place changed."""
+
+    matchweek: int
+    through: dt.date
+    place: int | None
+    results: tuple[BookMatch, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class Trajectory:
+    """The places of one club across one league's printed tables, with the estimated zones of the latest table
+    as (zone, first place, last place)."""
+
+    competition: str
+    clubs: int
+    points: tuple[TrajectoryPoint, ...]
+    zones: tuple[tuple[str, int, int], ...] = ()
+    competition_key: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class TrajectoryPage:
+    """The marked club's trajectory in each league it plays in; `note` stands in for a chart when it has none."""
+
+    club: str
+    charts: tuple[Trajectory, ...]
+    note: str = ""
+    when: dt.date = dt.date.max
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,6 +399,61 @@ def places_page(name: str, pages: Sequence[LeaguePage]) -> PlacesPage | None:
     return PlacesPage(name, tuple(p.matchweek for p in weeks), rows, competition_key=weeks[0].competition_key)
 
 
+def trajectory_chart(name: str, pages: Sequence[LeaguePage]) -> Trajectory | None:
+    """The marked club's trajectory in one league, from the same weekly tables places_page uses (so the same
+    places, at the day each table is calculated to); None when the league printed fewer than two tables or no line
+    of them is marked."""
+    weeks = sorted((p for p in pages if p.table and not p.rescheduled and p.through), key=lambda p: p.matchweek)
+    if len(weeks) < 2 or not any(t.marked for p in weeks for t in p.table):
+        return None
+    points = []
+    for week in weeks:
+        line = next((t for t in week.table if t.marked), None)
+        results = tuple(m for m in week.matches if line and line.team in (m.home, m.away))
+        points.append(TrajectoryPoint(week.matchweek, week.through,
+                                      line.pos if line is not None and line.played else None, results))
+    latest = weeks[-1].table
+    zones = []
+    for t in latest:
+        if t.zone and zones and zones[-1][0] == t.zone and zones[-1][2] == t.pos - 1:
+            zones[-1] = (t.zone, zones[-1][1], t.pos)
+        elif t.zone:
+            zones.append((t.zone, t.pos, t.pos))
+    return Trajectory(name, len(latest), tuple(points), tuple(zones), weeks[0].competition_key)
+
+
+NO_TRAJECTORY_NOTE = "{club} is in no league of this book, so there is no league trajectory to chart."
+THIN_TRAJECTORY_NOTE = "{leagues} printed fewer than two weekly tables with {club} in them, so there is no trajectory to chart yet."
+TRAJECTORY_NOTE = ("Place on the calculated table at the end of each matchweek's last on-time match, at that date. "
+                   "A gap is a matchweek the club had not played or that has no table. Matchweek numbers are not "
+                   "calendar weeks. Shaded bands are estimated zones of the latest table, not confirmed outcomes.")
+
+
+def trajectory_page(club: str, charts: Sequence[Trajectory], thin: Sequence[str]) -> TrajectoryPage:
+    """The trajectory page for the marked club: a chart for each league that has one, else a short note."""
+    if charts:
+        return TrajectoryPage(club, tuple(charts), when=dt.date.max)
+    if thin:
+        return TrajectoryPage(club, (), THIN_TRAJECTORY_NOTE.format(leagues=_names(thin), club=club))
+    return TrajectoryPage(club, (), NO_TRAJECTORY_NOTE.format(club=club))
+
+
+def trajectory_segments(chart: Trajectory) -> tuple[tuple[TrajectoryPoint, ...], ...]:
+    """The runs of points a line may join: a blank place, or a matchweek with no printed table between two points,
+    breaks the line. Nothing is interpolated across a gap."""
+    runs: list[list[TrajectoryPoint]] = []
+    previous: TrajectoryPoint | None = None
+    for point in chart.points:
+        if point.place is None:
+            previous = None
+            continue
+        if previous is None or point.matchweek != previous.matchweek + 1:
+            runs.append([])
+        runs[-1].append(point)
+        previous = point
+    return tuple(tuple(r) for r in runs)
+
+
 def biggest_moves(page: PlacesPage) -> tuple[tuple[Move, ...], tuple[Move, ...], int]:
     """(biggest rises, biggest falls, clubs left out) over the weeks. A rise is a climb from a lower place in one
     matchweek to a higher one in a later matchweek, a fall the reverse; the largest wins, then the shorter span.
@@ -507,7 +597,7 @@ def _league_pages(name: str, league: Sequence, labels: Mapping[int, str], tie_br
             pages.append(LeaguePage(name, ri + 1, f"{unit} {ri + 1} · {_span(first, last)}",
                                     tuple(line(f, first) for f in on_time), cut, first,
                                     table_note=f"Top {len(cut)} of {len(lines)} shown" if len(cut) < len(lines) else "",
-                                    competition_key=competition_key))
+                                    competition_key=competition_key, through=last))
         for day in sorted({f.date for f in played if rescheduled(f)}):
             moved = [f for f in played if rescheduled(f) and f.date == day]
             pages.append(LeaguePage(name, ri + 1, f"{unit} {ri + 1}, rescheduled · {_span(day, day)}",
@@ -743,6 +833,9 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
     strips: list[tuple[str, tuple[str, ...]]] = []
     xg_notes: list[tuple[str, str]] = []
     grids: list[PlacesPage] = []
+    charts: list[Trajectory] = []
+    thin: list[str] = []                       # leagues the marked club is in that printed too few tables for a chart
+    club_name = ""
     unplayed = False
     for comp in sorted(competitions, key=lambda c: c.key):
         name = names.get(comp.database_id)
@@ -770,6 +863,13 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
         grid = None if comp.continental or not league else places_page(name, [p for p in built if isinstance(p, LeaguePage)])
         if grid:
             grids.append(grid)
+        if marked_club is not None:
+            club_name = club_name or labels.get(marked_club, "")
+            chart = None if comp.continental or not league else trajectory_chart(name, [p for p in built if isinstance(p, LeaguePage)])
+            if chart:
+                charts.append(chart)
+            elif league and any(f.home_team_id == marked_club or f.away_team_id == marked_club for f in league):
+                thin.append(name)
         if league and all(f.played for f in league):
             last = max(f.date for f in league if f.date)
             rows = fd.standings_as_of(league, labels, through=last, tie_breaks=comp.tie_breaks)
@@ -787,6 +887,7 @@ def yearbook_from(dataset: fd.Dataset, competitions: Sequence[arch.ArchivedCompe
     label = fd.season_label(season, [f for fixtures in dataset.fixtures.values() for f in fixtures])
     coverage = dataclasses.replace(coverage, in_progress=unplayed)         # judged on the competitions in the book
     head = [TitlePage(label, _title_lines(coverage, included, home))]
-    tail = grids + ([FinalTablesPage(tuple(finals), splits=tuple(splits), strips=tuple(strips),
+    trajectory = [trajectory_page(club_name, charts, thin)] if marked_club is not None and club_name else []
+    tail = grids + trajectory + ([FinalTablesPage(tuple(finals), splits=tuple(splits), strips=tuple(strips),
                                                     xg_notes=tuple(xg_notes), keys=tuple(final_keys))] if finals else [])
     return Yearbook(label, coverage, tuple(head + pages + tail))

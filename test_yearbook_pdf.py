@@ -409,3 +409,34 @@ class XgReadTests(unittest.TestCase):
         self.assertEqual(list(pages[1].columns), list(yearbook_pdf._standings(lines, yearbook_pdf._styles())._cellvalues[0]))
         self.assertEqual(pages[1].notes, (yb.final_note(lines, note),))
         self.assertEqual(pages[1].rows[0][-4:-1], ("55.10", "41.20", "+1.50"))
+
+
+class TrajectoryDrawingTests(unittest.TestCase):
+    CHART = yb.Trajectory("Premier League", 4, (yb.TrajectoryPoint(1, D(2026, 8, 8), 3), yb.TrajectoryPoint(2, D(2026, 8, 15), None),
+                                                yb.TrajectoryPoint(3, D(2026, 8, 22), 1)), (("relegation", 4, 4),))
+    PAGE = yb.TrajectoryPage("Leeds United", (CHART,))
+
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        self.path = Path(self.folder.name) / "Yearbook.pdf"
+        yearbook_pdf._register_fonts()
+
+    def test_the_page_carries_the_same_heading_and_the_same_note_as_the_reader(self):
+        texts = _texts(yearbook_pdf._trajectory_parts(self.PAGE, self.CHART, yearbook_pdf._styles()))
+        self.assertIn("Leeds United ┬À Season trajectory ┬À Premier League", texts)
+        self.assertIn(yb.TRAJECTORY_NOTE, texts)
+
+    def test_a_club_with_no_chart_prints_its_note_and_no_chart(self):
+        page = yb.trajectory_page("Wigan Rovers", [], [])
+        texts = _texts(yearbook_pdf._trajectory_parts(page, None, yearbook_pdf._styles()))
+        self.assertIn(page.note, texts)
+        self.assertFalse(any(isinstance(p, yearbook_pdf.TrajectoryChart) for p in yearbook_pdf._trajectory_parts(page, None, yearbook_pdf._styles())))
+
+    def test_the_chart_draws_inside_its_box_and_the_book_renders_with_an_outline_entry(self):
+        chart = yearbook_pdf.TrajectoryChart(self.CHART, 150 * 2.83, 80 * 2.83)
+        self.assertEqual(chart.wrap(10 ** 6, 10 ** 6), (150 * 2.83, 80 * 2.83))
+        yearbook_pdf.render(book(week(1), self.PAGE), self.path)
+        data = self.path.read_bytes()
+        self.assertTrue(data.startswith(b"%PDF-"))
+        self.assertIn(b"Season trajectory", data)

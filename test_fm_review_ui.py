@@ -2180,6 +2180,33 @@ class WindowTests(unittest.TestCase):
         self.assertIn("Table calculated from the results.", reader.notes_label.cget("text"))
         self.assertIn("± is the change in place", reader.notes_label.cget("text"))
 
+    def trajectory_volume(self):
+        built = self.sample_book()
+        chart = yearbook.Trajectory("Premier League", 4, (
+            yearbook.TrajectoryPoint(1, D(2026, 8, 8), 3, (yearbook.BookMatch("Sat 8", "Hull City", "Leeds United", "2-0"),)),
+            yearbook.TrajectoryPoint(2, D(2026, 8, 15), None), yearbook.TrajectoryPoint(3, D(2026, 8, 22), 1)),
+            (("relegation", 4, 4),))
+        page = yearbook.TrajectoryPage("Leeds United", (chart,))
+        built = yearbook.Yearbook("2026/27", built.coverage, (*built.pages, page))
+        return yearbook_read.volume(built, 2026, "test-archive", built.coverage)
+
+    def test_a_trajectory_page_draws_the_chart_and_a_hover_lists_results_without_a_cause(self):
+        reader, pages = self.open_reader(self.trajectory_volume())
+        reader.show(3)
+        self.app.update()
+        pane = reader.panes[0]
+        self.assertTrue(pane.chart.winfo_ismapped())
+        self.assertGreater(len(pane.chart.find_all()), 8)                      # line, points, bands, ticks
+        point, x, y = pane.chart.current_layout.points[0]
+        pane.chart.hover_at(x + 2, y + 1)
+        self.assertEqual(pane.chart.hover_text, "Matchweek 1, to Sat 8 Aug: 3rd. Results that matchweek: Hull City 2-0 Leeds United.")
+        pane.chart.hover_at(x + 300, y)
+        self.assertEqual(pane.chart.hover_text, "")
+        self.assertIn("Matchweek numbers are not calendar weeks", reader.notes_label.cget("text"))
+        reader.show(2)
+        self.app.update()
+        self.assertFalse(pane.chart.winfo_ismapped())
+
     def test_a_page_without_a_table_hides_the_sheet(self):
         reader, _ = self.open_reader()
         self.assertFalse(reader.sheet.winfo_ismapped())

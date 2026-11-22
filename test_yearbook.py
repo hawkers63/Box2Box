@@ -792,3 +792,63 @@ class XgColumnsTests(BookBuilder, unittest.TestCase):
         built, _, _ = self.final(range(6))
         weekly = [t for p in built.pages if isinstance(p, yearbook.LeaguePage) for t in p.table]
         self.assertEqual({(t.xg_for, t.xg_against, t.xg_over) for t in weekly}, {("", "", "")})
+
+
+class TrajectoryTests(BookBuilder, unittest.TestCase):
+    """Stage 1 (2.10): the dated season trajectory of the marked club, from the places the weekly tables printed."""
+
+    def built(self, fixtures, marked=2):
+        book, folder = banked(fixtures)
+        self.addCleanup(folder.cleanup)
+        self.addCleanup(book.close)
+        return yearbook.build_yearbook(book, 2026, self.NAMES, marked_club=marked)
+
+    def trajectory(self, built):
+        return [p for p in built.pages if isinstance(p, yearbook.TrajectoryPage)]
+
+    def test_the_marked_club_gets_a_chart_of_the_exact_places_and_cutoff_dates_of_the_weekly_tables(self):
+        built = self.built(self.FINISHED)
+        (page,) = self.trajectory(built)
+        (chart,) = page.charts
+        weekly = [p for p in built.pages if isinstance(p, yearbook.LeaguePage) and p.table]
+        self.assertEqual((page.club, chart.competition, chart.clubs), ("Leeds United", "Premier League", 4))
+        self.assertEqual([(p.matchweek, p.through, p.place) for p in chart.points],
+                         [(w.matchweek, w.through, {t.team: t.pos for t in w.table}["Leeds United"]) for w in weekly])
+        self.assertEqual([p.through for p in chart.points], [D(2026, 8, 8), D(2026, 8, 15), D(2026, 8, 22)])
+
+    def test_a_club_that_had_not_played_is_a_gap_and_the_line_does_not_join_across_it(self):
+        built = self.built([fx(D(2026, 8, 8), 1, 2, 1, 0, md=1), fx(D(2026, 8, 15), 3, 4, 2, 0, md=2),
+                            fx(D(2026, 8, 15), 1, 5, 0, 0, md=2), fx(D(2026, 8, 22), 2, 3, 1, 1, md=3),
+                            fx(D(2026, 8, 22), 1, 4, 2, 0, md=3)], marked=5)
+        (chart,) = self.trajectory(built)[0].charts
+        self.assertEqual([p.place is None for p in chart.points], [True, False, False])
+        self.assertEqual([[p.matchweek for p in run] for run in yearbook.trajectory_segments(chart)], [[2, 3]])
+
+    def test_a_matchweek_with_no_printed_table_breaks_the_line_without_interpolating(self):
+        point = lambda week, place: yearbook.TrajectoryPoint(week, D(2026, 8, 1) + dt.timedelta(days=7 * week), place)
+        chart = yearbook.Trajectory("Premier League", 4, (point(1, 3), point(2, 2), point(4, 2), point(5, None), point(6, 1)))
+        self.assertEqual([[p.matchweek for p in run] for run in yearbook.trajectory_segments(chart)], [[1, 2], [4], [6]])
+
+    def test_the_hover_results_are_the_clubs_own_matches_of_that_matchweek_only(self):
+        (chart,) = self.trajectory(self.built(self.FINISHED))[0].charts
+        self.assertEqual([[(m.home, m.score, m.away) for m in p.results] for p in chart.points],
+                         [[("Hull City", "2-0", "Leeds United")], [("Derby County", "3-0", "Leeds United")],
+                          [("Leeds United", "0-0", "Sheffield United")]])
+
+    def test_no_marked_club_means_no_trajectory_page(self):
+        self.assertEqual(self.trajectory(self.built(self.FINISHED, marked=None)), [])
+
+    def test_a_marked_club_in_no_league_gets_a_short_note_instead_of_a_chart(self):
+        page = self.trajectory(self.built(self.FINISHED, marked=2))[0]
+        self.assertTrue(page.charts)                               # the club in a league has a chart and no note
+        self.assertEqual(page.note, "")
+        none = yearbook.trajectory_page("Wigan Rovers", [], [])
+        self.assertEqual((none.charts, none.note), ((), "Wigan Rovers is in no league of this book, so there is no league trajectory to chart."))
+        thin = yearbook.trajectory_page("Wigan Rovers", [], ["Premier League"])
+        self.assertIn("fewer than two weekly tables", thin.note)
+
+    def test_the_zones_come_from_the_latest_table_and_the_chart_carries_the_estimated_note(self):
+        (chart,) = self.trajectory(self.built(self.FINISHED))[0].charts
+        self.assertEqual(chart.zones, ())                          # these made-up rules name no zone
+        self.assertIn("estimated", yearbook.TRAJECTORY_NOTE)
+        self.assertIn("not calendar weeks", yearbook.TRAJECTORY_NOTE)
