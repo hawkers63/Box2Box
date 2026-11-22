@@ -1,8 +1,8 @@
 # Changelog
 
-**Release:** 2.13  
+**Release:** 2.14  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 2.13), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.14), launched with `Box2Box.bat`
 
 All notable changes to this project will be documented in this file.
 
@@ -10,6 +10,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [2.14] - 2026-11-22
+
+The first slice of bringing the archive into the main views: a club's history in the inspector.
+
+### Added
+
+- **A History block in the club inspector.** After "Season so far", Next and Expected goals, it lists the club's league finish in each archived season, newest first, for example "2099/00 · League · 3rd of 20 · P38 W20 D10 L8 · 70 pts". The league of a season is the league the club's first team played most matches in; cups, friendlies and youth or reserve competitions are ignored. A season the archive holds unfinished reads "so far", a table that cannot be worked out reads "position unknown", and a missing score adds the usual remark that the totals are minimums. At most ten seasons are listed, then "and N earlier seasons". The season open in the window is left out.
+- **Safe by design.** History appears only once the open save has been banked in this session, and reads "History is unavailable: this save was not banked." if banking failed. The archive is read once on a background thread ("Loading history..." meanwhile), kept for later clubs, and dropped whenever a save is banked. It is never created or written by looking at it.
 
 ## [2.13] - 2026-11-22
 
