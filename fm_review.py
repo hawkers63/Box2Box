@@ -58,7 +58,7 @@ import fm_manager_hub as fmh
 import fm_schedule_view as fsv
 
 APP_TITLE = "Box2Box"
-VERSION = "2.12"
+VERSION = "2.13"
 
 
 def _resolve_app_dir(*, frozen: bool, executable: Path, source: Path) -> Path:
@@ -125,7 +125,9 @@ RUN_LETTERS = {fd.STREAK_WINNING: "W", fd.STREAK_UNBEATEN: "U", fd.STREAK_WINLES
 RUN_NAMED_FROM = 3                        # the Table tab names a followed team's run once it is this long
 CLUB_OPEN_PRIORITY = 10_000                 # the palette ranks the open competition's own teams first,
 CLUB_LEAGUE_PRIORITY = 1_000                # then a club's leagues, then its cups, each by prominence
-MIN_WINDOW_WIDTH = 1410                   # the controls row needs about 1407 px (px at 100%); capped at the screen
+MIN_WINDOW_WIDTH = 1050                   # line 1 of the controls (season, team, view switch) fits in this (px at 100%);
+#                                           the view's own switch wraps to line 2. Capped at the screen
+CONTROLS_SPARE = 8                        # the controls unwrap only with this many px to spare, so they never flicker
 DROP_NOTE_MS = 8000                       # a refused drop's reason stays this long on the detail line
 COUNTS_MIN_WIDTH = 1540                   # the switch shows counts only in a window at least this wide (px at 100%);
 #                                           the controls need 1532 with the longest counts, as a test measures
@@ -781,39 +783,46 @@ class FMReviewApp(_Root):
         self.hint_label = role("muted", ctk.CTkLabel(header, text="", anchor="w"))
         self.hint_label.grid(row=1, column=0, sticky="w")
 
-        controls = ctk.CTkFrame(main, fg_color="transparent")
+        controls = self.controls = ctk.CTkFrame(main, fg_color="transparent")
         controls.grid(row=1, column=0, sticky="ew", pady=(8, 4))
-        role("text", ctk.CTkLabel(controls, text="Season")).pack(side="left", padx=(0, 6))
-        self.season_menu = role("option", ctk.CTkOptionMenu(controls, values=["–"], width=110,
+        # Line 1 (season, team, view switch) and the view's own switches sit side by side, or one above the other
+        # when the window is too narrow for both: see _layout_controls.
+        line_one = self.controls_line_one = ctk.CTkFrame(controls, fg_color="transparent")
+        own = self.controls_own = ctk.CTkFrame(controls, fg_color="transparent")
+        self.controls_wrapped = False
+        self._controls_shape: tuple[bool, bool] | None = None
+        role("text", ctk.CTkLabel(line_one, text="Season")).pack(side="left", padx=(0, 6))
+        self.season_menu = role("option", ctk.CTkOptionMenu(line_one, values=["–"], width=110,
                                                             command=self._on_season))
         self.season_menu.pack(side="left", padx=(0, 16))
-        role("text", ctk.CTkLabel(controls, text="Team")).pack(side="left", padx=(0, 6))
-        self.team_box = role("combo", ctk.CTkComboBox(controls, values=[ALL_TEAMS], width=250, command=self._on_team))
+        role("text", ctk.CTkLabel(line_one, text="Team")).pack(side="left", padx=(0, 6))
+        self.team_box = role("combo", ctk.CTkComboBox(line_one, values=[ALL_TEAMS], width=250, command=self._on_team))
         self.team_box.pack(side="left", padx=(0, 16))
         self.team_box.bind("<Return>", self._on_team_typed)
-        self.view_switch = role("switch", ctk.CTkSegmentedButton(controls, values=list(SWITCH_VIEWS),
+        self.view_switch = role("switch", ctk.CTkSegmentedButton(line_one, values=list(SWITCH_VIEWS),
                                                                  command=self._on_view_label))
         self.view_switch.set(self.view)
         self.view_switch.pack(side="left", padx=(0, 16))
-        self.group_label = role("text", ctk.CTkLabel(controls, text="Group by"))
+        self.group_label = role("text", ctk.CTkLabel(own, text="Group by"))
         self.group_label.pack(side="left", padx=(0, 6))
-        self.group_switch = role("switch", ctk.CTkSegmentedButton(controls, values=list(GROUPINGS),
+        self.group_switch = role("switch", ctk.CTkSegmentedButton(own, values=list(GROUPINGS),
                                                                   command=self._on_group))
         self.group_switch.set(self.group_by)
         self.group_switch.pack(side="left")
 
-        self.split_label = role("text", ctk.CTkLabel(controls, text="Standings"))
-        self.split_switch = role("switch", ctk.CTkSegmentedButton(controls, values=list(fd.SPLITS),
+        self.split_label = role("text", ctk.CTkLabel(own, text="Standings"))
+        self.split_switch = role("switch", ctk.CTkSegmentedButton(own, values=list(fd.SPLITS),
                                                                   command=self._on_table_split))
         self.split_switch.set(self.table_split)
-        self.analysis_label = role("text", ctk.CTkLabel(controls, text="Show"))
-        self.analysis_switch = role("switch", ctk.CTkSegmentedButton(controls, values=list(ANALYSES),
+        self.analysis_label = role("text", ctk.CTkLabel(own, text="Show"))
+        self.analysis_switch = role("switch", ctk.CTkSegmentedButton(own, values=list(ANALYSES),
                                                                      command=self._on_analysis))
         self.analysis_switch.set(self.analysis)
         # Shown only when Analysis > Positions has a comparison to offer (>=2 seasons with a snapshot).
         self.positions_mode_switch = role("switch", ctk.CTkSegmentedButton(
-            controls, values=list(POSITIONS_MODES), command=self._on_positions_mode))
+            own, values=list(POSITIONS_MODES), command=self._on_positions_mode))
         self.positions_mode_switch.set(self.positions_mode)
+        self._layout_controls()
 
         self.coverage_label = role("text", ctk.CTkLabel(main, text="", anchor="w", justify="left"))
         self.coverage_label.grid(row=2, column=0, sticky="ew")
@@ -1746,6 +1755,36 @@ class FMReviewApp(_Root):
     def _after_resize(self) -> None:
         self._resize_job = None
         self._refresh_view_labels()
+        self._layout_controls()
+
+    def _layout_controls(self) -> None:
+        """Lay the controls out on one line, or put the view's own switches on a second line under Season when
+        the two do not fit side by side. The decision uses requested widths against the row's own width, which
+        wrapping does not change; it wraps when they do not fit and unwraps only with CONTROLS_SPARE to spare."""
+        line_one, own = self.controls_line_one, self.controls_own
+        has_own = bool(own.pack_slaves())
+        if not has_own:
+            wrapped = False
+        else:
+            self.controls.update_idletasks()
+            available = self.controls.winfo_width()
+            wrapped = self.controls_wrapped
+            if available > 1:
+                needed = line_one.winfo_reqwidth() + own.winfo_reqwidth()
+                if needed > available:
+                    wrapped = True
+                elif needed + self.px(CONTROLS_SPARE) <= available:
+                    wrapped = False
+        if (wrapped, has_own) == self._controls_shape:
+            return
+        self._controls_shape = (wrapped, has_own)
+        self.controls_wrapped = wrapped
+        line_one.pack_forget()
+        own.pack_forget()
+        side = "top" if wrapped else "left"
+        line_one.pack(side=side, anchor="w")
+        if has_own:
+            own.pack(side=side, anchor="w", pady=(6, 0) if wrapped else 0)
 
     def _refresh_view_labels(self) -> None:
         """Put each view's count on the switch, if the window is wide enough for them: they must never squeeze
@@ -1790,6 +1829,7 @@ class FMReviewApp(_Root):
         for widget in (self.season_menu, self.team_box, self.group_switch, self.split_switch,
                        self.analysis_switch, self.positions_mode_switch):
             widget.configure(state=state)
+        self._layout_controls()
         self._update_header_buttons()
 
     def _update_header_buttons(self) -> None:
@@ -2484,6 +2524,7 @@ class FMReviewApp(_Root):
         self.overlays[ANALYSIS].clear()          # the Form panel draws its pills again
         if self.analysis != "Positions":
             self.positions_mode_switch.pack_forget()
+            self._layout_controls()
         {"Form": self._render_form, "Positions": self._render_positions, "xG": self._render_xg,
          "Ties": self._render_ties, "Bracket": self._render_bracket}[self.analysis]()
 
@@ -2558,6 +2599,7 @@ class FMReviewApp(_Root):
         comparison = fd.season_comparison(self.dataset, self.comp_id, self.labels)
         if comparison is not None:
             self.positions_mode_switch.pack(side="left", padx=(12, 0))
+            self._layout_controls()
         if comparison is not None and self.positions_mode == "Season vs season":
             self._render_season_comparison(comparison)
             return

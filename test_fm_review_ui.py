@@ -1895,7 +1895,7 @@ class WindowTests(unittest.TestCase):
         app = self.app
         wanted = min(app.px(fm_review.MIN_WINDOW_WIDTH), app.winfo_screenwidth())
         self.assertEqual(app.wm_minsize()[0], wanted)
-        self.assertGreaterEqual(fm_review.MIN_WINDOW_WIDTH, 1407)
+        self.assertEqual(fm_review.MIN_WINDOW_WIDTH, 1050)          # line 1 only; the view's own switch wraps
 
     def test_a_refused_drops_reason_clears_itself_but_not_a_newer_message(self):
         app = self.app
@@ -3081,6 +3081,90 @@ class ScheduleHubWiringTests(unittest.TestCase):
         app.set_view("Results")
         app.update()
         self.assertEqual(self._fg(app.hub_button), app.theme.quiet[0])
+
+
+class ControlsWrapTests(unittest.TestCase):
+    """The view's own switch drops to a second line when the controls row does not fit."""
+    setUp = WindowTests.setUp
+    tearDown = WindowTests.tearDown
+
+    def resize(self, width):
+        app = self.app
+        app.geometry(f"{width}x800+-4000+0")
+        app.update()
+        stop = time.monotonic() + 2
+        while app._resize_job is not None and time.monotonic() < stop:   # the debounced re-check
+            app.update()
+            time.sleep(0.02)
+        app.update()
+
+    def show(self, view, width, analysis=None):
+        app = self.app
+        app.install_dataset(dataset() if analysis is None else self._two_seasons())
+        app.set_view(view)
+        if analysis is not None:
+            app._on_analysis(analysis)
+        self.resize(width)
+
+    def _two_seasons(self):
+        return fd.build_dataset(info(), test_fm_data.TWO_SEASON_LEAGUE, clubs=[club(1), club(2), club(3)],
+                                competitions=[NS(id=101, database_id=12)])
+
+    def inside(self, *widgets):
+        edge = self.app.controls.winfo_rootx() + self.app.controls.winfo_width()
+        for widget in widgets:
+            self.assertGreater(widget.winfo_width(), 1)
+            self.assertLessEqual(widget.winfo_rootx() + widget.winfo_width(), edge)
+
+    def test_a_wide_window_keeps_the_standings_switch_on_the_view_switchs_line(self):
+        app = self.app
+        self.show("Table", 1560)
+        self.assertLessEqual(abs(app.split_switch.winfo_rooty() - app.view_switch.winfo_rooty()), 4)
+
+    def test_a_narrow_window_puts_the_standings_switch_on_line_two_inside_the_window(self):
+        app = self.app
+        self.show("Table", 1050)
+        self.assertGreater(app.split_switch.winfo_rooty(), app.view_switch.winfo_rooty() + 10)
+        self.assertLessEqual(app.split_label.winfo_rootx() - app.controls.winfo_rootx(), 4)   # under Season
+        self.inside(app.season_menu, app.team_box, app.view_switch, app.split_label, app.split_switch)
+
+    def test_the_show_and_positions_mode_switches_share_line_two(self):
+        app = self.app
+        self.show(fm_review.ANALYSIS, 1050, analysis="Positions")
+        self.assertEqual(app.positions_mode_switch.winfo_manager(), "pack")
+        line_one = app.view_switch.winfo_rooty()
+        for widget in (app.analysis_switch, app.positions_mode_switch):
+            self.assertGreater(widget.winfo_rooty(), line_one + 10)
+        self.inside(app.analysis_label, app.analysis_switch, app.positions_mode_switch)
+
+    def test_a_view_without_its_own_switch_has_no_second_line(self):
+        app = self.app
+        self.show("Grid", 1560)
+        wide = app.controls.winfo_height()
+        self.resize(1050)
+        self.assertEqual(app.controls.winfo_height(), wide)
+
+    def test_widening_again_returns_to_one_line_and_repeated_resizes_stay_stable(self):
+        app = self.app
+        self.show("Table", 1560)
+        one_line = app.controls.winfo_height()
+        self.resize(1050)
+        two_lines = app.controls.winfo_height()
+        self.assertGreater(two_lines, one_line)
+        self.resize(1560)
+        self.assertEqual(app.controls.winfo_height(), one_line)
+        for _ in range(5):
+            self.resize(1050)
+            self.resize(1560)
+        self.assertIsNone(app._resize_job)
+        self.assertEqual(app.controls.winfo_height(), one_line)
+        self.resize(1050)
+        self.assertEqual(app.controls.winfo_height(), two_lines)
+
+    def test_the_minimum_width_is_what_line_one_needs(self):
+        app = self.app
+        self.assertEqual(app.wm_minsize()[0], min(app.px(fm_review.MIN_WINDOW_WIDTH), app.winfo_screenwidth()))
+        self.assertEqual(fm_review.MIN_WINDOW_WIDTH, 1050)
 
 
 class PathsTests(unittest.TestCase):
