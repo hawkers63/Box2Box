@@ -3019,6 +3019,7 @@ class Schedule:
     today: dt.date | None
     items: tuple[ScheduleItem, ...]
     competitions: tuple[ScheduleCompetition, ...]      # in the order each first appears
+    gaps: Mapping[FixtureRef, FixtureGap] = field(default_factory=dict)   # from the whole season, whatever is shown
 
     @property
     def first_upcoming(self) -> int | None:
@@ -3114,15 +3115,74 @@ def club_schedule(
                     key=lambda f: (_when(f), f.competition_id or 0))
     refs = fixture_refs(chosen)
     today = dataset.info.game_date
-    items = tuple(_schedule_item(dataset, f, ref, ids, today) for f, ref in zip(chosen, refs)
-                  if competition_id is None or f.competition_id == competition_id)
+    every = tuple(_schedule_item(dataset, f, ref, ids, today) for f, ref in zip(chosen, refs))
+    items = tuple(i for i in every if competition_id is None or i.competition_id == competition_id)
     counts: dict[int | None, list[int]] = {}
     for item in items:
         counts.setdefault(item.competition_id, [0, 0])
         counts[item.competition_id][1] += 1
         counts[item.competition_id][0] += item.played
     return Schedule(followed, season, season_label(season, chosen) if chosen else "No season", today, items,
-                    tuple(ScheduleCompetition(cid, played, total) for cid, (played, total) in counts.items()))
+                    tuple(ScheduleCompetition(cid, played, total) for cid, (played, total) in counts.items()),
+                    fixture_gaps(dataset, every))
+
+
+GAP_KIND_WORDS = {COMP_CAT_CUP: "cup", COMP_CAT_LEAGUE: "league", COMP_CAT_FRIENDLY: "friendly"}
+
+
+@dataclass(frozen=True, slots=True)
+class FixtureGap:
+    """The calendar days between one match of a club's schedule and the dated match before it, in any competition.
+    `days` is None when a missing date leaves the order uncertain. `previous` names the earlier match's kind
+    ("cup", "league", "friendly", or "" when the save does not say); `scheduled` is true for a match still to come."""
+
+    days: int | None
+    previous: str
+    scheduled: bool
+
+    def text(self) -> str:
+        if self.days is None:
+            return "Gap unknown"
+        what = f"{self.previous} fixture" if self.previous else "fixture"
+        if self.days == 0:
+            text = f"Same day as {what}"
+        else:
+            text = f"{_plural(self.days, 'day')} {'after' if self.scheduled else 'since'} {what}"
+        return f"{text} (scheduled)" if self.scheduled else text
+
+
+def fixture_gaps(dataset: Dataset, items: Sequence[ScheduleItem]) -> dict[FixtureRef, FixtureGap]:
+    """The gap before each match of a club's whole season (in date order, undated last), keyed by the match's
+    reference. The first dated match has none; an undated one, or one whose predecessor may be undated, is unknown."""
+    kinds: dict[int | None, str] = {}
+
+    def kind_of(competition_id: int | None) -> str:
+        if competition_id not in kinds:
+            comp = dataset.by_id.get(competition_id)
+            kinds[competition_id] = GAP_KIND_WORDS.get(underlying_category(comp, dataset), "") if comp else ""
+        return kinds[competition_id]
+
+    # A dated match is uncertain when an undated one of its competition falls earlier in the round order: it may
+    # be the match that really came just before.
+    uncertain: set[FixtureRef] = set()
+    for gone in (i for i in items if i.fixture.date is None and i.fixture.round_index is not None):
+        later = [i for i in items if i.fixture.date is not None and i.competition_id == gone.competition_id
+                 and i.fixture.round_index is not None and i.fixture.round_index > gone.fixture.round_index]
+        if later:
+            uncertain.add(min(later, key=lambda i: i.fixture.round_index).ref)
+
+    gaps: dict[FixtureRef, FixtureGap] = {}
+    previous: ScheduleItem | None = None
+    for item in items:
+        if item.fixture.date is None:
+            gaps[item.ref] = FixtureGap(None, "", False)
+            continue
+        if previous is not None:
+            known = item.ref not in uncertain
+            gaps[item.ref] = FixtureGap((item.fixture.date - previous.fixture.date).days if known else None,
+                                        kind_of(previous.competition_id), item.when in (WHEN_TODAY, WHEN_UPCOMING))
+        previous = item
+    return gaps
 
 
 # --------------------------------------------------------------------------- manager snapshot

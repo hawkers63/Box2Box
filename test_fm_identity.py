@@ -735,3 +735,68 @@ class HubSeasonTests(unittest.TestCase):
     def test_a_club_with_no_matches_has_no_steps(self):
         season = fd.hub_season(self.ds, fd.FollowedClub(77))
         self.assertEqual((season.steps, season.today), ((), None))
+
+
+# ---------------------------------------------------------------------------
+# Fixture gap (notes_11, feature 1)
+
+def gap_season(extra=(), game_date=D(2099, 9, 1)):
+    """An invented Saturday, Thursday (cup), Saturday run for club 1."""
+    return dataset([
+        fx(D(2099, 8, 8), 1, 2, 1, 0, md=1),                                  # Saturday, league
+        fx(D(2099, 8, 13), 1, 4, 2, 0, comp=102, rnd=CUP_ROUND),              # Thursday, cup
+        fx(D(2099, 8, 15), 3, 1, 0, 0, md=2),                                 # Saturday, league
+        *extra,
+    ], game_date=game_date)
+
+
+class FixtureGapTests(unittest.TestCase):
+    def gaps(self, ds=None):
+        ds = ds or gap_season()
+        schedule = fd.club_schedule(ds, HULL)
+        return schedule, fd.fixture_gaps(ds, schedule.items)
+
+    def test_the_last_saturday_is_two_days_after_the_thursday_cup_tie(self):
+        schedule, gaps = self.gaps()
+        gap = gaps[schedule.items[2].ref]
+        self.assertEqual(gap.days, 2)
+        self.assertEqual(gap.text(), "2 days since cup fixture")
+
+    def test_a_schedule_carries_its_gaps_even_when_it_is_asked_for_one_competition(self):
+        ds = gap_season()
+        league_only = fd.club_schedule(ds, HULL, competition_id=101)
+        self.assertEqual([i.competition_id for i in league_only.items], [101, 101])
+        self.assertEqual(league_only.gaps[league_only.items[1].ref].text(), "2 days since cup fixture")
+
+    def test_the_first_dated_match_has_no_gap_and_one_day_reads_one_day(self):
+        ds = gap_season(extra=[fx(D(2099, 8, 16), 1, 5, 3, 0, comp=102, rnd=CUP_ROUND)])
+        schedule, gaps = self.gaps(ds)
+        self.assertNotIn(schedule.items[0].ref, gaps)
+        self.assertEqual(gaps[schedule.items[3].ref].text(), "1 day since league fixture")
+
+    def test_a_match_still_to_come_is_described_as_scheduled(self):
+        ds = dataset([
+            fx(D(2099, 8, 8), 1, 2, 1, 0, md=1),                              # played
+            fx(D(2099, 8, 13), 1, 4, comp=102, rnd=CUP_ROUND),                # to come
+            fx(D(2099, 8, 15), 3, 1, md=2),                                   # to come
+        ], game_date=D(2099, 8, 10))
+        schedule, gaps = self.gaps(ds)
+        self.assertEqual([gaps[i.ref].text() for i in schedule.items[1:]],
+                         ["5 days after league fixture (scheduled)", "2 days after cup fixture (scheduled)"])
+
+    def test_an_undated_match_has_an_unknown_gap(self):
+        ds = gap_season(extra=[fx(None, 1, 5, comp=102, rnd=CUP_ROUND)])
+        schedule, gaps = self.gaps(ds)
+        undated = schedule.items[-1]
+        self.assertIsNone(undated.fixture.date)
+        self.assertEqual((gaps[undated.ref].days, gaps[undated.ref].text()), (None, "Gap unknown"))
+
+    def test_a_dated_match_after_an_undated_one_of_its_competition_is_unknown(self):
+        ds = dataset([
+            fx(D(2099, 8, 8), 1, 2, 1, 0, md=1),
+            fx(None, 3, 1, md=2),                                             # moved, no date yet
+            fx(D(2099, 8, 22), 1, 4, md=3),
+        ])
+        schedule, gaps = self.gaps(ds)
+        last = next(i for i in schedule.items if i.fixture.date == D(2099, 8, 22))
+        self.assertEqual(gaps[last.ref].text(), "Gap unknown")
