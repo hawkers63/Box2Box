@@ -800,3 +800,71 @@ class FixtureGapTests(unittest.TestCase):
         schedule, gaps = self.gaps(ds)
         last = next(i for i in schedule.items if i.fixture.date == D(2099, 8, 22))
         self.assertEqual(gaps[last.ref].text(), "Gap unknown")
+
+
+# ---------------------------------------------------------------------------
+# Previous meeting (notes_11, feature 2)
+
+def meeting_season(extra=(), *, league_played=True):
+    """Northbridge v Southmere: an earlier cup tie, the league match, then the return leg."""
+    return [
+        fx(D(2099, 8, 1), 1, 4, 2, 1, comp=102, rnd=CUP_ROUND),                # an earlier cup tie, 2-1
+        fx(D(2099, 8, 8), 1, 4, 1, 1 if league_played else None, md=1),        # the selected league match
+        fx(D(2099, 8, 15), 4, 1, md=2),                                        # the return leg
+        *extra,
+    ]
+
+
+class PreviousMeetingTests(unittest.TestCase):
+    def season(self, make=meeting_season, **kwargs):
+        return fd.hub_season(invented(make, **kwargs), NORTHBRIDGE)
+
+    def test_the_league_step_sees_only_the_earlier_cup_tie_and_the_return_leg_sees_the_league_meeting(self):
+        season = self.season()
+        first, second = season.steps[0].previous, season.steps[1].previous
+        self.assertEqual((first.fixture.date, first.fixture.competition_id, first.score), (D(2099, 8, 1), 102, "2-1"))
+        self.assertEqual((second.fixture.date, second.fixture.competition_id, second.score), (D(2099, 8, 8), 101, "1-1"))
+
+    def test_a_meeting_on_the_same_day_is_never_the_previous_one(self):
+        def same_day():
+            return meeting_season([fx(D(2099, 8, 8), 4, 1, 3, 0, comp=102, rnd=CUP_ROUND, ko=(12, 0))])
+        self.assertEqual(self.season(same_day).steps[0].previous.fixture.date, D(2099, 8, 1))
+
+    def test_a_meeting_not_yet_played_is_not_a_previous_meeting(self):
+        def unplayed():
+            return [fx(D(2099, 8, 1), 1, 4, comp=102, rnd=CUP_ROUND), fx(D(2099, 8, 8), 1, 4, md=1)]
+        self.assertIsNone(self.season(unplayed).steps[0].previous)
+
+    def test_the_latest_meeting_with_no_recoverable_score_says_so_rather_than_showing_a_zero(self):
+        def no_score():
+            return [fx(D(2099, 8, 1), 1, 4, 2, 1, comp=102, rnd=CUP_ROUND),
+                    fx(D(2099, 8, 8), 1, 4, played=True, comp=102, rnd=CUP_ROUND),
+                    fx(D(2099, 8, 15), 4, 1, md=1)]
+        previous = self.season(no_score).steps[0].previous
+        self.assertEqual((previous.fixture.date, previous.score), (D(2099, 8, 8), None))
+
+    def test_a_meeting_from_an_earlier_season_counts_and_the_score_is_from_the_clubs_side(self):
+        def last_year():
+            return [fx(D(2098, 12, 5), 4, 1, 3, 0, season=2025, comp=103), fx(D(2099, 8, 1), 1, 2, 1, 0, md=1),
+                    fx(D(2099, 8, 8), 1, 4, md=2)]
+        previous = self.season(last_year).steps[1].previous
+        self.assertEqual((previous.fixture.date, previous.score), (D(2098, 12, 5), "0-3"))
+
+    def test_with_no_earlier_meeting_there_is_none(self):
+        def first():
+            return [fx(D(2099, 8, 8), 1, 4, md=1), fx(D(2099, 8, 15), 2, 1, 1, 0, md=2)]
+        self.assertIsNone(self.season(first).steps[0].previous)
+
+    def test_an_opponent_the_save_cannot_resolve_has_no_previous_meeting(self):
+        def unresolved():
+            return [fx(D(2099, 8, 1), 1, 4, 2, 1, comp=102, rnd=CUP_ROUND),
+                    unresolved_away(fx(D(2099, 8, 8), 1, 4, md=1))]
+        season = self.season(unresolved)
+        self.assertIsNone(season.steps[0].previous)
+
+    def test_the_end_of_season_step_has_no_previous_meeting_row_to_show(self):
+        def finished():
+            return [fx(D(2099, 8, 8), 1, 4, 1, 0, md=1)]
+        season = fd.hub_season(invented(finished, D(2099, 9, 1)), NORTHBRIDGE)
+        self.assertEqual((season.steps[-1].title, season.steps[-1].fixture, season.steps[-1].previous),
+                         (fd.END_OF_SEASON, None, None))

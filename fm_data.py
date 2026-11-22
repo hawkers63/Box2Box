@@ -3279,6 +3279,35 @@ class HubTable:
 
 
 @dataclass(frozen=True, slots=True)
+class PreviousMeeting:
+    """The latest played match between a club and an opponent dated strictly before a chosen match. `score` is from
+    the club's side ("2-1"), or None when the match was played with no recoverable score."""
+
+    fixture: Fixture
+    score: str | None
+
+
+def previous_meeting(dataset: Dataset, fixtures: Iterable[Fixture], item: ScheduleItem) -> PreviousMeeting | None:
+    """The most recent earlier meeting of the item's two teams in `fixtures` (any competition or season). Only a
+    played match on an earlier day counts: kick-off order within a day is not relied on, so a same-day meeting is
+    left out. None when there is none, the match is undated, or the opponent cannot be resolved to a club."""
+    day = item.fixture.date
+    opponent = dataset.teams.get(item.opponent_id)
+    if day is None or opponent is None or opponent.club_uid is None:
+        return None
+    earlier = [f for f in meetings(fixtures, item.team_id, item.opponent_id)
+               if f.played and f.date is not None and f.date < day]
+    if not earlier:
+        return None
+    latest = earlier[-1]
+    if not has_score(latest):
+        return PreviousMeeting(latest, None)
+    scored, conceded = ((latest.home_goals, latest.away_goals) if latest.home_team_id == item.team_id
+                        else (latest.away_goals, latest.home_goals))
+    return PreviousMeeting(latest, f"{scored}-{conceded}")
+
+
+@dataclass(frozen=True, slots=True)
 class HubStep:
     """The Hub as it stood at one point of the followed club's season: just before one of its matches (its league
     matchday, keeping the matchday's number even when the match was moved), or after its last match. Every figure
@@ -3290,6 +3319,7 @@ class HubStep:
     fixture: ScheduleItem | None   # the match the step stands before; None at the end of the season
     table: HubTable | None         # None for a club with no league match this season
     form: FormStrip                # every competition
+    previous: PreviousMeeting | None = None   # the latest earlier meeting with the opponent; None when there is none
 
     @property
     def label(self) -> str:
@@ -3356,7 +3386,8 @@ def hub_season(dataset: Dataset, followed: FollowedClub, season: int | None = No
         title = f"Matchday {f.round_index + 1}" if league_id is not None else f"Match {n}"
         steps.append(HubStep(title, f.date, cutoff_for(f), items.get(id(f)),
                              table(played_before(league, f)),
-                             form_before(in_season, ids, f, club_labels, scope=FORM_ALL).strip))
+                             form_before(in_season, ids, f, club_labels, scope=FORM_ALL).strip,
+                             previous_meeting(dataset, mine, items[id(f)]) if id(f) in items else None))
     if dated and all(f.played for f in dated):
         last = max(f.date for f in dated)
         steps.append(HubStep(END_OF_SEASON, last, None, None,
