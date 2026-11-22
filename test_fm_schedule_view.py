@@ -15,7 +15,7 @@ import customtkinter as ctk
 import fm_data as fd
 import palette
 from fm_schedule_view import ScheduleFilter, ScheduleView, apply_filter
-from test_fm_identity import HULL, gap_season
+from test_fm_identity import NORTHBRIDGE, gap_season
 
 
 def _fixture(date=None, competition_id=1, home_id=100, away_id=200):
@@ -176,7 +176,7 @@ class ScheduleGapViewTests(unittest.TestCase):
         self.changes = []
         self.view = ScheduleView(self.root, on_gaps_changed=self.changes.append)
         self.view.pack(fill="both", expand=True)
-        self.schedule = fd.club_schedule(gap_season(), HULL)
+        self.schedule = fd.club_schedule(gap_season(), NORTHBRIDGE)
         self.view.install_schedule(self.schedule, palette.MIDNIGHT_EMERALD)
         self.root.update()
         self.addCleanup(self.root.destroy)
@@ -207,7 +207,7 @@ class ScheduleGapViewTests(unittest.TestCase):
         canvas = self.view._canvas
         boxes = {canvas.itemcget(i, "text"): canvas.bbox(i) for i in canvas.find_withtag("row_2")
                  if canvas.type(i) == "text"}
-        opponent, gap, score = boxes["A  Sheffield United"], boxes["2 days since cup fixture"], boxes["0-0"]
+        opponent, gap, score = boxes["A  Westford Town"], boxes["2 days since cup fixture"], boxes["0-0"]
         self.assertLess(opponent[2], gap[0])
         self.assertLess(gap[2], score[0])
 

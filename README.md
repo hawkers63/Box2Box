@@ -8,7 +8,7 @@
 
 A Windows desktop viewer for the fixtures, results, grids and league tables in a Football Manager 27 (or 26) save. Saves are read with [fmsave](https://rhiever.github.io/fmsave/) and are never modified.
 
-[![Release 2.10](https://img.shields.io/badge/Release-2.11-0EA5E9)](https://github.com/hawkers63/Box2Box/releases/latest)
+[![Release 2.11](https://img.shields.io/badge/Release-2.11-0EA5E9)](https://github.com/hawkers63/Box2Box/releases/latest)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)](https://www.microsoft.com/windows)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![GUI](https://img.shields.io/badge/GUI-CustomTkinter%20%2B%20tksheet-10B981)](https://customtkinter.tomschimansky.com/)
