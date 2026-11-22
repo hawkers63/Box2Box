@@ -2789,6 +2789,18 @@ class ScheduleHubWiringTests(unittest.TestCase):
         (item,) = canvas.find_withtag(tag)
         return canvas.itemcget(item, "fill")
 
+    def test_the_fixture_gap_choice_is_remembered_in_the_settings(self):
+        app = self.app
+        self.assertFalse(app._schedule_view._show_gaps)                      # off by default
+        app._schedule_view.set_show_gaps(True)
+        self.assertIs(app.settings.get(fm_review.SCHEDULE_GAPS), True)
+        saved = json.loads(fm_review.SETTINGS_PATH.read_text(encoding="utf-8"))
+        self.assertIs(saved[fm_review.SCHEDULE_GAPS], True)
+        app.settings[fm_review.SCHEDULE_GAPS] = True
+        again = fm_review.FMReviewApp()
+        self.addCleanup(again.destroy)
+        self.assertTrue(again._schedule_view._show_gaps)
+
     def test_each_schedule_row_shows_its_opponents_roundel_or_the_neutral_one(self):
         app = self.app
         self.follow_invented()

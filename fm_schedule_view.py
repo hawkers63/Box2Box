@@ -97,7 +97,7 @@ if _CTK_AVAILABLE:
         PAGE_SIZE = 50          # max rows rendered at once; neighbouring pages pre-fetched lazily
 
         def __init__(self, master, *, on_inspect=None, on_right_click=None,
-                     compact: bool = False, **kw):
+                     compact: bool = False, show_gaps: bool = False, on_gaps_changed=None, **kw):
             super().__init__(master, **kw)
             self._schedule: fd.Schedule | None = None
             self._filter = ScheduleFilter()
@@ -108,6 +108,8 @@ if _CTK_AVAILABLE:
             self._on_inspect = on_inspect           # (item) → None
             self._on_right_click = on_right_click   # (event, item) → None
             self._selected_index: int | None = None
+            self._show_gaps = show_gaps
+            self._on_gaps_changed = on_gaps_changed     # (bool) ÔåÆ None, so the window can remember the choice
             self._build_ui()
 
         def _build_ui(self) -> None:
@@ -123,6 +125,11 @@ if _CTK_AVAILABLE:
                                             command=self._reset_filter)
             self._reset_btn.pack(side="right", padx=4)
             self._reset_btn.pack_forget()   # hidden when no filter is active
+            self._gap_box = ctk.CTkCheckBox(bar, text="Fixture gap", command=self._gap_box_changed,
+                                            checkbox_width=18, checkbox_height=18)
+            if self._show_gaps:
+                self._gap_box.select()
+            self._gap_box.pack(side="right", padx=8)
 
             # -- canvas + scrollbar
             frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -154,6 +161,20 @@ if _CTK_AVAILABLE:
             self._roundels = roundels or {}
             self._filter = ScheduleFilter()
             self._rebuild()
+
+        def set_show_gaps(self, show: bool) -> None:
+            """Show or hide the interval since the club's previous fixture on each dated row."""
+            if show:
+                self._gap_box.select()
+            else:
+                self._gap_box.deselect()
+            self._gap_box_changed()
+
+        def _gap_box_changed(self) -> None:
+            self._show_gaps = bool(self._gap_box.get())
+            if self._on_gaps_changed:
+                self._on_gaps_changed(self._show_gaps)
+            self._repaint()
 
         def clear(self) -> None:
             self._schedule = None
@@ -259,6 +280,10 @@ if _CTK_AVAILABLE:
                                          font=("Segoe UI", 9), tags=f"row_{i}")
                 # score / status
                 score_x = w - 80
+                gap = self._schedule.gaps.get(item.ref) if self._show_gaps and self._schedule else None
+                if gap is not None:      # right-aligned, ending before the score pill, so the two never meet
+                    self._canvas.create_text(score_x - 14, y0 + h // 2, anchor="e", text=gap.text(),
+                                             fill=theme.muted, font=("Segoe UI", 9), tags=f"row_{i}")
                 if item.played:
                     score_text = item.score
                     result_pair = theme.colours.get(item.outcome or "?", (None, theme.table[1]))

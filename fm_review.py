@@ -95,6 +95,7 @@ ERROR_LOG = APP_DIR / "box2box_errors.log"
 ARCHIVE_PATH = APP_DIR / "box2box_archive.sqlite"
 BOOKMARKS = "yearbook_bookmarks"          # the settings key for the reading window's bookmarks
 READER_MODE = "yearbook_reader_mode"      # single pages or reader spreads        # every opened save is banked here (archive.py)
+SCHEDULE_GAPS = "schedule_fixture_gap"       # the settings key for the Schedule's Fixture gap option
 LICENCE_PATH = BUNDLE_DIR / "LICENSE"
 ICON_PATH = BUNDLE_DIR / "icon" / "football-64-sky-blue.ico"
 APP_ID = "hawkers63.Box2Box"         # the taskbar's name for Box2Box, so it shows its own icon
@@ -842,7 +843,9 @@ class FMReviewApp(_Root):
         self.bracket_view = bracket.BracketView(content, px=self.px, font=(FONT, 10), theme=self.theme)
         self.bracket_view.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
         self.bracket_view.grid_remove()                                  # the Analysis view's Bracket panel shows it
-        self._schedule_view = fsv.ScheduleView(content, fg_color="transparent")
+        self._schedule_view = fsv.ScheduleView(content, fg_color="transparent",
+                                               show_gaps=self.settings.get(SCHEDULE_GAPS) is True,
+                                               on_gaps_changed=self._remember_schedule_gaps)
         self._schedule_view.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
         self._schedule_view.grid_remove()
         self._manager_hub_view = fmh.ManagerHubView(content, fg_color="transparent")
@@ -1996,6 +1999,10 @@ class FMReviewApp(_Root):
         self.yearbook_reader = YearbookReader(self, volume, lambda v: self.save_reader_volume(v), self._bookmark_page,
                                               start, self.settings.get(READER_MODE), self._remember_reader_mode)
         apply_window_icon(self.yearbook_reader)
+
+    def _remember_schedule_gaps(self, show: bool) -> None:
+        self.settings[SCHEDULE_GAPS] = show
+        self._write_settings()
 
     def _remember_reader_mode(self, mode: str) -> None:
         self.settings[READER_MODE] = mode

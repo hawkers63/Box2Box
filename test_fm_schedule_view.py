@@ -10,8 +10,12 @@ import unittest
 from dataclasses import replace
 from unittest.mock import MagicMock
 
+import customtkinter as ctk
+
 import fm_data as fd
-from fm_schedule_view import ScheduleFilter, apply_filter
+import palette
+from fm_schedule_view import ScheduleFilter, ScheduleView, apply_filter
+from test_fm_identity import HULL, gap_season
 
 
 def _fixture(date=None, competition_id=1, home_id=100, away_id=200):
@@ -161,6 +165,51 @@ class ApplyFilterTests(unittest.TestCase):
     def test_result_tuple(self):
         result = apply_filter(self.items, ScheduleFilter())
         self.assertIsInstance(result, tuple)
+
+
+class ScheduleGapViewTests(unittest.TestCase):
+    """The Fixture gap option: off by default, drawn from the whole season whatever the filter hides."""
+
+    def setUp(self):
+        self.root = ctk.CTk()
+        self.root.geometry("1410x600+-4000+0")
+        self.changes = []
+        self.view = ScheduleView(self.root, on_gaps_changed=self.changes.append)
+        self.view.pack(fill="both", expand=True)
+        self.schedule = fd.club_schedule(gap_season(), HULL)
+        self.view.install_schedule(self.schedule, palette.MIDNIGHT_EMERALD)
+        self.root.update()
+        self.addCleanup(self.root.destroy)
+
+    def texts(self, row):
+        canvas = self.view._canvas
+        return [canvas.itemcget(i, "text") for i in canvas.find_withtag(f"row_{row}") if canvas.type(i) == "text"]
+
+    def test_no_gap_is_shown_until_the_option_is_turned_on(self):
+        self.assertFalse(any("since" in t for row in range(3) for t in self.texts(row)))
+
+    def test_turning_it_on_shows_the_gap_on_each_row_and_tells_the_window(self):
+        self.view.set_show_gaps(True)
+        self.root.update()
+        self.assertIn("2 days since cup fixture", self.texts(2))
+        self.assertEqual(self.changes, [True])
+
+    def test_a_league_only_filter_still_counts_the_midweek_cup_tie(self):
+        self.view.set_show_gaps(True)
+        self.view.apply_competition_filter(101)
+        self.root.update()
+        self.assertEqual(len(self.view._filtered), 2)
+        self.assertIn("2 days since cup fixture", self.texts(1))
+
+    def test_the_opponent_the_gap_and_the_score_do_not_overlap_at_the_minimum_width(self):
+        self.view.set_show_gaps(True)
+        self.root.update()
+        canvas = self.view._canvas
+        boxes = {canvas.itemcget(i, "text"): canvas.bbox(i) for i in canvas.find_withtag("row_2")
+                 if canvas.type(i) == "text"}
+        opponent, gap, score = boxes["A  Sheffield United"], boxes["2 days since cup fixture"], boxes["0-0"]
+        self.assertLess(opponent[2], gap[0])
+        self.assertLess(gap[2], score[0])
 
 
 if __name__ == "__main__":
