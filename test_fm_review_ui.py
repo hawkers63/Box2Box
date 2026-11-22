@@ -2597,6 +2597,38 @@ class ScheduleHubWiringTests(unittest.TestCase):
         app.set_focus(team(1))
         self.assertTrue(self.wait_for(lambda: app._schedule_view._schedule is not None), "schedule never arrived")
 
+    def _start_reading(self):
+        """Leave the window as it is while a save's expected goals are still being read."""
+        app = self.app
+        app._reading_xg = True
+        app.loading_since = time.monotonic()
+        app.open_button.configure(state="disabled")
+        app.reopen_button.configure(state="disabled")
+
+    def test_a_schedule_finishing_mid_load_keeps_the_controls_locked(self):
+        app = self.app
+        self.follow_hull()
+        snap = fd.manager_snapshot(app.dataset, app._followed_uid)
+        self._start_reading()
+        app.handle_event(("schedule_ready", (app._schedule_serial, app._schedule_view._schedule, snap, {}, None)))
+        self.assertEqual(app.open_button.cget("state"), "disabled")
+        self.assertEqual(app.reopen_button.cget("state"), "disabled")
+        self.assertTrue(app._reading_xg)
+        self.assertIsNotNone(app.loading_since)
+        app.handle_event(("xg", app.dataset))            # the last outstanding work
+        self.assertEqual(app.open_button.cget("state"), "normal")
+        self.assertFalse(app._reading_xg)
+
+    def test_a_schedule_from_an_older_selection_is_ignored_mid_load(self):
+        app = self.app
+        self.follow_hull()
+        current = app._schedule_view._schedule
+        snap = fd.manager_snapshot(app.dataset, app._followed_uid)
+        self._start_reading()
+        app.handle_event(("schedule_ready", (app._schedule_serial - 1, None, snap, {}, None)))
+        self.assertIs(app._schedule_view._schedule, current)
+        self.assertEqual(app.open_button.cget("state"), "disabled")
+
     def test_schedule_and_hub_appear_in_views(self):
         self.assertIn(fm_review.SCHEDULE, fm_review.VIEWS)
         self.assertIn(fm_review.MANAGER_HUB, fm_review.VIEWS)

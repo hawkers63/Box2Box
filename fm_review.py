@@ -1196,6 +1196,13 @@ class FMReviewApp(_Root):
                 self._roundel_book = book
                 self._retheme_club_views()
             return
+        if kind == "schedule_ready":
+            # Background work for the open save, not the end of a load: it never touches the loading
+            # controls, and a result from an older save or selection is dropped.
+            serial, sched, snap, book, season = payload
+            if serial == self._schedule_serial:
+                self.install_schedule_views(sched, snap, book, season)
+            return
         if kind == "yearbook_moved_on":
             self._exporting = False
             self.export_button.configure(state="normal" if self.dataset else "disabled", text=EXPORT_LABEL)
@@ -1228,11 +1235,6 @@ class FMReviewApp(_Root):
         self.progress.grid_remove()
         self.open_button.configure(state="normal")
         self.reopen_button.configure(state="normal")
-        if kind == "schedule_ready":
-            serial, sched, snap, book, season = payload
-            if serial == self._schedule_serial:
-                self.install_schedule_views(sched, snap, book, season)
-            return
         if kind == "xg":
             self.install_expected_goals(payload)
             self._start_xg_banking(payload)
