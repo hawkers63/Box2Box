@@ -2703,6 +2703,74 @@ def next_match(fixtures: Iterable[Fixture], team_id: int) -> Fixture | None:
     return min(coming, key=_when) if coming else None
 
 
+@dataclass(frozen=True, slots=True)
+class HistoryRow:
+    """One archived season of a club's league football. `position` is None when the table cannot be worked
+    out; `so_far` is a season the archive holds unfinished; `incomplete` means a played match has no score,
+    so the record is a minimum."""
+
+    season: int
+    season_label: str
+    competition_id: int
+    league: str
+    position: int | None
+    size: int | None
+    played: int
+    won: int
+    drawn: int
+    lost: int
+    points: int
+    so_far: bool
+    incomplete: bool
+
+
+def club_history(archive_dataset: Dataset, club_uid: int, names: Mapping[int, str],
+                 exclude_season: int | None) -> tuple[HistoryRow, ...]:
+    """A club's league finish in each season of an archive dataset, newest first, leaving out `exclude_season`.
+    The league of a season is the league-category competition where the club's senior side played most; cups,
+    friendlies, youth and reserve competitions never count, and a season with no such league is left out."""
+    played_in: dict[tuple[int, int], int] = {}
+    senior_team: dict[tuple[int, int], int] = {}
+    for comp in archive_dataset.competitions:
+        if underlying_category(comp, archive_dataset) != COMP_CAT_LEAGUE:
+            continue
+        for f in archive_dataset.fixtures_for(comp.id):
+            season = season_key(f)
+            if season is None or season == exclude_season:
+                continue
+            for uid, slot, team_id in ((f.home_club_uid, f.home_team_slot, f.home_team_id),
+                                       (f.away_club_uid, f.away_team_slot, f.away_team_id)):
+                if uid == club_uid and slot == 0:
+                    senior_team[(comp.id, season)] = team_id
+                    if f.played:
+                        played_in[(comp.id, season)] = played_in.get((comp.id, season), 0) + 1
+    chosen: dict[int, int] = {}
+    for (comp_id, season), count in played_in.items():
+        if season not in chosen or (count, -comp_id) > (played_in[(chosen[season], season)], -chosen[season]):
+            chosen[season] = comp_id
+    rows = []
+    for season in sorted(chosen, reverse=True):
+        comp_id = chosen[season]
+        team_id = senior_team[(comp_id, season)]
+        fixtures = season_fixtures(archive_dataset, comp_id, season)
+        totals = team_totals(team_steps(fixtures, team_id, {}))
+        position = size = None
+        try:
+            table = standings(archive_dataset, comp_id, season, fixtures, team_labels(fixtures))
+            for _, table_rows in table.groups:
+                if any(r.team_id == team_id for r in table_rows) and (size is None or len(table_rows) > size):
+                    position = next(r.position for r in table_rows if r.team_id == team_id)
+                    size = len(table_rows)
+        except Exception:                      # a table that cannot be built is unknown, never guessed
+            position = size = None
+        rows.append(HistoryRow(
+            season=season, season_label=season_label(season, fixtures), competition_id=comp_id,
+            league=competition_title(archive_dataset.by_id[comp_id], names), position=position, size=size,
+            played=totals.played, won=totals.won, drawn=totals.drawn, lost=totals.lost, points=totals.points,
+            so_far=any(not f.played for f in fixtures), incomplete=totals.incomplete))
+    return tuple(rows)
+
+
 def xg_for(dataset: Dataset, f: Fixture) -> ExpectedGoals | None:
     """A match's expected goals, or None when the save holds no usable report for it."""
     return dataset.expected_goals.get(fixture_key(f))

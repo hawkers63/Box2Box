@@ -1706,3 +1706,79 @@ class UnderlyingCategoryTests(unittest.TestCase):
         kinds = {c.id: fd.underlying_category(c, ds) for c in ds.competitions}
         self.assertEqual(kinds, {101: fd.COMP_CAT_LEAGUE, 151: fd.COMP_CAT_CUP})
         self.assertEqual(fd.competition_category(ds.by_id[101], ds), fd.COMP_CAT_YOURS)     # the hub's own view
+
+
+def history_league(season, comp=101, *, played=True, home_slot=0):
+    """Four clubs, one meeting each way for club 1 only: club 1 finishes third of four, with a win and two defeats."""
+    year = season
+    results = [(1, 4, 1, 0), (2, 1, 1, 0), (3, 1, 1, 0), (2, 3, 0, 0), (2, 4, 2, 0), (3, 4, 1, 0)]
+    out = []
+    for i, (h, a, hg, ag) in enumerate(results):
+        scores = (hg, ag) if played else (None, None)
+        out.append(fx(D(year, 8, 1) + dt.timedelta(weeks=i), h, a, *scores, comp=comp, season=season, md=i + 1,
+                      home_slot=home_slot if h == 1 else 0, away_slot=home_slot if a == 1 else 0))
+    return out
+
+
+class ClubHistoryTests(unittest.TestCase):
+    NAMES = {12: "Invented League", 13: "Invented Second Tier"}
+
+    @staticmethod
+    def build(fixtures, comps=((101, 12),)):
+        return fd.build_dataset(info(), fixtures, clubs=[club(n) for n in range(1, 6)],
+                                competitions=[NS(id=c, database_id=d) for c, d in comps])
+
+    def history(self, fixtures, exclude=None, comps=((101, 12),)):
+        return fd.club_history(self.build(fixtures, comps), 1, self.NAMES, exclude)
+
+    def test_three_seasons_give_three_rows_newest_first_with_the_league_place_and_record(self):
+        rows = self.history(history_league(2097) + history_league(2098) + history_league(2099))
+        self.assertEqual([r.season for r in rows], [2099, 2098, 2097])
+        top = rows[0]
+        self.assertEqual((top.league, top.position, top.size, top.played, top.won, top.drawn, top.lost, top.points),
+                         ("Invented League", 3, 4, 3, 1, 0, 2, 3))
+        self.assertEqual(top.season_label, "2099")
+        self.assertFalse(top.so_far)
+
+    def test_the_excluded_season_is_not_listed(self):
+        rows = self.history(history_league(2098) + history_league(2099), exclude=2099)
+        self.assertEqual([r.season for r in rows], [2098])
+
+    def test_a_cup_is_ignored_and_a_season_of_only_cup_matches_is_left_out(self):
+        cup = [fx(D(2098, 11, 1) + dt.timedelta(weeks=i), 1, 2, 1, 0, comp=151, season=2098,
+                  rnd=CodedValue(CompetitionRound.FOURTH_ROUND, 8)) for i in range(5)]
+        only_cup = [dataclasses.replace(f, season_start_year=2097, date=f.date.replace(year=2097)) for f in cup]
+        rows = self.history(history_league(2098) + cup + only_cup, comps=((101, 12), (151, 15)))
+        self.assertEqual([(r.season, r.league) for r in rows], [(2098, "Invented League")])
+
+    def test_a_promotion_names_each_seasons_own_league(self):
+        rows = self.history(history_league(2098, comp=102) + history_league(2099, comp=101),
+                            comps=((101, 12), (102, 13)))
+        self.assertEqual([(r.season, r.league) for r in rows],
+                         [(2099, "Invented League"), (2098, "Invented Second Tier")])
+
+    def test_an_unnamed_league_uses_the_competition_title_fallback(self):
+        ds = fd.build_dataset(info(), history_league(2099), clubs=[club(1)], competitions=[NS(id=101, database_id=None)])
+        self.assertEqual(fd.club_history(ds, 1, {}, None)[0].league, "Competition 101")
+
+    def test_a_season_with_fixtures_still_to_play_is_marked_so_far(self):
+        unfinished = history_league(2099) + [fx(D(2099, 12, 1), 4, 1, comp=101, season=2099, md=7)]
+        row = self.history(unfinished)[0]
+        self.assertTrue(row.so_far)
+        self.assertEqual((row.position, row.played), (3, 3))
+
+    def test_a_table_that_cannot_be_built_gives_no_position_not_zero(self):
+        with mock.patch.object(fd, "standings", side_effect=ValueError("no table")):
+            row = self.history(history_league(2099))[0]
+        self.assertIsNone(row.position)
+        self.assertEqual((row.played, row.points), (3, 3))
+
+    def test_a_played_match_with_no_score_marks_the_row_incomplete(self):
+        fixtures = history_league(2099)
+        fixtures[0] = dataclasses.replace(fixtures[0], home_goals=None, away_goals=None)
+        self.assertTrue(self.history(fixtures)[0].incomplete)
+
+    def test_reserve_fixtures_never_count_towards_the_senior_club(self):
+        reserve = history_league(2098, home_slot=1)
+        self.assertEqual(self.history(reserve + history_league(2099)), self.history(history_league(2099)))
+        self.assertEqual([r.season for r in self.history(reserve)], [])
