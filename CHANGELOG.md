@@ -1,8 +1,8 @@
 # Changelog
 
-**Release:** 2.10  
+**Release:** 2.11  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 2.10), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.11), launched with `Box2Box.bat`
 
 All notable changes to this project will be documented in this file.
 
@@ -10,6 +10,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [2.11] - 2026-11-22
+
+The Schedule shows how close together a club's fixtures are, and the Hub puts the next opponent in context.
+
+### Added
+
+- **Fixture gap (Schedule).** A "Fixture gap" option, off by default and remembered between sessions, shows on each dated row the calendar days since the club's previous dated fixture in any competition, for example "2 days since cup fixture". It is worked out from the club's whole season before any filter, so a league-only filter still counts a midweek cup tie. The first dated fixture has no gap; an undated fixture, or a fixture whose predecessor may be an undated one, reads "Gap unknown"; a fixture still to come reads "2 days after cup fixture (scheduled)".
+- **Previous meeting (Hub).** When the stepper is on a matchday, a "Previous meeting" row beneath the upcoming opponent gives the date, competition and score of the latest earlier meeting of the two teams in the open save, across competitions and seasons. Only played matches dated strictly before the selected match count, so a meeting on the same day is left out on purpose. A meeting with no recoverable score reads "Score unavailable"; none, or an opponent the save cannot resolve, reads "No earlier meeting found in this save".
 
 ## [2.10] - 2026-11-22
 
