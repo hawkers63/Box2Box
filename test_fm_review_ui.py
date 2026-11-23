@@ -689,6 +689,45 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(shown.call_args.args[1], "It is open in Excel.")
         self.assertEqual(app.export_button.cget("state"), "normal")
 
+    def whole_save_entry(self) -> int:
+        menu = self.app.export_menu
+        return next(i for i in range(menu.index("end") + 1)
+                    if menu.type(i) == "command" and menu.entrycget(i, "label") == "Whole save workbook (.xlsx)")
+
+    def test_the_whole_save_workbook_follows_csv_in_the_export_menu(self):
+        app = self.app
+        menu = app.export_menu
+        index = self.whole_save_entry()
+        self.assertEqual(menu.entrycget(index - 1, "label"), "CSV files (.csv)")
+        app._refresh_export_menu()
+        self.assertEqual(str(menu.entrycget(index, "state")), "disabled")         # no save yet
+        app.install_dataset(dataset())
+        app.comp_id = None                                                        # no competition chosen
+        app._refresh_export_menu()
+        self.assertEqual(str(menu.entrycget(index, "state")), "normal")
+        app._exporting = True
+        app._refresh_export_menu()
+        self.assertEqual(str(menu.entrycget(index, "state")), "disabled")
+        app._exporting = False
+
+    def test_the_whole_save_workbook_is_written_in_the_background_and_offered(self):
+        app = self.app
+        app.install_dataset(dataset())
+        folder = Path(self.folder.name) / "Box2Box"
+        with mock.patch.object(fm_review, "export_folder", return_value=folder), \
+                mock.patch.object(fm_review.messagebox, "askyesno", return_value=False) as offered:
+            app.export_whole_save()
+            self.assertEqual(app.export_button.cget("state"), "disabled")
+            self.assertEqual(app.export_button.cget("text"), "Exporting…")
+            app.export_whole_save()                # refused: one export at a time
+            app.export(fm_review.fx.HTML)
+            self.wait_for_export()
+        self.assertEqual(sorted(p.name for p in folder.iterdir()), ["x whole save (2026-09-01).xlsx"])
+        self.assertEqual(offered.call_count, 1)
+        self.assertIn("Open it now?", offered.call_args.args[1])
+        self.assertIn("Saved the whole-save workbook", app.detail_label.cget("text"))
+        self.assertEqual(app.export_button.cget("state"), "normal")
+
     def test_failed_import_keeps_the_save_already_open(self):
         app = self.app
         first = dataset()
@@ -1147,6 +1186,19 @@ class WindowTests(unittest.TestCase):
         with mock.patch.object(app, "export") as export:
             pal.run_selected()
         export.assert_called_once_with(fm_review.fx.EXCEL)
+
+    def test_the_whole_save_action_exports_the_whole_save(self):
+        app, pal = self.palette_app()
+        app.open_palette()
+        pal.set_query("export the whole save as a workbook")
+        with mock.patch.object(app, "export_whole_save") as export, \
+                mock.patch.object(fm_review, "export_folder", return_value=Path(self.folder.name)):  # never the real one
+            pal.run_selected()
+        export.assert_called_once_with()
+        app._exporting = True
+        titles = [item.title for item in app._palette_items()]
+        app._exporting = False
+        self.assertNotIn("Export the whole save as a workbook", titles)
 
     def test_a_theme_is_chosen_from_the_palette(self):
         app, pal = self.palette_app()

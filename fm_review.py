@@ -107,6 +107,7 @@ REPOSITORY = "https://github.com/hawkers63/Box2Box"
 
 ALL_TEAMS = "All teams"
 EXPORT_LABEL = "Export ▾"
+WHOLE_SAVE_LABEL = "Whole save workbook (.xlsx)"
 COUNTRY_NAMES = "country_names"       # settings key: {nation database id as text: the user's name for it}
 HUB = "Competitions"
 ANALYSIS = "Analysis"
@@ -770,10 +771,11 @@ class FMReviewApp(_Root):
         self.hub_button = role("quiet", ctk.CTkButton(header, text=MANAGER_HUB, width=60,
                                                       command=lambda: self.set_view(MANAGER_HUB)))
         self.hub_button.grid(row=0, column=5, rowspan=2, padx=(8, 0), sticky="e")
-        self.export_menu = tk.Menu(self, tearoff=False)
+        self.export_menu = tk.Menu(self, tearoff=False, postcommand=self._refresh_export_menu)
         for kind, label in ((fx.EXCEL, "Excel workbook (.xlsx)"), (fx.HTML, "Web page (.html)"),
                             (fx.CSV, "CSV files (.csv)")):
             self.export_menu.add_command(label=label, command=lambda k=kind: self.export(k))
+        self.export_menu.add_command(label=WHOLE_SAVE_LABEL, command=self.export_whole_save)
         self.post_menu = tk.Menu(self.export_menu, tearoff=False, postcommand=self._refresh_post_menu)
         for kind, label in (("table", "Table"), ("team", "My club's results"), ("recent", "Recent results")):
             self.post_menu.add_command(label=label, command=lambda k=kind: self.copy_for_post(k))
@@ -2018,9 +2020,32 @@ class FMReviewApp(_Root):
         self.detail_label.configure(text=f"Exporting the {fx.KINDS[kind]}…")
         threading.Thread(target=self._export_worker, args=(kind, request, export_folder()), daemon=True).start()
 
-    def _export_worker(self, kind: str, request: fx.ExportRequest, folder: Path) -> None:
+    def _refresh_export_menu(self) -> None:
+        """The whole-save workbook needs only a save, not a competition, and waits for a running export."""
+        menu = self.export_menu
+        index = next(i for i in range(menu.index("end") + 1)
+                     if menu.type(i) == "command" and menu.entrycget(i, "label") == WHOLE_SAVE_LABEL)
+        menu.entryconfigure(index, state="normal" if self.dataset and not self._exporting else "disabled")
+
+    def export_whole_save(self) -> None:
+        """Export every competition with a played match to one workbook, on a background thread."""
+        if not self.dataset or self._exporting:
+            return
+        request = fx.SaveExportRequest(self.dataset, names=dict(self.names), focus=self.focus,
+                                       group_by=self.group_by, theme=self.view_theme)
+        self._exporting = True
+        self.export_button.configure(state="disabled", text="Exporting…")
+        self.detail_label.configure(text=f"Exporting the {fx.KINDS[fx.WHOLE_SAVE]}…")
+        threading.Thread(target=self._export_worker, args=(fx.WHOLE_SAVE, request, export_folder()),
+                         daemon=True).start()
+
+    def _export_worker(self, kind: str, request, folder: Path) -> None:
         try:
-            self.events.put(("exported", (kind, fx.export(kind, request, folder))))
+            if kind == fx.WHOLE_SAVE:
+                path = fx.export_save(request, folder)
+            else:
+                path = fx.export(kind, request, folder)
+            self.events.put(("exported", (kind, path)))
         except fx.ExportFailed as exc:
             self.events.put(("export_failed", str(exc)))
         except Exception as exc:  # report anything unexpected rather than dying silently
@@ -3021,6 +3046,9 @@ class FMReviewApp(_Root):
             for kind, label in (("table", "Table"), ("team", "My club's results"), ("recent", "Recent results")):
                 if self._post_applies(kind):
                     add(cp.ACTION, f"Copy for a post: {label}", lambda k=kind: self.copy_for_post(k))
+        if ds is not None and not self._exporting:
+            add(cp.ACTION, "Export the whole save as a workbook", lambda: self.export_whole_save(),
+                "every competition with a played match")
         if not self._exporting:
             seasons = self._banked_seasons()
             if seasons:
