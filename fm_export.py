@@ -3,6 +3,8 @@
 """Exports for Box2Box: one competition and season to an Excel workbook, a web page or CSV files.
 
 The user chose one export per competition and season, saved in Documents\\Box2Box (14 Nov 2026).
+Version 2.15 adds one Excel workbook for the whole save (export_save): every competition with a played
+match at the season the app opens it at, after a Contents and a Records sheet, with an About sheet last.
 Every export says where its data came from and how complete it is: the save, its in-game date,
 the coverage counts, whether the zones are the game's or estimated, and any reader warnings.
 
@@ -28,6 +30,7 @@ from fmsave import Fixture
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.hyperlink import Hyperlink
 from openpyxl.worksheet.worksheet import Worksheet
 
 import fm_data as fd
@@ -231,6 +234,7 @@ class SaveSnapshot:
     left_out: int                    # played competitions over the cap
     details: tuple[tuple[str, str], ...]
     warnings: tuple[str, ...]
+    theme: palette.Theme = palette.MIDNIGHT_EMERALD
 
 
 def save_snapshot(request: SaveExportRequest) -> SaveSnapshot:
@@ -290,6 +294,7 @@ def save_snapshot(request: SaveExportRequest) -> SaveSnapshot:
         left_out=len(chosen) - len(entries),
         details=tuple(details),
         warnings=tuple(info.warnings),
+        theme=request.theme,
     )
 
 
@@ -331,6 +336,20 @@ def export(kind: str, request: ExportRequest, folder: Path) -> Path:
         _make_folder(target)
         for name, rows in csv_tables(snap).items():
             _write_safely(target / f"{name}.csv", lambda temporary, rows=rows: _write_csv(temporary, rows))
+    return target
+
+
+def export_save(request: SaveExportRequest, folder: Path) -> Path:
+    """Write the whole-save workbook into folder and return its path.
+
+    Raises:
+        ExportFailed: The workbook could not be written, with a message for the user.
+    """
+    snap = save_snapshot(request)
+    _make_folder(folder)
+    target = folder / f"{snap.stem}.xlsx"
+    book = save_workbook(snap)
+    _write_safely(target, lambda temporary: book.save(temporary))
     return target
 
 
@@ -558,6 +577,112 @@ def workbook(snap: Snapshot) -> Workbook:
         _xl_results(book.create_sheet(name), snap, snap.focus_results, team=True)
     _xl_about(book.create_sheet("About"), snap)
     return book
+
+
+CONTENTS_HEADERS = ("Competition", "Category", "Season", "Teams", "Played of fixtures", "Scored", "Sheet")
+RECORDS_HEADERS = ("Record", "Holders", "Value")
+INCOMPLETE_NOTE = ("* = incomplete: the save has no score for some played matches, so this record could "
+                   "change once they are known.")
+
+
+def save_workbook(snap: SaveSnapshot) -> Workbook:
+    """Contents, Records, one sheet per competition (its table, or its results when it has no table), About."""
+    book = Workbook()
+    _xl_contents(book.active, snap)
+    _xl_records(book.create_sheet("Records"), snap)
+    for entry in snap.entries:
+        sheet = book.create_sheet(entry.sheet)
+        if any(rows for _, rows in entry.snapshot.standings.groups):
+            _xl_table(sheet, entry.snapshot)
+        else:
+            _xl_results(sheet, entry.snapshot, entry.snapshot.results, team=False)
+    _xl_save_about(book.create_sheet("About"), snap)
+    return book
+
+
+def _save_top(sheet: Worksheet, snap: SaveSnapshot, heading: str, notes: Iterable[str] = ()) -> int:
+    """Title, source and notes at the top of a whole-save sheet. Returns the next free row after a gap."""
+    sheet.cell(row=1, column=1, value=f"Whole save: {heading}").font = _font(bold=True, size=14)
+    sheet.cell(row=2, column=1, value=snap.source_line).font = _font(NOTE_GREY)
+    row = 3
+    for note in notes:
+        if note:
+            sheet.cell(row=row, column=1, value=note).font = _font(NOTE_GREY, italic=True)
+            row += 1
+    return row + 1
+
+
+def _xl_contents(sheet: Worksheet, snap: SaveSnapshot) -> None:
+    sheet.title = "Contents"
+    row = _save_top(sheet, snap, "contents", ["Each competition is shown at the season the app opens it at. "
+                                              "Click a sheet name to go to it."])
+    header = row
+    _header_row(sheet, row, CONTENTS_HEADERS, left=[1, 2, 7])
+    for entry in snap.entries:
+        row += 1
+        s = entry.snapshot
+        values = (s.title, entry.category, s.season_label, s.team_count,
+                  f"{s.coverage.played} of {s.coverage.fixtures}", s.coverage.scored, entry.sheet)
+        for column, value in enumerate(values, start=1):
+            cell = sheet.cell(row=row, column=column, value=value)
+            if column not in (1, 2, 7):
+                cell.alignment = CENTRE
+        link = sheet.cell(row=row, column=7)
+        link.hyperlink = Hyperlink(ref=link.coordinate, location="'{}'!A1".format(entry.sheet.replace("'", "''")))
+        link.font = Font(color="FF0563C1", underline="single")
+    if snap.left_out:
+        sheet.cell(row=row + 2, column=1, value=f"{_count(snap.left_out, 'more competition')} left out: "
+                                                "export them one at a time.").font = _font(NOTE_GREY, italic=True)
+    titles = [e.snapshot.title for e in snap.entries]
+    _widths(sheet, [_text_width(titles, 18), 18, 10, 7, 18, 8, _text_width([e.sheet for e in snap.entries], 12)])
+    sheet.freeze_panes = sheet.cell(row=header + 1, column=1)
+
+
+def _xl_records(sheet: Worksheet, snap: SaveSnapshot) -> None:
+    incomplete = any(r.incomplete for e in snap.entries for r in e.records)
+    row = _save_top(sheet, snap, "records", [INCOMPLETE_NOTE if incomplete else ""])
+    header = row
+    _header_row(sheet, row, RECORDS_HEADERS, left=[1, 2])
+    holders = []
+    for entry in snap.entries:
+        if not entry.records:
+            continue
+        row += 1
+        _heading_row(sheet, row, f"{entry.snapshot.title} {entry.snapshot.season_label}", len(RECORDS_HEADERS),
+                     snap.theme.heading)
+        for record in entry.records:
+            row += 1
+            teams = ", ".join(record.teams)
+            holders.append(teams)
+            sheet.cell(row=row, column=1, value=record.title)
+            sheet.cell(row=row, column=2, value=teams)
+            sheet.cell(row=row, column=3, value=record.value + ("*" if record.incomplete else "")).alignment = CENTRE
+    if row == header:                            # nothing has been played to a record yet
+        sheet.cell(row=row + 1, column=1, value="No records yet.").font = _font(NOTE_GREY, italic=True)
+    _widths(sheet, [28, _text_width(holders, 24, 80), 10])
+
+
+def _xl_save_about(sheet: Worksheet, snap: SaveSnapshot) -> None:
+    """Worded like the one-competition About sheet."""
+    sheet.cell(row=1, column=1, value="Whole save: about this export").font = _font(bold=True, size=14)
+    wrap = Alignment(wrap_text=True, vertical="top")
+    row = 3
+    for label, value in snap.details:
+        sheet.cell(row=row, column=1, value=label).font = _font(bold=True)
+        sheet.cell(row=row, column=1).alignment = Alignment(vertical="top")
+        sheet.cell(row=row, column=2, value=value).alignment = wrap
+        row += 1
+    if snap.warnings:
+        row += 1
+        sheet.cell(row=row, column=1, value="Reader warnings").font = _font(bold=True)
+        for warning in snap.warnings:
+            sheet.cell(row=row, column=2, value=warning).alignment = wrap
+            row += 1
+    _widths(sheet, [18, 110])
+
+
+def _count(number: int, noun: str) -> str:
+    return f"{number} {noun}" + ("" if number == 1 else "s")
 
 
 @lru_cache(maxsize=None)

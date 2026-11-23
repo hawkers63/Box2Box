@@ -433,3 +433,115 @@ class WholeSaveShapingTests(unittest.TestCase):
 
     def test_the_file_name_is_the_save_and_its_in_game_date(self):
         self.assertEqual(fx.save_snapshot(save_request()).stem, "x whole save (2026-09-01)")
+
+
+def cells(sheet) -> list[tuple]:
+    """Every cell's value, fill and boldness, row by row."""
+    return [tuple((c.value, c.fill.fgColor.rgb if c.fill.fill_type else None, bool(c.font.b)) for c in row)
+            for row in sheet.iter_rows(min_row=1, max_row=sheet.max_row, max_col=sheet.max_column)]
+
+
+class WholeSaveWorkbookTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.folder = tempfile.TemporaryDirectory()
+        cls.path = fx.export_save(save_request(), Path(cls.folder.name))
+        cls.book = openpyxl.load_workbook(cls.path)
+        cls.snap = fx.save_snapshot(save_request())
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.book.close()
+        cls.folder.cleanup()
+
+    def test_it_is_written_under_the_whole_save_name(self):
+        self.assertEqual(self.path.name, "x whole save (2026-09-01).xlsx")
+        self.assertEqual([p.name for p in Path(self.folder.name).iterdir()], [self.path.name])
+
+    def test_contents_and_records_come_first_and_about_last(self):
+        self.assertEqual(self.book.sheetnames,
+                         ["Contents", "Records"] + [e.sheet for e in self.snap.entries] + ["About"])
+
+    def test_contents_has_a_row_and_a_link_for_each_competition(self):
+        sheet = self.book["Contents"]
+        header = find_row(sheet, 1, "Competition")
+        self.assertEqual([c.value for c in sheet[header]][:7],
+                         ["Competition", "Category", "Season", "Teams", "Played of fixtures", "Scored", "Sheet"])
+        first = [c.value for c in sheet[header + 1]][:7]
+        self.assertEqual(first, ["Championship", fd.COMP_CAT_YOURS, "2026", 4, "4 of 6", 3, "Championship"])
+        for offset, entry in enumerate(self.snap.entries, start=1):
+            link = sheet.cell(row=header + offset, column=7)
+            self.assertEqual(link.value, entry.sheet)
+            self.assertEqual(link.hyperlink.location, f"'{entry.sheet}'!A1")
+        self.assertIsNone(sheet.cell(row=header + len(self.snap.entries) + 2, column=1).value)
+
+    def test_contents_says_how_many_were_left_out(self):
+        with tempfile.TemporaryDirectory() as folder, mock.patch.object(fx, "WHOLE_SAVE_LIMIT", 2):
+            path = fx.export_save(save_request(), Path(folder))
+            book = openpyxl.load_workbook(path)
+            sheet = book["Contents"]
+            texts = [sheet.cell(row=r, column=1).value for r in range(1, sheet.max_row + 1)]
+            book.close()
+        self.assertIn("4 more competitions left out: export them one at a time.", texts)
+
+    def test_a_table_sheet_matches_the_one_competition_export(self):
+        req = save_request()
+        alone = fx.workbook(fx.snapshot(fx.ExportRequest(req.dataset, 101, 2026, names=req.names, focus=req.focus,
+                                                         exported_at=WHEN)))
+        self.assertEqual(cells(self.book["Championship"]), cells(alone["Table"]))
+
+    def test_a_competition_without_a_table_gets_its_results(self):
+        entry = self.snap.entries[0]
+        bare = dataclasses.replace(entry.snapshot, standings=dataclasses.replace(entry.snapshot.standings, groups=()))
+        snap = dataclasses.replace(self.snap, entries=(dataclasses.replace(entry, snapshot=bare),))
+        sheet = fx.save_workbook(snap)["Championship"]
+        self.assertTrue(sheet.cell(row=1, column=1).value.endswith(": results"))
+
+    def test_records_has_a_block_per_competition_and_marks_the_incomplete(self):
+        sheet = self.book["Records"]
+        texts = [sheet.cell(row=r, column=1).value for r in range(1, sheet.max_row + 1)]
+        self.assertTrue(any(t and t.startswith("* =") for t in texts[:4]))
+        heading = texts.index("Championship 2026") + 1               # rows count from 1
+        record = self.snap.entries[0].records[0]
+        row = [c.value for c in sheet[heading + 1]][:3]
+        self.assertEqual(row, [record.title, ", ".join(record.teams), record.value + "*"])
+        self.assertEqual(sum(1 for t in texts if t and t.endswith(" 2026")), len(self.snap.entries))
+
+    def test_about_holds_the_save_and_the_export(self):
+        sheet = self.book["About"]
+        about = {sheet.cell(row=r, column=1).value: sheet.cell(row=r, column=2).value
+                 for r in range(1, sheet.max_row + 1)}
+        self.assertEqual(about["Save"], "x.fm")
+        self.assertEqual(about["In-game date"], "1 September 2026")
+        self.assertEqual(about["Game and build"], "FM27 27.0.1+1")
+        self.assertEqual(about["Managed club"], "Hull City")
+        self.assertEqual(about["Followed club"], "Hull City")
+        self.assertEqual(about["Competitions"], "6")
+        self.assertTrue(about["Exported"].startswith("14 November 2026 at 20:30"))
+
+    def test_a_failed_write_leaves_no_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with mock.patch.object(fx.os, "replace", side_effect=PermissionError(13, "in use")):
+                with self.assertRaises(fx.ExportFailed):
+                    fx.export_save(save_request(), Path(folder))
+            self.assertEqual(list(Path(folder).iterdir()), [])
+
+    def test_the_one_competition_workbook_is_unchanged(self):
+        # Taken from v2.14's workbook(): every sheet's cells, fills, fonts, widths and frozen panes.
+        self.assertEqual(workbook_fingerprint(fx.workbook(fx.snapshot(request()))), ONE_COMPETITION_FINGERPRINT)
+
+
+ONE_COMPETITION_FINGERPRINT = "c1cc3a134bcacc588cddf335444c034471206332b492f9941e3547398f2aeea4"
+
+
+def workbook_fingerprint(book) -> str:
+    import hashlib
+    parts = [repr(book.sheetnames)]
+    for sheet in book.worksheets:
+        parts.append(repr(cells(sheet)))
+        parts.append(repr([(c.number_format, c.alignment.horizontal, c.font.color.rgb if c.font.color else None,
+                            c.font.i, c.font.sz, c.hyperlink.location if c.hyperlink else None)
+                           for row in sheet.iter_rows() for c in row]))
+        parts.append(repr(sorted((k, d.width) for k, d in sheet.column_dimensions.items())))
+        parts.append(repr(sheet.freeze_panes))
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()
