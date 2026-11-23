@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 import openpyxl
+from fmsave import CodedValue, CompetitionRound
 
 import fm_data as fd
 import fm_export as fx
@@ -368,3 +369,67 @@ class PostTests(unittest.TestCase):
     def test_recent_results_too_large_for_a_post_are_not_offered(self):
         with mock.patch.object(fx, "POST_ROW_LIMIT", 1):             # the latest round has two matches
             self.assertIsNone(fx.post_recent_results(self.snap()))
+
+
+# The UI tests' save plus a cup (160) and a league (170) that the managed club is not in, and a league (150)
+# with nothing played yet.
+WHOLE_SAVE_EXTRA = [
+    fixture(D(2026, 9, 2), 2, 3, 1, 0, comp=160, rnd=CodedValue(CompetitionRound.FINAL, 19)),
+    fixture(D(2026, 9, 3), 4, 5, 2, 2, comp=170, md=1),
+    fixture(D(2026, 9, 20), 2, 3, comp=150, md=1),
+]
+
+
+def save_request(**changes) -> fx.SaveExportRequest:
+    base = fx.SaveExportRequest(dataset(extra=WHOLE_SAVE_EXTRA), names={12: "Championship"}, focus=team(1),
+                                exported_at=WHEN)
+    return dataclasses.replace(base, **changes)
+
+
+class WholeSaveShapingTests(unittest.TestCase):
+    def test_played_competitions_go_in_by_category_then_title(self):
+        snap = fx.save_snapshot(save_request())
+        self.assertEqual([e.competition_id for e in snap.entries], [101, 131, 60, 170, 70, 160])
+        self.assertEqual([e.category for e in snap.entries],
+                         [fd.COMP_CAT_YOURS] * 3 + [fd.COMP_CAT_LEAGUE] * 2 + [fd.COMP_CAT_CUP])
+
+    def test_a_competition_with_nothing_played_is_left_out(self):
+        snap = fx.save_snapshot(save_request())
+        self.assertNotIn(150, [e.competition_id for e in snap.entries])
+        self.assertEqual(snap.left_out, 0)                  # unplayed is not "left out": only the cap counts
+
+    def test_each_entry_is_the_one_competition_snapshot_at_the_default_season(self):
+        req = save_request()
+        entry = fx.save_snapshot(req).entries[0]
+        alone = fx.snapshot(fx.ExportRequest(req.dataset, 101, fd.default_season(req.dataset, 101),
+                                             names=req.names, focus=req.focus, exported_at=WHEN))
+        self.assertEqual(entry.snapshot, alone)
+        self.assertEqual([r.title for r in entry.records][:2], ["Most goals", "Fewest conceded"])
+
+    def test_the_followed_club_is_passed_only_where_it_plays(self):
+        by_id = {e.competition_id: e for e in fx.save_snapshot(save_request()).entries}
+        self.assertEqual(by_id[101].snapshot.focus, team(1))
+        self.assertIsNone(by_id[70].snapshot.focus)
+        self.assertIsNone(by_id[160].snapshot.focus)
+
+    def test_sheet_names_are_unique_clipped_and_never_reserved(self):
+        long = "A very long competition name: part [one]"
+        names = {12: long, 13: long}
+        extra = WHOLE_SAVE_EXTRA + [fixture(D(2026, 9, 4), 4, 5, 1, 0, comp=102, md=1)]   # database id 13
+        snap = fx.save_snapshot(save_request(dataset=dataset(extra=extra), names=names))
+        sheets = [e.sheet for e in snap.entries]
+        self.assertEqual(len(sheets), len({s.casefold() for s in sheets}))
+        for sheet in sheets:
+            self.assertLessEqual(len(sheet), 31)
+            self.assertIsNone(re.search(r"[\[\]:*?/\\]", sheet))
+            self.assertNotIn(sheet.casefold(), {"contents", "records", "about"})
+        self.assertEqual(fx._whole_save_sheet("About", {"Contents", "Records", "About"}), "About (2)")
+
+    def test_the_cap_leaves_the_rest_out_and_counts_them(self):
+        with mock.patch.object(fx, "WHOLE_SAVE_LIMIT", 2):
+            snap = fx.save_snapshot(save_request())
+        self.assertEqual([e.competition_id for e in snap.entries], [101, 131])
+        self.assertEqual(snap.left_out, 4)
+
+    def test_the_file_name_is_the_save_and_its_in_game_date(self):
+        self.assertEqual(fx.save_snapshot(save_request()).stem, "x whole save (2026-09-01)")

@@ -169,6 +169,10 @@ def file_stem(title: str, season_text: str, game_date: dt.date | None) -> str:
     stem = f"{title} {season_text}".replace("/", "-")
     if game_date:
         stem += f" ({game_date:%Y-%m-%d})"
+    return _safe_stem(stem)
+
+
+def _safe_stem(stem: str) -> str:
     stem = re.sub(r"\s+", " ", _UNSAFE_IN_NAMES.sub("-", stem)).strip().rstrip(". ")
     return stem[:150] or "Box2Box export"
 
@@ -182,6 +186,125 @@ def table_legend(snap: Snapshot) -> str:
     return f"Pos colours: {legend}." if legend else ""
 
 
+# --------------------------------------------------------------------------- the whole save
+
+
+WHOLE_SAVE = "save.xlsx"       # the export kind; written by export_save, not export
+WHOLE_SAVE_LIMIT = 200         # competitions in one workbook; the rest are counted on Contents
+WHOLE_SAVE_SHEETS = ("Contents", "Records", "About")
+KINDS[WHOLE_SAVE] = "whole-save workbook"
+_CATEGORY_ORDER = (fd.COMP_CAT_YOURS, fd.COMP_CAT_LEAGUE, fd.COMP_CAT_CUP, fd.COMP_CAT_YOUTH,
+                   fd.COMP_CAT_FRIENDLY, fd.COMP_CAT_OTHER)
+
+
+@dataclass(frozen=True, slots=True)
+class SaveExportRequest:
+    """What to export: every competition of a loaded save with a played match, each at the season
+    the app opens it at."""
+
+    dataset: fd.Dataset
+    names: Mapping[int, str] = field(default_factory=dict)
+    focus: int | None = None
+    group_by: str = fd.GROUP_BY_WEEK
+    exported_at: dt.datetime | None = None      # None means now
+    theme: palette.Theme = palette.MIDNIGHT_EMERALD
+
+
+@dataclass(frozen=True, slots=True)
+class SaveEntry:
+    """One competition in the whole-save workbook."""
+
+    competition_id: int
+    category: str
+    sheet: str
+    snapshot: Snapshot
+    records: tuple[fd.SeasonRecord, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SaveSnapshot:
+    """Everything the whole-save workbook shows."""
+
+    stem: str
+    source_line: str
+    entries: tuple[SaveEntry, ...]
+    left_out: int                    # played competitions over the cap
+    details: tuple[tuple[str, str], ...]
+    warnings: tuple[str, ...]
+
+
+def save_snapshot(request: SaveExportRequest) -> SaveSnapshot:
+    ds, info = request.dataset, request.dataset.info
+    exported = request.exported_at or dt.datetime.now()
+    chosen = []
+    for comp in ds.competitions:
+        season = fd.default_season(ds, comp.id)
+        fixtures = fd.season_fixtures(ds, comp.id, season)
+        if not any(f.played for f in fixtures):
+            continue
+        category = fd.competition_category(comp, ds)
+        rank = _CATEGORY_ORDER.index(category) if category in _CATEGORY_ORDER else len(_CATEGORY_ORDER)
+        title = fd.competition_title(comp, request.names)
+        chosen.append((rank, title.casefold(), comp.id, category, season, fixtures))
+    chosen.sort(key=lambda item: item[:3])
+    taken = set(WHOLE_SAVE_SHEETS)
+    entries = []
+    for _, _, competition_id, category, season, fixtures in chosen[:WHOLE_SAVE_LIMIT]:
+        in_it = request.focus is not None and any(request.focus in (f.home_team_id, f.away_team_id)
+                                                  for f in fixtures)
+        snap = snapshot(ExportRequest(ds, competition_id, season, names=request.names,
+                                      focus=request.focus if in_it else None, group_by=request.group_by,
+                                      exported_at=exported, theme=request.theme))
+        order = [r.team_id for _, rows in snap.standings.groups for r in rows]
+        records = fd.season_records(fd.form_guide(snap.fixtures, snap.labels, order=order))
+        sheet = _whole_save_sheet(snap.title, taken)
+        taken.add(sheet)
+        entries.append(SaveEntry(competition_id, category, sheet, snap, records))
+    focus_label = next((e.snapshot.focus_label for e in entries if e.snapshot.focus is not None), "")
+
+    source = [info.file_name]
+    if info.game_date:
+        source.append(f"in-game date {_long_date(info.game_date)}")
+    source.append(f"{info.game} build {info.build}" + ("" if info.known_build else " (unverified build)"))
+    details = [
+        ("Save", info.file_name),
+        ("In-game date", _long_date(info.game_date) if info.game_date else "unknown"),
+        ("Game and build", f"{info.game} {info.build}"),
+        ("Managed club", info.managed_club_name or "not found"),
+        ("Followed club", focus_label or "none"),
+        ("Competitions", f"{len(entries)}" + (f" of {len(chosen)} with a played match"
+                                             if len(chosen) > len(entries) else "")),
+        ("Read with", f"fmsave {info.fmsave_version}"),
+        ("Exported", f"{_long_date(exported.date())} at {exported:%H:%M} by Box2Box, which only reads "
+                     "saves and never changes them"),
+    ]
+    if not info.known_build:
+        details.insert(4, ("Build check", UNVERIFIED))
+    stem = f"{Path(info.file_name).stem} whole save"
+    if info.game_date:
+        stem += f" ({info.game_date:%Y-%m-%d})"
+    return SaveSnapshot(
+        stem=_safe_stem(stem),
+        source_line=" · ".join(source),
+        entries=tuple(entries),
+        left_out=len(chosen) - len(entries),
+        details=tuple(details),
+        warnings=tuple(info.warnings),
+    )
+
+
+def _whole_save_sheet(label: str, taken: set[str]) -> str:
+    """A sheet name from _sheet_name, made unique against taken with a counter, still at most 31 characters."""
+    base = _sheet_name(label, set()).strip("'").strip()
+    folded = {t.casefold() for t in taken}
+    name, number = base, 1
+    while name.casefold() in folded:
+        number += 1
+        suffix = f" ({number})"
+        name = base[:31 - len(suffix)].rstrip("' ") + suffix
+    return name
+
+
 # --------------------------------------------------------------------------- writing
 
 
@@ -191,7 +314,7 @@ def export(kind: str, request: ExportRequest, folder: Path) -> Path:
     Raises:
         ExportFailed: The export could not be written, with a message for the user.
     """
-    if kind not in KINDS:
+    if kind not in KINDS or kind == WHOLE_SAVE:          # the whole save goes through export_save
         raise ValueError(f"unknown export kind {kind!r}")
     snap = snapshot(request)
     _make_folder(folder)
