@@ -1,8 +1,8 @@
 # Changelog
 
-**Release:** 2.14  
+**Release:** 2.15  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 2.14), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.15), launched with `Box2Box.bat`
 
 All notable changes to this project will be documented in this file.
 
@@ -10,6 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [2.15] - 2026-11-23
+
+One Excel workbook for the whole save.
+
+### Added
+
+- **Whole save workbook (.xlsx)** in the Export menu, straight after CSV files, and "Export the whole save as a workbook" in the command palette. It needs only a loaded save, not a chosen competition, and runs in the background like the other exports, then offers to open the file. The file is named "<save> whole save (<in-game date>).xlsx" and saved in Documents\Box2Box.
+- **What it holds.** Every competition with a played match, at the season the app opens it at, ordered by category (your club's, leagues, cups, youth and reserves, friendlies, the rest) and then by name. A Contents sheet comes first, with one row per competition (category, season, teams, played of fixtures, scored) and a link to its sheet; a Records sheet follows, with each competition's season records and "*" marking a record that missing scores could still change. Each competition then has its own sheet, the same as the Table sheet of its one-competition workbook (or its results when it has no table), and an About sheet comes last.
+- **A cap of 200 competitions.** Beyond that, Contents says how many more were left out and suggests exporting them one at a time.
+
+### Unchanged
+
+- The one-competition Excel, web page and CSV exports come out exactly as before.
 
 ## [2.14] - 2026-11-22
 
