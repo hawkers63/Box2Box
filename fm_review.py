@@ -3273,6 +3273,9 @@ class FMReviewApp(_Root):
                 blocks.append(inspector.Line("Match statistics could not be read from this save.", muted=True))
             else:
                 blocks.append(inspector.Line("No match report stored for this match", muted=True))
+        # The ground as the save records it: name, neutral flag and total capacity, or why each is missing.
+        blocks.append(inspector.Heading("Venue"))
+        blocks += [inspector.Line(line) for line in fd.venue_for(ds, f).lines()]
         form_team = self.focus if self.focus in (f.home_team_id, f.away_team_id) else f.home_team_id
         blocks += self._form_blocks(form_team)
         all_groups = fd.all_meetings(self.dataset, f.home_team_id, f.away_team_id)
@@ -3531,6 +3534,8 @@ class FMReviewApp(_Root):
             try:
                 if p.is_file():
                     data = json.loads(p.read_text(encoding="utf-8"))
+                    if not isinstance(data, dict):      # [], null or a string: as unreadable as broken JSON
+                        continue
                     if p == LEGACY_SETTINGS_PATH and not SETTINGS_PATH.exists():
                         self.settings = data
                         self._write_settings()

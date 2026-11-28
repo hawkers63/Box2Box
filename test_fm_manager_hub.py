@@ -25,10 +25,11 @@ def _rank(rank=3, points=45):
 
 
 def _schedule_item(opponent="Burnley", venue="H", outcome="W", played=True,
-                   when=fd.WHEN_UPCOMING, days=3, competition_id=1, date=None):
+                   when=fd.WHEN_UPCOMING, days=3, competition_id=1, date=None, venue_info=None):
     item = MagicMock(spec=fd.ScheduleItem)
     item.opponent = opponent
     item.venue = venue
+    item.venue_info = venue_info
     item.outcome = outcome if played else None
     item.played = played
     item.when = when
@@ -129,11 +130,12 @@ class HubRowsTests(unittest.TestCase):
 
 
 def _item(opponent="Eastholm Athletic", venue="H", played=False, date=dt.date(2099, 8, 29),
-          when=fd.WHEN_UPCOMING, days=4):
+          when=fd.WHEN_UPCOMING, days=4, venue_info=None):
     f = MagicMock()
     f.date, f.played = date, played
     i = MagicMock(spec=fd.ScheduleItem)
     i.opponent, i.venue, i.fixture, i.played, i.when, i.days = opponent, venue, f, played, when, days
+    i.venue_info = venue_info
     i.outcome = "W" if played else None
     i.score = "2-1" if played else ""
     i.competition_id = 101
@@ -227,7 +229,7 @@ class PreviousMeetingRowTests(unittest.TestCase):
     def test_it_gives_the_date_competition_and_score_of_the_earlier_meeting(self):
         rows = self.rows(_step(fixture=_item(), previous=_meeting("2-1", competition_id=102)))
         row = next(r for r in rows if r.label == "Previous meeting")
-        self.assertEqual(row.value, "8 Aug 2099 ┬À Invented Cup ┬À Northbridge Rovers 2-1 Eastholm Athletic")
+        self.assertEqual(row.value, "8 Aug 2099 · Invented Cup · Northbridge Rovers 2-1 Eastholm Athletic")
 
     def test_it_sits_directly_beneath_the_upcoming_opponent(self):
         labels = [r.label for r in self.rows(_step(fixture=_item(), previous=_meeting()))]
@@ -236,7 +238,7 @@ class PreviousMeetingRowTests(unittest.TestCase):
     def test_a_meeting_with_no_recoverable_score_says_so_never_a_zero(self):
         row = next(r for r in self.rows(_step(fixture=_item(), previous=_meeting(score=None)))
                    if r.label == "Previous meeting")
-        self.assertEqual(row.value, "8 Aug 2099 ┬À Invented League ┬À Score unavailable")
+        self.assertEqual(row.value, "8 Aug 2099 · Invented League · Score unavailable")
 
     def test_with_no_earlier_meeting_the_row_says_so(self):
         row = next(r for r in self.rows(_step(fixture=_item(), previous=None)) if r.label == "Previous meeting")
@@ -245,6 +247,39 @@ class PreviousMeetingRowTests(unittest.TestCase):
     def test_the_end_of_the_season_has_no_previous_meeting_row(self):
         step = _step(title=fd.END_OF_SEASON, fixture=None, cutoff=False)
         self.assertNotIn("Previous meeting", [r.label for r in self.rows(step)])
+
+
+RIVERSIDE = fd.Venue(False, 7, "Riverside Park", 31000, fd.STATE_KNOWN)
+UNRECORDED = fd.Venue(False, None, None, None, fd.STATE_UNRECORDED)
+
+
+class VenueRowTests(unittest.TestCase):
+    """The Hub's "Venue" row for the upcoming match: only what the save records (made-up grounds)."""
+
+    def step_rows(self, venue_info):
+        snapshot = _snapshot(followed=_followed("Northbridge Rovers"), next_scope_label="Invented League")
+        return hub_rows(snapshot, step=_step(fixture=_item(venue_info=venue_info)))
+
+    def test_a_known_ground_gives_its_name_and_capacity(self):
+        row = next(r for r in self.step_rows(RIVERSIDE) if r.label == "Venue")
+        self.assertEqual((row.value, row.muted), ("Riverside Park · Capacity 31,000", False))
+
+    def test_an_unrecorded_ground_says_so_and_guesses_nothing(self):
+        row = next(r for r in self.step_rows(UNRECORDED) if r.label == "Venue")
+        self.assertEqual((row.value, row.muted), ("Ground not recorded", True))
+
+    def test_no_venue_worked_out_gives_no_row(self):
+        self.assertNotIn("Venue", [r.label for r in self.step_rows(None)])
+
+    def test_it_follows_the_upcoming_match_and_its_previous_meeting(self):
+        labels = [r.label for r in self.step_rows(RIVERSIDE)]
+        self.assertEqual(labels.index("Venue"), labels.index("Previous meeting") + 1)
+
+    def test_without_the_stepper_the_next_match_has_its_venue_too(self):
+        rows = hub_rows(_snapshot(next_item=_schedule_item(venue_info=RIVERSIDE)))
+        labels = [r.label for r in rows]
+        self.assertEqual(labels.index("Venue"), labels.index("Next") + 1)
+        self.assertEqual(rows[labels.index("Venue")].value, "Riverside Park · Capacity 31,000")
 
 
 if __name__ == "__main__":

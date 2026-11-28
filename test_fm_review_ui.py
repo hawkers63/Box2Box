@@ -3025,12 +3025,12 @@ class ScheduleHubWiringTests(unittest.TestCase):
         app = self.app
         hub = self.open_hub(self.meeting_season())
         self.assertEqual(self.hub_values(hub)["Previous meeting"],
-                         "8 Aug 2099 ┬À Competition 101 ┬À Northbridge Rovers 2-1 Southmere United")
+                         "8 Aug 2099 · Competition 101 · Northbridge Rovers 2-1 Southmere United")
         app.set_focus(test_fm_data.team(3))                              # another club: nothing of the first one's
         self.assertNotIn("Previous meeting", self.hub_values(hub))       # while it builds
         self.assertTrue(self.wait_for(lambda: "Previous meeting" in self.hub_values(hub)), "no hub for the new club")
         self.assertEqual(self.hub_values(hub)["Previous meeting"],
-                         "8 Aug 2099 ┬À Competition 101 ┬À Westford Town 0-0 Eastholm Athletic")
+                         "8 Aug 2099 · Competition 101 · Westford Town 0-0 Eastholm Athletic")
         app.install_dataset(self.meeting_season(played=False))           # another save: the old result is gone
         self.assertNotIn("Previous meeting", self.hub_values(hub))
         app.set_focus(test_fm_data.team(1))
@@ -3082,6 +3082,38 @@ class ScheduleHubWiringTests(unittest.TestCase):
         hub.show_step(0)
         hub.today_button.invoke()
         self.assertEqual(hub.index, 2)
+
+    # ----------------------------------------------------------------- 2.16: Hub halo, venue and settings guard
+
+    def test_the_hub_roundels_sit_on_the_content_colour_with_no_halo(self):
+        hub = self.open_hub()
+        surface = self.app.view_theme.table[0]            # the content frame's own colour
+        self.assertEqual(hub.club_badge.cget("bg"), surface)
+        self.assertEqual(hub.next_badge.cget("bg"), surface)
+
+    def test_the_hubs_empty_message_is_muted(self):
+        hub = self.app._manager_hub_view
+        hub.clear("No club followed")
+        (label,) = hub._content.winfo_children()
+        self.assertEqual((label.cget("text"), label.cget("text_color")), ("No club followed", hub._theme.muted))
+
+    def test_the_match_inspector_gives_the_venue_as_the_save_records_it(self):
+        app = self.app
+        app.install_dataset(dataset())
+        f = dataclasses.replace(app.dataset.fixtures[101][0], stadium_uid=7, stadium_name="Riverside Park")
+        texts = [getattr(block, "text", None) for block in app._match_model(f).blocks]
+        self.assertIn("Venue", texts)
+        expected = fd.venue_for(app.dataset, f).lines()
+        self.assertEqual(expected, ("Riverside Park", "Capacity: still being read"))
+        for line in expected:
+            self.assertIn(line, texts)
+
+    def test_settings_that_are_not_an_object_are_ignored(self):
+        legacy = Path(self.folder.name) / "legacy.json"
+        with mock.patch.object(fm_review, "LEGACY_SETTINGS_PATH", legacy):
+            for text in ("[]", "null", '"Northbridge"'):
+                fm_review.SETTINGS_PATH.write_text(text, encoding="utf-8")
+                self.assertEqual(self.app._read_settings(), {}, text)
 
     def test_with_no_save_date_today_is_unavailable_and_says_why(self):
         hub = self.open_hub(self.invented_dataset([

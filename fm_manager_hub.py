@@ -42,7 +42,16 @@ def previous_meeting_row(snapshot: fd.ManagerSnapshot, step: fd.HubStep, competi
     competition = competition_names.get(f.competition_id or 0, f"Competition {f.competition_id}")
     result = (f"{snapshot.followed.name} {previous.score} {step.fixture.opponent}" if previous.score is not None
               else "Score unavailable")
-    return HubRow("Previous meeting", f"{f.date.strftime('%d %b %Y').lstrip('0')} ┬À {competition} ┬À {result}")
+    return HubRow("Previous meeting", f"{f.date.strftime('%d %b %Y').lstrip('0')} · {competition} · {result}")
+
+
+def _venue_row(item: fd.ScheduleItem) -> HubRow | None:
+    """Where the upcoming match is played, as the save records it (never attendance, occupancy or weather, which
+    the save does not hold); None when no venue was worked out. Muted when the ground's name is not recorded."""
+    venue = item.venue_info
+    if venue is None:
+        return None
+    return HubRow("Venue", " · ".join(venue.lines()), muted=venue.name is None)
 
 
 def _ordinal(n: int) -> str:
@@ -73,6 +82,9 @@ def step_rows(snapshot: fd.ManagerSnapshot, step: fd.HubStep, competition_names:
     else:
         rows.append(HubRow(label, _fixture_text(step.fixture)))
         rows.append(previous_meeting_row(snapshot, step, competition_names))
+        venue = _venue_row(step.fixture)
+        if venue is not None:
+            rows.append(venue)
     nxt = snapshot.next_item
     if today and nxt is not None and (step.fixture is None or nxt.fixture is not step.fixture.fixture):
         rows.append(HubRow("Next (any competition)", _fixture_text(nxt)))
@@ -130,6 +142,9 @@ def hub_rows(snapshot: fd.ManagerSnapshot, competition_names: dict[int, str] | N
         venue_word = {"H": "home", "A": "away", "N": "neutral"}.get(ni.venue, ni.venue)
         date_text = ni.fixture.date.strftime("%d %b %Y").lstrip("0") if ni.fixture.date else "date unknown"
         rows.append(HubRow("Next", f"{ni.opponent} ({venue_word}) · {date_text}"))
+        venue = _venue_row(ni)
+        if venue is not None:
+            rows.append(venue)
         rows.append(HubRow("Competition", comp_name, muted=True))
         countdown = fd.countdown_text(ni.when, ni.days)
         if countdown:
@@ -330,16 +345,17 @@ if _CTK_AVAILABLE:
                 button.configure(fg_color=theme.accent[0], hover_color=theme.accent_hover, text_color=theme.accent[1])
             self.slider.configure(button_color=theme.accent[0], button_hover_color=theme.accent_hover,
                                   progress_color=theme.accent[0])
-            self.club_badge.show(self._roundels.get(snap.followed.name) if snap is not None else None, theme.window)
+            surface = theme.table[0]           # the content frame's own colour, so no halo shows round a roundel
+            self.club_badge.show(self._roundels.get(snap.followed.name) if snap is not None else None, surface)
             if step is not None:
                 next_item = step.fixture
             else:
                 next_item = snap.next_item if snap is not None else None
             self.next_badge.grid_forget()
             self.next_badge.show(self._roundels.get(next_item.opponent_club) if next_item is not None else None,
-                                 theme.window)
+                                 surface)
             if not self._rows:
-                ctk.CTkLabel(self._content, text=self._empty_text, anchor="w").grid(
+                ctk.CTkLabel(self._content, text=self._empty_text, anchor="w", text_color=theme.muted).grid(
                     row=0, column=0, columnspan=3, sticky="ew", padx=8, pady=4)
                 return
             badge_row = next((i for i, row in enumerate(self._rows) if row.label in self.NEXT_LABELS), None)
