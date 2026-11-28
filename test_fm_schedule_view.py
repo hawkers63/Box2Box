@@ -426,6 +426,33 @@ class ScheduleFilterRibbonTests(ViewCase):
         self.assertIn("Invented Cup", self.texts(1))
 
 
+class ScheduleReinstallTests(ViewCase):
+    def test_the_same_clubs_season_installed_again_keeps_the_filter(self):
+        ds = month_season()
+        self.install(ds)
+        self.view.apply_venue_filter("A")
+        self.view.apply_competition_filter(101)
+        self.install(ds)                                  # as when late expected goals arrive
+        self.assertEqual((self.view._filter.venue, self.view._filter.competition_id), ("A", 101))
+        self.assertEqual(self.view._venue_menu.get(), "Away")
+
+    def test_another_clubs_schedule_starts_unfiltered(self):
+        ds = month_season()
+        self.install(ds)
+        self.view.apply_venue_filter("A")
+        other = fd.club_schedule(ds, fd.FollowedClub(3, name="Westford Town"))
+        self.view.install_schedule(other, palette.MIDNIGHT_EMERALD, competition_names=NAMES)
+        self.assertEqual(self.view._filter, ScheduleFilter())
+
+    def test_a_filter_on_a_competition_the_new_schedule_lacks_is_dropped(self):
+        ds = month_season()
+        self.install(ds)
+        self.view.apply_competition_filter(102)
+        self.view.install_schedule(fd.club_schedule(ds, NORTHBRIDGE, competition_id=101), palette.MIDNIGHT_EMERALD,
+                                   competition_names=NAMES)
+        self.assertIsNone(self.view._filter.competition_id)
+
+
 class ScheduleNarrowWidthTests(ViewCase):
     def test_nothing_overlaps_at_the_minimum_window_width(self):
         canvas = self.view._canvas

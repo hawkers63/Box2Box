@@ -249,12 +249,20 @@ if _CTK_AVAILABLE:
             """Show a schedule. `roundels` maps each opponent's club name (None: unresolved) to its roundel in this
             theme, worked out off the main thread (palette.roundel_book); `competition_names` maps competition ids to
             the names the rows, the competition menu and the filter summary show."""
+            # The same club's same season again (late expected goals, say) keeps the user's filter.
+            same = (self._schedule is not None and self._schedule.club == schedule.club
+                    and self._schedule.season == schedule.season)
+            kept = self._filter if same else ScheduleFilter()
             self._schedule = schedule
             self._theme = theme
             self._roundels = roundels or {}
             self._competition_names = dict(competition_names or {})
-            self._filter = ScheduleFilter()
             self._fill_choices()
+            if kept.competition_id not in self._competition_choices.values():
+                kept = replace(kept, competition_id=None)
+            if kept.month not in self._month_choices.values():
+                kept = replace(kept, month=None)
+            self._filter = kept
             self._theme_controls()
             self._sync_controls()
             self._rebuild()

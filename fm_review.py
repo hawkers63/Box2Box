@@ -865,7 +865,10 @@ class FMReviewApp(_Root):
         self.bracket_view.grid_remove()                                  # the Analysis view's Bracket panel shows it
         self._schedule_view = fsv.ScheduleView(content, fg_color="transparent",
                                                show_gaps=self.settings.get(SCHEDULE_GAPS) is True,
-                                               on_gaps_changed=self._remember_schedule_gaps)
+                                               on_gaps_changed=self._remember_schedule_gaps,
+                                               on_select=lambda item: self._on_schedule_select(item),
+                                               on_inspect=lambda item: self._on_schedule_inspect(item),
+                                               on_right_click=lambda event, item: self._on_schedule_right_click(event, item))
         self._schedule_view.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
         self._schedule_view.grid_remove()
         self._manager_hub_view = fmh.ManagerHubView(content, fg_color="transparent")
@@ -1021,6 +1024,9 @@ class FMReviewApp(_Root):
     # ----------------------------------------------------------------- club colours
 
     def _followed_club(self) -> str | None:
+        """The followed club's name: the one followed across competitions, else the highlighted team's club."""
+        if self._followed_uid is not None and self._followed_uid.name:
+            return self._followed_uid.name
         return self.club_names.get(self.focus) if self.focus is not None else None
 
     def _update_club_tint(self) -> None:
@@ -1352,6 +1358,9 @@ class FMReviewApp(_Root):
         self._schedule_view.clear()                # the install below renders, so no render here
         self._manager_hub_view.clear(NO_CLUB_FOLLOWED)
         self._club_scope = NO_CLUB_FOLLOWED
+        default = fd.default_followed_club(dataset)       # a managed save follows its club; an observer save no one
+        if default is not None:
+            self._set_followed_uid(default)
         self.settings["last_save"] = dataset.info.path
         self._write_settings()
         info = dataset.info
@@ -1400,6 +1409,8 @@ class FMReviewApp(_Root):
         self.dataset = dataset
         self._refresh_status()
         self._refresh_inspector()                  # the statistics it was waiting for may have arrived
+        if self._followed_uid is not None:         # the Schedule and Hub gain the arrived xG and grounds
+            self._set_followed_uid(self._followed_uid, refresh=True)
         if self.comp_id is None or self.view == HUB or not self.fixtures:
             return
         if self.view == "Results":
@@ -1706,12 +1717,9 @@ class FMReviewApp(_Root):
         self.opponent_filter = None
         self.focus = team_id if team_id in self.labels else None
         if team_id is not None and self.dataset:
-            identity = self.dataset.teams.get(team_id)
-            if identity and identity.club_uid is not None:
-                new_uid = fd.FollowedClub(club_uid=identity.club_uid,
-                                          name=self.labels.get(team_id, ""))
-                if new_uid != self._followed_uid:
-                    self._set_followed_uid(new_uid)
+            new_uid = self._followed_club_for(team_id)
+            if new_uid is not None and new_uid != self._followed_uid:
+                self._set_followed_uid(new_uid)
         self._show_followed_team()
         self._update_club_tint()
         self.render()
@@ -1726,15 +1734,26 @@ class FMReviewApp(_Root):
         if disabled:
             self.team_box.configure(state="disabled")
 
-    def _set_followed_uid(self, club: fd.FollowedClub | None) -> None:
-        """Update the followed club and start a background worker to build schedule/snapshot data."""
+    def _followed_club_for(self, team_id: int) -> fd.FollowedClub | None:
+        """The club a team belongs to, in the scope that team is in (a reserve team follows the reserve side)."""
+        identity = self.dataset.teams.get(team_id) if self.dataset else None
+        if identity is None or identity.club_uid is None:
+            return None
+        return fd.FollowedClub(club_uid=identity.club_uid, scope=fd.SCOPE_RESERVE if identity.slot else fd.SCOPE_SENIOR,
+                               name=identity.club_name or self.labels.get(team_id, ""))
+
+    def _set_followed_uid(self, club: fd.FollowedClub | None, *, refresh: bool = False) -> None:
+        """Update the followed club and start a background worker to build schedule/snapshot data. A `refresh`
+        builds the same club again (new data arrived), so the Hub keeps showing what it has meanwhile."""
         self._followed_uid = club
         self._schedule_serial += 1
         serial = self._schedule_serial
         ds = self.dataset
         if ds is None or club is None:
             return
-        self._manager_hub_view.clear(f"Building {club.name or 'the club'}'s overview…")   # never the old club's
+        self._update_club_tint()
+        if not refresh:
+            self._manager_hub_view.clear(f"Building {club.name or 'the club'}'s overview…")   # never the old club's
         edits = self._club_colour_edits()
 
         def _worker():
@@ -1750,7 +1769,10 @@ class FMReviewApp(_Root):
         """Remove the followed club and empty the Schedule and Hub at once."""
         self._followed_uid = None
         self._schedule_serial += 1
+        self._update_club_tint()
         self._empty_club_views()
+        if self.view not in (SCHEDULE, MANAGER_HUB) and self.dataset is not None and self.comp_id is not None:
+            self.render()                           # the club's colours leave the sheets too
 
     def _empty_club_views(self) -> None:
         self._schedule_view.clear()
@@ -1791,11 +1813,61 @@ class FMReviewApp(_Root):
         again at the save's own date."""
         theme = self.view_theme
         self._roundel_book = book or {}
-        self._schedule_view.install_schedule(sched, theme, self._club_roundels())
-        self._manager_hub_view.install_snapshot(snap, theme, self.names, self._club_roundels(), season)
+        names = self._competition_names()
+        self._schedule_view.install_schedule(sched, theme, self._club_roundels(), names)
+        self._manager_hub_view.install_snapshot(snap, theme, names, self._club_roundels(), season)
         self._club_scope = f"{sched.club.name}: every competition, {sched.season_label} season · {sched.describe()}"
         if self.view in (SCHEDULE, MANAGER_HUB):
             self.render()
+
+    def _competition_names(self) -> dict[int, str]:
+        """Each competition's display name by competition id (self.names is keyed on the database id)."""
+        if self.dataset is None:
+            return {}
+        return {cid: fd.competition_title(comp, self.names) for cid, comp in self.dataset.by_id.items()}
+
+    def _on_schedule_select(self, item: fd.ScheduleItem) -> None:
+        """A Schedule row was selected: the open Inspector follows it."""
+        self._selection = ("match", item.fixture)
+        self._refresh_inspector()
+
+    def _on_schedule_inspect(self, item: fd.ScheduleItem) -> None:
+        self._selection = ("match", item.fixture)
+        self.open_inspector()
+
+    def _follow_team(self, team_id: int) -> None:
+        if team_id in self.labels:
+            self.set_focus(team_id)
+            return
+        club = self._followed_club_for(team_id)
+        if club is not None and club != self._followed_uid:
+            self._set_followed_uid(club)
+
+    def _schedule_menu(self, item: fd.ScheduleItem) -> list[MenuEntry]:
+        """What a right-click on a Schedule row offers; the opponent entries need a club the save can resolve."""
+        entries = [MenuEntry("Inspect match", lambda: self._on_schedule_inspect(item))]
+        identity = self.dataset.teams.get(item.opponent_id) if self.dataset else None
+        resolved = identity is not None and identity.club_uid is not None
+        if resolved:
+            entries.append(MenuEntry(f"Head-to-head with {item.opponent}",
+                                     lambda: self._open_head_to_head(item.team_id, item.opponent_id)))
+        entries.append(MenuEntry(f"Filter schedule to {item.opponent}",
+                                 lambda: self._schedule_view.apply_search(item.opponent)))
+        if resolved:
+            entries.append(MenuEntry(f"Follow {item.opponent}", lambda: self._follow_team(item.opponent_id)))
+        entries += [MENU_SEPARATOR, MenuEntry("Copy match line", lambda: self._copy_text(self._schedule_view.line_for(item)))]
+        return entries
+
+    def _copy_text(self, text: str) -> None:
+        self.clipboard_clear()
+        self.clipboard_append(text)
+
+    def _on_schedule_right_click(self, event, item: fd.ScheduleItem) -> None:
+        menu = self._build_menu(self._schedule_menu(item))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
 
     def _show_palette_key(self) -> None:
         """Open the command palette (the user can then search and follow a club)."""
@@ -2136,7 +2208,11 @@ class FMReviewApp(_Root):
 
     def _marked_club_uid(self) -> int | None:
         """The followed club's uid when the Yearbook menu's tick is on, else None."""
-        if not self.mark_club_var.get() or self.focus is None:
+        if not self.mark_club_var.get():
+            return None
+        if self._followed_uid is not None:
+            return self._followed_uid.club_uid
+        if self.focus is None:
             return None
         return fd.team_club_uids(self.fixtures).get(self.focus)
 
@@ -3207,8 +3283,8 @@ class FMReviewApp(_Root):
         if self.view == HUB:
             selection = ("hub", self.comp_id) if self.comp_id is not None else None
         elif selection is not None and (selection[0] == "hub" or (
-                selection[0] == "match" and selection[1] not in self.fixtures)):
-            selection = None
+                selection[0] == "match" and self.view != SCHEDULE and selection[1] not in self.fixtures)):
+            selection = None             # (the Schedule holds matches of every competition)
         if selection is None and self.focus is not None:
             selection = ("club", self.focus)
         if selection is not None:
@@ -3219,12 +3295,18 @@ class FMReviewApp(_Root):
                 return self._club_model(value)
             if kind == "hub" and value in self.dataset.by_id:
                 return self._hub_model(value)
-            if kind == "pair" and value[0] in self.labels and value[1] in self.labels:
+            if kind == "pair" and all(t in self.labels or t in self.dataset.teams for t in value):
                 return self._head_to_head_model(*value)
         return inspector.InspectorModel("Inspector", "Select a match or a club.")
 
     def _team_name(self, team_id: int) -> str:
-        return self.labels.get(team_id, f"Team {team_id}")
+        """The team's label in the open competition, else its club from the save (a match from another competition)."""
+        if team_id in self.labels:
+            return self.labels[team_id]
+        identity = self.dataset.teams.get(team_id) if self.dataset else None
+        if identity is not None and identity.club_name:
+            return f"{identity.club_name} (team {identity.slot + 1})" if identity.slot else identity.club_name
+        return f"Team {team_id}"
 
     @staticmethod
     def _day(f: fd.Fixture, fmt: str = "%a {d} %b") -> str:
@@ -3237,9 +3319,11 @@ class FMReviewApp(_Root):
         return inspector.Chips(strip.letters, fd.streaks(steps).describe_current(),
                                tuple(fd.describe_form_step(step) for step in strip.steps))
 
-    def _form_blocks(self, team_id: int) -> list:
-        """The team's last five results as chips, with its current run in words."""
-        steps = fd.team_steps(self.fixtures, team_id, self.labels)
+    def _form_blocks(self, team_id: int, fixtures=None, labels=None) -> list:
+        """The team's last five results as chips, with its current run in words (by default in the open
+        competition and season)."""
+        steps = fd.team_steps(self.fixtures if fixtures is None else fixtures, team_id,
+                              self.labels if labels is None else labels)
         if not steps:
             return [inspector.Heading(f"{self._team_name(team_id)}: last 5"),
                     inspector.Line("No matches played yet.", muted=True)]
@@ -3277,7 +3361,11 @@ class FMReviewApp(_Root):
         blocks.append(inspector.Heading("Venue"))
         blocks += [inspector.Line(line) for line in fd.venue_for(ds, f).lines()]
         form_team = self.focus if self.focus in (f.home_team_id, f.away_team_id) else f.home_team_id
-        blocks += self._form_blocks(form_team)
+        if f in self.fixtures or f.competition_id is None:
+            blocks += self._form_blocks(form_team)
+        else:                                       # a match picked from the Schedule: its own competition and season
+            own = fd.season_fixtures(ds, f.competition_id, fd.season_key(f))
+            blocks += self._form_blocks(form_team, own, fd.team_labels(own))
         all_groups = fd.all_meetings(self.dataset, f.home_team_id, f.away_team_id)
         total = sum(len(g.fixtures) for g in all_groups)
         blocks.append(inspector.Heading(f"Meetings ({total})"))

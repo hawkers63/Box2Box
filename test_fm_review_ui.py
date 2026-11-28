@@ -52,7 +52,7 @@ def texts_in(widget) -> list[str]:
     return found
 
 
-def dataset(match_stats=None, extra=()) -> fd.Dataset:
+def dataset(match_stats=None, extra=(), managed=1) -> fd.Dataset:
     fixtures = LEAGUE + list(extra) + [
         fx(D(2027, 8, 7), 1, 2, season=2027, md=1),                          # next season, unplayed
         fx(D(2026, 7, 20), 1, 5, 2, 2, comp=131, season=None),               # a friendly
@@ -61,7 +61,7 @@ def dataset(match_stats=None, extra=()) -> fd.Dataset:
     ]
     stored = NS(competition_id=101, rows=(row(1, 1, 2, 2, 0, 0, 5, 2, 6), row(4, 2), row(2, 3), row(3, 4)))
     rules = [NS(competition_id=101, promotion_places=1, playoff_places=1, relegation_places=1, rounds=())]
-    return fd.build_dataset(info(), fixtures, clubs=[club(1, slots=(0, 1)), club(2), club(3), club(4), club(5)],
+    return fd.build_dataset(info(managed), fixtures, clubs=[club(1, slots=(0, 1)), club(2), club(3), club(4), club(5)],
                             competitions=[NS(id=101, database_id=12), NS(id=102, database_id=13)], tables=[stored], rules=rules,
                             match_stats=match_stats)
 
@@ -970,6 +970,8 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(app.view_theme.focus, tint.focus)
         self.assertEqual(app.view_theme.colours, app.theme.colours)          # results keep their colours
         app.set_focus(None)
+        self.assertEqual(app.top_bar.cget("fg_color"), tint.band[0])         # 2.16: still the followed club's
+        app._clear_followed_uid()
         self.assertEqual(app.top_bar.cget("fg_color"), app.theme.panel)
         self.assertEqual(app.view_switch.cget("selected_color"), app.theme.switch_selected)
 
@@ -1032,6 +1034,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(app.focus, team(1, 1))
         self.assertEqual(app.club_tint.colours, club_colours.builtin_colours("Hull City"))
         app.select_competition(70)
+        app._clear_followed_uid()                            # 2.16: the managed club is followed until cleared
         app.set_focus(999)                                   # a team the save cannot resolve
         self.assertIsNone(app.club_tint)
 
@@ -1061,6 +1064,8 @@ class WindowTests(unittest.TestCase):
         item = app.theme_menu.index("Club colours…")
         self.assertEqual(app.theme_menu.entrycget(item, "state"), "normal")
         app.set_focus(None)
+        self.assertEqual(app.theme_menu.entrycget(item, "state"), "normal")      # 2.16: the followed club stays
+        app._clear_followed_uid()
         self.assertEqual(app.theme_menu.entrycget(item, "state"), "disabled")
 
     def test_malformed_club_colour_settings_are_ignored(self):
@@ -2252,6 +2257,7 @@ class WindowTests(unittest.TestCase):
             return [menu.entrycget(i, "label") for i in range(menu.index("end") + 1) if menu.type(i) != "separator"]
 
         app.set_focus(None)
+        app._clear_followed_uid()                  # 2.16: the managed club is followed until cleared
         self.assertEqual(labels(), ["2027", "2026"])
         app.set_focus(team(2))
         self.assertEqual(labels(), ["2027", "2026", "Mark Leeds United in bold"])
@@ -2265,6 +2271,8 @@ class WindowTests(unittest.TestCase):
         app.mark_club_var.set(True)
         self.assertEqual(app._marked_club_uid(), 2)
         app.set_focus(None)
+        self.assertEqual(app._marked_club_uid(), 2)          # 2.16: browsing does not drop the followed club
+        app._clear_followed_uid()
         self.assertIsNone(app._marked_club_uid())
 
     def test_a_failure_building_the_yearbook_is_shown_and_logged(self):
@@ -2745,6 +2753,7 @@ class ScheduleHubWiringTests(unittest.TestCase):
             mock.patch.object(fm_review, "NAMES_PATH", folder / "names.csv"),
             mock.patch.object(fm_review, "ERROR_LOG", folder / "errors.log"),
             mock.patch.object(fm_review, "ARCHIVE_PATH", folder / "archive.sqlite"),
+            mock.patch.object(fm_review, "export_folder", return_value=folder / "exports"),
         ]
         for patch in patches:
             patch.start()
@@ -2842,20 +2851,133 @@ class ScheduleHubWiringTests(unittest.TestCase):
         app.set_view(fm_review.SCHEDULE)
         self.assertIn("No club followed", app.coverage_label.cget("text"))
 
-    def test_a_new_save_empties_schedule_and_hub(self):
+    def test_a_new_observer_save_empties_schedule_and_hub(self):
+        # 2.16: a managed save follows its club on open, so the empty-on-new-save checks use an observer save.
         app = self.app
         self.follow_hull()
-        app.install_dataset(dataset())
+        app.install_dataset(dataset(managed=None))
         self.assertIsNone(app._schedule_view._schedule)
         self.assertEqual(app._manager_hub_view._rows, [])
 
-    def test_install_dataset_clears_followed_uid(self):
+    def test_install_dataset_clears_followed_uid_for_an_observer_save(self):
         app = self.app
         app.install_dataset(dataset())
         app.set_focus(team(1))               # team_id 100; club uid 1
         self.assertIsNotNone(app._followed_uid)
-        app.install_dataset(dataset())       # new save
+        app.install_dataset(dataset(managed=None))       # new save with no managed club
         self.assertIsNone(app._followed_uid)
+
+    def test_a_managed_save_follows_its_club_into_schedule_and_hub_on_open(self):
+        app = self.app
+        app.install_dataset(dataset())
+        self.assertEqual(app._followed_uid, fd.FollowedClub(1, fd.SCOPE_SENIOR, "Hull City"))
+        self.assertTrue(self.wait_for(lambda: app._schedule_view._schedule is not None), "schedule never arrived")
+        self.assertTrue(self.wait_for(lambda: app._manager_hub_view._snapshot is not None), "hub never arrived")
+        self.assertEqual(app._manager_hub_view._snapshot.followed.club_uid, 1)
+
+    def test_browsing_a_competition_without_the_followed_club_keeps_its_tint_menu_and_book_mark(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.select_competition(70)                       # Hull City is not in it
+        self.assertNotIn(team(1), app.labels)
+        self.assertEqual(app._followed_club(), "Hull City")
+        self.assertIsNotNone(app.club_tint)
+        item = app.theme_menu.index("Club colours…")
+        self.assertEqual(app.theme_menu.entrycget(item, "state"), "normal")
+        app.mark_club_var.set(True)
+        self.assertEqual(app._marked_club_uid(), 1)
+        app._clear_followed_uid()
+        self.assertIsNone(app.club_tint)
+        self.assertIsNone(app._marked_club_uid())
+
+    def test_following_a_reserve_team_keeps_its_scope_and_the_clubs_own_name(self):
+        app = self.app
+        app.install_dataset(dataset())
+        app.select_competition(60)                       # the youth league: Hull City's second team
+        app.set_focus(team(1, 1))
+        self.assertEqual(app._followed_uid, fd.FollowedClub(1, fd.SCOPE_RESERVE, "Hull City"))
+        self.assertEqual(app._followed_club(), "Hull City")
+
+    def schedule_item(self, index=0):
+        self.follow_hull()
+        app = self.app
+        app.set_view(fm_review.SCHEDULE)
+        app.update()
+        return app._schedule_view._filtered[index]
+
+    def test_selecting_a_schedule_row_points_the_open_inspector_at_that_match(self):
+        app = self.app
+        item = self.schedule_item()
+        app.select_competition(60)                       # the match is not in the open competition
+        app.set_view(fm_review.SCHEDULE)
+        app.open_inspector()
+        app._schedule_view._select_and_show(0)
+        self.assertEqual(app._selection, ("match", item.fixture))
+        model = app._inspector_model()
+        self.assertIn(" v ", model.title)
+        self.assertNotIn("Team ", model.title)
+
+    def test_double_clicking_a_schedule_row_opens_the_inspector_on_that_match(self):
+        app = self.app
+        item = self.schedule_item()
+        view = app._schedule_view
+        view._see(0)
+        y = int(0.5 * view.row_height - view._canvas.canvasy(0))
+        for _ in range(2):
+            view._canvas.event_generate("<ButtonPress-1>", x=400, y=y)
+            view._canvas.event_generate("<ButtonRelease-1>", x=400, y=y)
+        app.update()
+        self.assertTrue(app.inspector.is_open)
+        self.assertEqual(app._selection, ("match", item.fixture))
+
+    def right_click_entries(self, item):
+        app = self.app
+        with mock.patch.object(app, "_build_menu", return_value=mock.MagicMock()) as build:
+            app._schedule_view._on_right_click(NS(x_root=0, y_root=0), item)
+        return [e for e in build.call_args.args[0] if isinstance(e, fm_review.MenuEntry) and e.label]
+
+    def test_the_schedule_right_click_menu_offers_inspect_head_to_head_filter_follow_and_copy(self):
+        item = self.schedule_item()
+        entries = self.right_click_entries(item)
+        self.assertEqual([e.label for e in entries],
+                         ["Inspect match", f"Head-to-head with {item.opponent}", f"Filter schedule to {item.opponent}",
+                          f"Follow {item.opponent}", "Copy match line"])
+
+    def test_the_schedule_right_click_actions_work(self):
+        app = self.app
+        item = self.schedule_item()
+        entries = self.right_click_entries(item)
+        by_label = {next(p for p in ("Head-to-head", "Filter schedule", "Follow", "Copy match line", "Inspect match")
+                         if e.label.startswith(p)): e for e in entries}
+        by_label["Head-to-head"].command()
+        self.assertEqual(app._selection, ("pair", (item.team_id, item.opponent_id)))
+        by_label["Filter schedule"].command()
+        self.assertEqual(app._schedule_view._filter.search, item.opponent)
+        with mock.patch.object(app, "clipboard_clear"), mock.patch.object(app, "clipboard_append") as add:
+            by_label["Copy match line"].command()
+        add.assert_called_once_with(app._schedule_view.line_for(item))
+        by_label["Follow"].command()
+        self.assertEqual(app._followed_uid.club_uid, item.fixture.away_club_uid if item.home
+                         else item.fixture.home_club_uid)
+
+    def test_late_expected_goals_refresh_the_schedule_and_keep_its_filter(self):
+        app = self.app
+        self.follow_hull()
+        view = app._schedule_view
+        old = view._schedule
+        view.apply_venue_filter("H")
+        self.assertEqual({i.xg_state for i in old.items if i.played}, {fd.STATE_PENDING})
+        app.install_expected_goals(fd.with_expected_goals(app.dataset, []))
+        self.assertTrue(self.wait_for(lambda: view._schedule is not old), "schedule never refreshed")
+        self.assertNotIn(fd.STATE_PENDING, {i.xg_state for i in view._schedule.items if i.played})
+        self.assertEqual(view._filter.venue, "H")
+        self.assertTrue(all(i.venue == "H" for i in view._filtered))
+
+    def test_the_schedule_and_hub_show_competition_names_not_ids(self):
+        app = self.app
+        app.names = {12: "Invented League"}
+        self.follow_hull()
+        self.assertIn("Invented League", app._schedule_view._competition_menu.cget("values"))
 
     def test_set_focus_with_valid_team_sets_followed_uid(self):
         app = self.app
