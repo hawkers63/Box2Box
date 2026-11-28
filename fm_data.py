@@ -3157,6 +3157,7 @@ class ScheduleItem:
     xg: ExpectedGoals | None
     xg_state: str              # known, pending or unavailable for a played match; "" for one not yet played
     opponent_club: str | None = None   # the opponent's club as the save names it; None when it cannot be resolved
+    venue_info: Venue | None = None    # where the match is played, as venue_for reads it; None when not worked out
 
     @property
     def played(self) -> bool:
@@ -3254,7 +3255,7 @@ def _schedule_item(dataset: Dataset, f: Fixture, ref: FixtureRef, ids: frozenset
         home=home, venue="N" if f.is_neutral_venue else "H" if home else "A", neutral=f.is_neutral_venue,
         outcome=outcome, score=score, when=when, days=days,
         xg=dataset.expected_goals.get(fixture_key(f)) if state == STATE_KNOWN else None, xg_state=state,
-        opponent_club=f.away_club_name if home else f.home_club_name)
+        opponent_club=f.away_club_name if home else f.home_club_name, venue_info=venue_for(dataset, f))
 
 
 def club_schedule(
@@ -3380,17 +3381,15 @@ def manager_snapshot(dataset: Dataset, followed: FollowedClub, *, max_form: int 
     season = club_season(all_fx)
     today = info.game_date
 
-    items = tuple(_schedule_item(dataset, f, ref, ids, today)
-                  for f, ref in zip(
-                      sorted((f for f in all_fx if season_key(f) == season),
-                             key=lambda f: (_when(f), f.competition_id or 0)),
-                      fixture_refs(sorted((f for f in all_fx if season_key(f) == season),
-                                          key=lambda f: (_when(f), f.competition_id or 0)))))
+    in_season = sorted((f for f in all_fx if season_key(f) == season), key=lambda f: (_when(f), f.competition_id or 0))
+    items = tuple(_schedule_item(dataset, f, ref, ids, today) for f, ref in zip(in_season, fixture_refs(in_season)))
 
     played = tuple(i for i in items if i.played)
     form = played[-max_form:]
 
-    upcoming = [i for i in items if i.when in (WHEN_TODAY, WHEN_UPCOMING, WHEN_OVERDUE)]
+    # With no save date nothing can be placed against it, so the earliest unplayed dated match is still the next.
+    kinds = (WHEN_TODAY, WHEN_UPCOMING, WHEN_OVERDUE) + ((WHEN_UNKNOWN,) if today is None else ())
+    upcoming = [i for i in items if i.when in kinds]
     next_item = upcoming[0] if upcoming else None
 
     if next_item is not None:
@@ -3400,10 +3399,16 @@ def manager_snapshot(dataset: Dataset, followed: FollowedClub, *, max_form: int 
         next_scope_label = ""
 
     rank = None
-    if next_item is not None and _is_league(next_item.fixture):
-        league = [g for g in dataset.fixtures_for(next_item.competition_id) if season_key(g) == season]
-        rank = rank_before(league, team_labels(league), next_item.fixture, next_item.team_id,
-                           tie_breaks=dataset.tie_breaks.get(next_item.competition_id, ()))
+    if next_item is not None:
+        # Before a cup tie the rank is still the club's league place, from the league hub_season would choose.
+        own = _is_league(next_item.fixture)
+        league_id = next_item.competition_id if own else _primary_league(in_season)
+        if league_id is not None:
+            league = [g for g in dataset.fixtures_for(league_id) if season_key(g) == season]
+            team_id = next_item.team_id if own else next((t for t in teams_in(league) if t in ids), None)
+            if team_id is not None:
+                rank = rank_before(league, team_labels(league), next_item.fixture, team_id,
+                                   tie_breaks=dataset.tie_breaks.get(league_id, ()))
 
     return ManagerSnapshot(followed=followed, managed=managed, manager_name=manager_name,
                            next_item=next_item, next_scope_label=next_scope_label,
@@ -3503,7 +3508,14 @@ class HubSeason:
 
 
 def _is_league(f: Fixture) -> bool:
-    return f.round is None and f.round_index is not None
+    """A numbered league matchday: an unnumbered round (fmsave's 256) is never shown as "Matchday 257"."""
+    return f.round is None and f.round_index is not None and f.round_index != UNNUMBERED_ROUND
+
+
+def _primary_league(fixtures: Iterable[Fixture]) -> int | None:
+    """The competition holding most of the club's league matches (the lowest id on a tie); None with none."""
+    leagues = Counter(f.competition_id for f in fixtures if _is_league(f))
+    return min(leagues, key=lambda c: (-leagues[c], c)) if leagues else None
 
 
 def _hub_table(league: Sequence[Fixture], labels: Mapping[int, str], counted: Sequence[Fixture], team_id: int,
@@ -3528,9 +3540,8 @@ def hub_season(dataset: Dataset, followed: FollowedClub, season: int | None = No
     if season is None:
         season = club_season(mine)
     in_season = [f for f in mine if season_key(f) == season]
-    leagues = Counter(f.competition_id for f in in_season if _is_league(f))
-    league_id = min(leagues, key=lambda c: (-leagues[c], c)) if leagues else None
-    pool = [f for f in in_season if league_id is None or (f.competition_id == league_id and _is_league(f))]
+    league_id = _primary_league(in_season)
+    pool =[f for f in in_season if league_id is None or (f.competition_id == league_id and _is_league(f))]
     dated = sorted((f for f in pool if f.date is not None), key=_when)
     league = [f for f in dataset.fixtures_for(league_id) if season_key(f) == season] if league_id is not None else []
     labels = team_labels(league or in_season)
@@ -3557,8 +3568,10 @@ def hub_season(dataset: Dataset, followed: FollowedClub, season: int | None = No
     today = dataset.info.game_date
     now = None
     if today is not None and steps:
+        # The first match still to play, an overdue one included (as manager_snapshot's next match), else any later.
+        to_play = (WHEN_OVERDUE, WHEN_TODAY, WHEN_UPCOMING)
         now = next((i for i, s in enumerate(steps) if s.fixture is not None and
-                    (s.date > today or (s.date == today and not s.fixture.played))), len(steps) - 1)
+                    (s.fixture.when in to_play or s.date > today)), len(steps) - 1)
     return HubSeason(followed, season, league_id, tuple(steps), now, sum(1 for f in pool if f.date is None))
 
 

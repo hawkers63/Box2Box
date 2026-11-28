@@ -527,11 +527,12 @@ class WholeSaveWorkbookTests(unittest.TestCase):
             self.assertEqual(list(Path(folder).iterdir()), [])
 
     def test_the_one_competition_workbook_is_unchanged(self):
-        # Taken from v2.14's workbook(): every sheet's cells, fills, fonts, widths and frozen panes.
+        # Taken from v2.14's workbook(): every sheet's cells, fills, fonts, widths and frozen panes. Retaken in 2.16
+        # when the promotion, play-off and Europa zone fills darkened to 4.5:1 with white (nothing else changed).
         self.assertEqual(workbook_fingerprint(fx.workbook(fx.snapshot(request()))), ONE_COMPETITION_FINGERPRINT)
 
 
-ONE_COMPETITION_FINGERPRINT = "c1cc3a134bcacc588cddf335444c034471206332b492f9941e3547398f2aeea4"
+ONE_COMPETITION_FINGERPRINT = "69cebe22ff5375848156a864af185aa1088e3adb60a9d66267c6e9c5d09116c5"
 
 
 def workbook_fingerprint(book) -> str:

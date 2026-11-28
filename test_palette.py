@@ -7,6 +7,7 @@ Run:  .venv\\Scripts\\python -m unittest -v
 
 import unittest
 
+import club_colours
 import palette
 
 
@@ -16,7 +17,7 @@ class ThemeTests(unittest.TestCase):
         self.assertEqual((dict(me.colours), dict(me.zones), me.heading, me.focus),
                          (palette.COLOURS, palette.ZONE_COLOURS, palette.HEADING, palette.FOCUS))
         self.assertEqual((me.table, me.accent, me.section, me.link),
-                         (("#1b1b1b", "#E3E3E3"), ("#1F6AA5", "#DCE4EE"), "#d8b44a", "#60a5fa"))
+                         (("#1b1b1b", "#E3E3E3"), ("#1c6196", "#DCE4EE"), "#d8b44a", "#60a5fa"))
 
     def test_unknown_missing_or_odd_names_give_midnight_emerald(self):
         for name in (None, "", "Neon Dreams", 3, ["Cyber Pitch"]):
@@ -45,6 +46,26 @@ class ThemeTests(unittest.TestCase):
                         palette.contrast_ratio(fill, text), 4.5,
                         f"{theme.name} key={key!r} fill={fill} text={text}"
                     )
+
+    def test_every_themes_zone_fills_read_at_4_5(self):
+        for theme in palette.THEMES:
+            for zone, (fill, text) in theme.zones.items():
+                self.assertGreaterEqual(palette.contrast_ratio(fill, text), palette.READABLE, (theme.name, zone, fill))
+
+    def test_every_themes_accent_and_selected_switch_read_at_4_5(self):
+        for theme in palette.THEMES:
+            for background, text in (theme.accent, (theme.switch_selected, theme.switch[1])):
+                self.assertGreaterEqual(palette.contrast_ratio(background, text), palette.READABLE,
+                                        (theme.name, background))
+
+    def test_ensure_contrast_keeps_a_readable_colour_and_moves_an_unreadable_one_the_least(self):
+        self.assertEqual(palette.ensure_contrast("#000000", ("#ffffff", palette.READABLE)), "#000000")
+        moved = palette.ensure_contrast("#059669", ("#ffffff", palette.READABLE))
+        self.assertGreaterEqual(palette.contrast_ratio(moved, "#ffffff"), palette.READABLE)
+        self.assertLess(palette.contrast_ratio(moved, "#059669"), 1.5)          # the nearest, not black
+        both = palette.ensure_contrast("#3b82f6", ("#1b1b1b", palette.READABLE), ("#242424", palette.READABLE))
+        for surface in ("#1b1b1b", "#242424"):
+            self.assertGreaterEqual(palette.contrast_ratio(both, surface), palette.READABLE, surface)
 
     def test_high_contrast_pairs_all_read_at_4_5(self):
         hc = palette.HIGH_CONTRAST
@@ -108,6 +129,15 @@ class TintTests(unittest.TestCase):
                 for background, text in (t.band, (t.band[0], t.band_muted),
                                          (t.selected[0], theme.switch[1]), t.focus, (theme.table[0], t.link)):
                     self.assertGreaterEqual(palette.contrast_ratio(background, text), 4.5, (theme.name, colours))
+
+    def test_every_built_in_clubs_link_reads_on_the_table_and_the_window(self):
+        # Schedule rows alternate the table and window colours, so a club-tinted link must read on both.
+        for theme in (t for t in palette.THEMES if t.club_colours):
+            for name, colours in club_colours.CLUB_COLOURS.items():
+                link = palette.club_tint(theme, colours).link
+                for surface in (theme.table[0], theme.window):
+                    self.assertGreaterEqual(palette.contrast_ratio(link, surface), palette.READABLE,
+                                            (theme.name, name, surface))
 
     def test_high_contrast_and_no_colours_give_no_tint(self):
         self.assertIsNone(palette.club_tint(palette.HIGH_CONTRAST, self.RED))

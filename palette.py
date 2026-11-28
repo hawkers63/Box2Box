@@ -37,9 +37,9 @@ COLOURS: dict[str, tuple[str | None, str | None]] = {
 
 ZONE_COLOURS: dict[str, tuple[str, str]] = {
     fd.ZONE_UCL: ("#1d4ed8", "#ffffff"),
-    fd.ZONE_PROMOTION: ("#059669", "#ffffff"),
-    fd.ZONE_PLAYOFF: ("#0284c7", "#ffffff"),
-    fd.ZONE_EUROPA: ("#ea580c", "#ffffff"),
+    fd.ZONE_PROMOTION: ("#04875e", "#ffffff"),     # the win colour: 4.53:1 with white
+    fd.ZONE_PLAYOFF: ("#0369a1", "#ffffff"),       # 5.93:1
+    fd.ZONE_EUROPA: ("#c2410c", "#ffffff"),        # 5.18:1
     fd.ZONE_RELEGATION: ("#dc2626", "#ffffff"),
 }
 
@@ -113,9 +113,9 @@ MIDNIGHT_EMERALD = Theme(
     grid_line="#2b2b2b", selection=("#404040", "#94EBEB"), text="#DCE4EE", muted="#b3b3b3",
     competition_list=("#1d1d1d", "#e3e3e3"), list_selected=("#1f538d", "#ffffff"), section="#d8b44a",
     link="#60a5fa", warning="#fb923c",
-    accent=("#1F6AA5", "#DCE4EE"), accent_hover="#144870", quiet=("#4d4d4d", "#DCE4EE"), quiet_hover="#595959",
+    accent=("#1c6196", "#DCE4EE"), accent_hover="#144870", quiet=("#4d4d4d", "#DCE4EE"), quiet_hover="#595959",
     field=("#343638", "#565B5E"), switch=("#4a4a4a", "#DCE4EE"), switch_hover="#696969",
-    switch_selected="#1F6AA5", switch_selected_hover="#144870",
+    switch_selected="#1c6196", switch_selected_hover="#144870",
     colours=COLOURS, zones=ZONE_COLOURS, heading=HEADING, focus=FOCUS,
     categories={
         fd.COMP_CAT_YOURS: ("#1e3a8a", "#dbeafe"),
@@ -268,6 +268,12 @@ NON_TEXT = 3.0      # a shape's edge against its surface, WCAG non-text contrast
 DISTINCT = 1.4      # a tinted surface against what surrounds it
 
 
+def ensure_contrast(colour: str, *rules: tuple[str, float]) -> str:
+    """The colour itself when it already meets every rule, else the least lightened or darkened version of it
+    that does: each rule is (other colour, minimum ratio). The one way every module enforces WCAG contrast."""
+    return _nearest(colour, *rules)
+
+
 def ink_on_white(pair: tuple[str, str]) -> str:
     """The colour of a (background, text) pair that can be written on a white sheet, as the followed
     team's name is in a workbook: the background if it reads there, else the text, else black.
@@ -325,7 +331,7 @@ def club_tint(theme: Theme, colours: tuple[str, str] | None) -> ClubTint | None:
         band_muted=muted if contrast_ratio(muted, band) >= READABLE else band_text,
         selected=(selected, blend(selected, "#000000", 0.2)),
         focus=(focus, readable_text(focus)),
-        link=_nearest(shown, (table, READABLE)),
+        link=ensure_contrast(shown, (table, READABLE), (theme.window, READABLE)),   # rows alternate the two
     )
 
 

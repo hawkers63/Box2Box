@@ -395,6 +395,12 @@ class VenueTests(unittest.TestCase):
         self.assertIn("Neutral ground: unknown", unknown.lines())
         self.assertFalse(any("ttendance" in line for line in lines + unknown.lines()))
 
+    def test_a_schedule_item_carries_its_venue_as_venue_for_reads_it(self):
+        ds = with_grounds([self.fixture(stadium_uid=7)], [stadium(7, "Riverside", 31000)])
+        item = fd.club_schedule(ds, fd.FollowedClub(1)).items[0]
+        self.assertEqual(item.venue_info, fd.venue_for(ds, item.fixture))
+        self.assertEqual((item.venue_info.name, item.venue_info.total_capacity), ("Riverside", 31000))
+
 
 HULL = fd.FollowedClub(1)
 NO_REPORT = dict.fromkeys(("shots", "shots_on_target", "possession_percent", "passes_attempted", "passes_completed",
@@ -589,10 +595,24 @@ class ManagerSnapshotTests(unittest.TestCase):
         self.assertIsNotNone(rank)
         self.assertEqual((rank.position, rank.of, rank.points, rank.played), (1, 4, 6, 2))
 
-    def test_there_is_no_rank_before_a_cup_match(self):
+    def test_before_a_cup_match_the_rank_is_from_the_clubs_league(self):
         ds = dataset([fx(D(2026, 8, 8), 1, 2, 2, 1, md=1),
                       fx(D(2026, 9, 12), 1, 4, comp=102, rnd=CodedValue(CompetitionRound.QUARTER_FINAL, 16))])
+        rank = fd.manager_snapshot(ds, fd.FollowedClub(1)).rank_before_next
+        self.assertIsNotNone(rank)
+        self.assertEqual((rank.position, rank.of, rank.points, rank.played), (1, 2, 3, 1))
+
+    def test_a_club_with_no_league_match_has_no_rank_before_a_cup_match(self):
+        cup = CodedValue(CompetitionRound.QUARTER_FINAL, 16)
+        ds = dataset([fx(D(2026, 8, 8), 1, 2, 2, 1, comp=102, rnd=cup), fx(D(2026, 9, 12), 1, 4, comp=102, rnd=cup)])
         self.assertIsNone(fd.manager_snapshot(ds, fd.FollowedClub(1)).rank_before_next)
+
+    def test_an_unknown_save_date_still_gives_the_earliest_unplayed_match(self):
+        ds = dataset([fx(D(2026, 8, 8), 1, 2, 2, 1, md=1), fx(D(2026, 9, 19), 1, 3, md=3),
+                      fx(D(2026, 9, 12), 4, 1, md=2)], game_date=None)
+        nxt = fd.manager_snapshot(ds, fd.FollowedClub(1)).next_item
+        self.assertIsNotNone(nxt)
+        self.assertEqual((nxt.fixture.date, nxt.when), (D(2026, 9, 12), fd.WHEN_UNKNOWN))
 
     def test_form_covers_recent_played_matches(self):
         # two played matches → form should have two entries
@@ -699,6 +719,19 @@ class HubSeasonTests(unittest.TestCase):
 
     def test_an_unknown_save_date_has_no_today(self):
         self.assertIsNone(fd.hub_season(invented(stepper_season, None), NORTHBRIDGE).today)
+
+    def test_an_overdue_match_is_today_as_it_is_the_snapshots_next_match(self):
+        ds = invented(stepper_season, D(2099, 9, 1))     # matchday 4 (29 Aug) is overdue; matchday 3 (5 Sep) to come
+        season = fd.hub_season(ds, NORTHBRIDGE)
+        self.assertEqual(season.today, 2)
+        self.assertIs(season.steps[2].fixture.fixture, fd.manager_snapshot(ds, NORTHBRIDGE).next_item.fixture)
+
+    def test_an_unnumbered_league_round_is_never_a_matchday(self):
+        def unnumbered():
+            return stepper_season() + [fx(D(2099, 9, 12), 1, 2, md=fd.UNNUMBERED_ROUND + 1)]
+        season = fd.hub_season(invented(unnumbered), NORTHBRIDGE)
+        self.assertNotIn(f"Matchday {fd.UNNUMBERED_ROUND + 1}", [s.title for s in season.steps])
+        self.assertEqual(len(season.steps), 4)
 
     def test_before_the_first_match_the_table_has_no_games_and_says_so(self):
         first = self.season.steps[0]
