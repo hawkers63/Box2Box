@@ -58,7 +58,7 @@ import fm_manager_hub as fmh
 import fm_schedule_view as fsv
 
 APP_TITLE = "Box2Box"
-VERSION = "2.15"
+VERSION = "2.16"
 
 
 def _resolve_app_dir(*, frozen: bool, executable: Path, source: Path) -> Path:

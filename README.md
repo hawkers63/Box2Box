@@ -8,7 +8,7 @@
 
 A Windows desktop viewer for the fixtures, results, grids and league tables in a Football Manager 27 (or 26) save. Saves are read with [fmsave](https://rhiever.github.io/fmsave/) and are never modified.
 
-[![Release 2.15](https://img.shields.io/badge/Release-2.15-0EA5E9)](https://github.com/hawkers63/Box2Box/releases/latest)
+[![Release 2.16](https://img.shields.io/badge/Release-2.16-0EA5E9)](https://github.com/hawkers63/Box2Box/releases/latest)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)](https://www.microsoft.com/windows)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![GUI](https://img.shields.io/badge/GUI-CustomTkinter%20%2B%20tksheet-10B981)](https://customtkinter.tomschimansky.com/)
@@ -20,9 +20,9 @@ A Windows desktop viewer for the fixtures, results, grids and league tables in a
 
 **Database viewer** · entry point `fm_review.py` · launcher `Box2Box.bat`
 
-**Release:** 2.15  
+**Release:** 2.16  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 2.15), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.16), launched with `Box2Box.bat`
 
 </div>
 
@@ -258,7 +258,7 @@ Open a feature for the full details.
 <details>
 <summary><b>🗓️ Schedule and Hub</b></summary>
 
-**Schedule and Hub.** Follow a club, then open **Schedule** for every match it plays this season, across all its competitions, or **Hub** for an overview: its role, league position, form, next match and a few rows of the table round it. Each club has a small two-colour roundel drawn from its colours (Theme ▾ → Club colours…): an aid to telling clubs apart, not a club crest. A club with no colours gets a plain grey one. Results keep their W, D, L or ? letters and their colours. Tick **Fixture gap** on the Schedule to see, on each dated row, the days since the club's previous fixture in any competition (a league-only filter still counts a midweek cup tie); the choice is remembered. Stepping the Hub back to a match adds a **Previous meeting** row: the date, competition and score of the latest earlier meeting with that opponent in the open save, never one played the same day.
+**Schedule and Hub.** Follow a club, then open **Schedule** for every match it plays this season, across all its competitions, or **Hub** for an overview: its role, league position, form, next match and a few rows of the table round it. Each club has a small two-colour roundel drawn from its colours (Theme ▾ → Club colours…): an aid to telling clubs apart, not a club crest. A club with no colours gets a plain grey one. Results keep their W, D, L or ? letters and their colours. Tick **Fixture gap** on the Schedule to see, on each dated row, the days since the club's previous fixture in any competition (a league-only filter still counts a midweek cup tie); the choice is remembered. A managed save follows its club as soon as it opens, and the club stays followed while you browse other competitions. The Schedule's ribbon filters by competition, venue, month, result and opponent (**Clear filters** resets them); **Compact** makes rows shorter. Click a row to select it (the open Inspector follows), double-click or press **Return** to inspect it, use **Up**, **Down**, **Home** and **End** to move, **Ctrl+C** to copy the row, and right-click for head-to-head, follow and filter to that opponent. The Hub and the match Inspector show the ground and its capacity where the save records them. Stepping the Hub back to a match adds a **Previous meeting** row: the date, competition and score of the latest earlier meeting with that opponent in the open save, never one played the same day.
 
 **Matchday stepper.** On the Hub, **‹ Previous**, **Next ›** and the slider move the position, table, form and next match back or forward through the club's league matchdays, each shown as it stood just before that match's kick-off. A matchday keeps its number even if it was played late, and the label gives the date of each snapshot. No result from that match or any later one is counted. **Today** returns to the save's own date. A club with no league steps through its matches without a league position. Undated matches cannot be placed and are only counted.
 
@@ -480,6 +480,7 @@ The tests write only to temporary directories and do not need a real Football Ma
 
 | Release | Date | Highlights |
 | --- | --- | --- |
+| [**2.16**](https://github.com/hawkers63/Box2Box/releases/tag/v2.16) | 28&nbsp;Nov&nbsp;2026 | 🗓️ A working Schedule (filter ribbon, keyboard, right-click menu, readable result pills), a managed club followed on open, venues in the Hub and Inspector, and every colour at 4.5:1 contrast |
 | [**2.15**](https://github.com/hawkers63/Box2Box/releases/tag/v2.15) | 23&nbsp;Nov&nbsp;2026 | 📗 One Excel workbook for the whole save: Contents, Records, a sheet per competition and About |
 | [**2.14**](https://github.com/hawkers63/Box2Box/releases/tag/v2.14) | 22&nbsp;Nov&nbsp;2026 | 📜 The club inspector gains a History block: the club's league finish in each archived season |
 | [**2.13**](https://github.com/hawkers63/Box2Box/releases/tag/v2.13) | 22&nbsp;Nov&nbsp;2026 | 📐 The view's own switch wraps to a second line, so the window can be narrower |

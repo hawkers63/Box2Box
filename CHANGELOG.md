@@ -1,8 +1,8 @@
 # Changelog
 
-**Release:** 2.15  
+**Release:** 2.16  
 **Status:** Current version on `main`  
-**Application on disk:** `fm_review.py` (VERSION 2.15), launched with `Box2Box.bat`
+**Application on disk:** `fm_review.py` (VERSION 2.16), launched with `Box2Box.bat`
 
 All notable changes to this project will be documented in this file.
 
@@ -10,6 +10,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [2.16] - 2026-11-28
+
+The Schedule works end to end, the Hub and Inspector show venues, and every colour meets 4.5:1 contrast.
+
+### Added
+
+- **Schedule filter ribbon**: competition, venue, month, result and a live opponent search, with **Clear filters**. Rows and the filter summary name each competition. A **Compact** option gives shorter rows without the competition.
+- **Keyboard and mouse on the Schedule**: Up, Down, Home, End, Return (inspect) and Ctrl+C (copy the match as one line); selecting a row points the open Inspector at it; right-click offers Inspect match, Head-to-head, Filter schedule to, Follow and Copy match line.
+- **A managed save follows its club on open.** The followed club is one identity across competitions: its tint, *Club colours…* and the Yearbook's bold mark stay while you browse other competitions, and a reserve team keeps its scope and the club's own name.
+- **Venue** row in the Hub and block in the match Inspector: the ground, neutral flag and total capacity as the save records them, or why they are missing. The Schedule and Hub refresh when expected goals and grounds finish loading, keeping the Schedule's filters.
+
+### Changed
+
+- Result pills on the Schedule are drawn as bevelled pills, so the W, D, L or ? letter reads in High-Contrast; the canvas takes the table colour and only the rows in view are drawn.
+- The promotion, play-off and Europa zone fills, Midnight Emerald's accent and club-tinted links are darker or adjusted to meet WCAG AA (4.5:1). The zone colours also reach the Excel and web-page exports.
+- The Hub shows the league position before a cup tie, treats an overdue match as today's next match, and no longer shows an unnumbered round as a matchday.
+
+### Fixed
+
+- The Hub's Previous meeting row showed garbled separators; the dark square behind both roundels is gone; a settings file that is not a JSON object is ignored; competition names were looked up by the wrong id in the Schedule and Hub.
 
 ## [2.15] - 2026-11-23
 
